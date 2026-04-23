@@ -111,7 +111,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v33</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v36</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -337,6 +337,9 @@ var PRESETS_BY_BRAND = {
     {id:'mp4', top:'#f37733', bottom:'#f5e020', label:'Hybrid Blend'}
   ],
   kkz: [
+    // KKZ rainbow — from the live site CSS: linear-gradient(to right, …)
+    {id:'kp0', stops:['#6B3FA0','#00AEEF','#8DC63F','#FFD700','#F7941D','#E63329','#6B3FA0'],
+     top:'#6B3FA0', bottom:'#E63329', gradAngle:0, label:'KKZ Rainbow'},
     // Brand gradients
     {id:'kp1', top:'#81C568', bottom:'#00A76B', label:'KKZ Green Gradient'},
     {id:'kp2', top:'#F4EA11', bottom:'#ECA223', label:'KKZ Yellow Gradient'},
@@ -739,11 +742,7 @@ function renderPresets(){
     var sw=document.createElement('div');
     sw.className='preset-swatch'+(p.id===activePresetId?' active':'');
     // Render preview matching the preset's actual gradient type where possible (CSS supports all three)
-    var gt = p.gradType || 'linear';
-    var ang = (p.gradAngle==null ? 135 : p.gradAngle);
-    if(gt === 'radial')       sw.style.background='radial-gradient(circle, '+p.top+', '+p.bottom+')';
-    else if(gt === 'conic')   sw.style.background='conic-gradient(from '+ang+'deg, '+p.top+', '+p.bottom+', '+p.top+')';
-    else                      sw.style.background='linear-gradient('+ang+'deg, '+p.top+', '+p.bottom+')';
+    sw.style.background = presetSwatchCss(p);
     sw.title=p.label;
     // Edit button
     var edit=document.createElement('div');edit.className='edit-preset';edit.textContent='✎';
@@ -768,14 +767,18 @@ function applyPreset(p){
     snapshotState();
     if(layer.type==='sticker'){
       layer.gradTop=p.top; layer.gradBottom=p.bottom;
+      // Sticker doesn't support multi-stop yet; ignore stops for sticker
       if(p.gradType) layer.gradType = p.gradType;
       if(p.gradAngle != null) layer.gradAngle = p.gradAngle;
       renderProps(); redraw();
-    } else if(layer.type==='shape'){
+    } else if(layer.type==='shape' || layer.type==='text'){
       layer.gradTop=p.top; layer.gradBottom=p.bottom;
+      if(p.stops && p.stops.length>1) layer.gradStops = p.stops.slice();
+      else delete layer.gradStops;
       if(p.gradType) layer.gradType = p.gradType;
       if(p.gradAngle != null) layer.gradAngle = p.gradAngle;
-      if(layer.fillType!=='solid') layer.fillType='gradient';
+      if(layer.type==='shape' && layer.fillType!=='solid') layer.fillType='gradient';
+      if(layer.type==='text') layer.fillMode='gradient';
       renderProps(); redraw();
     }
   }
@@ -871,7 +874,12 @@ function savePresetEditor(){
   var ang = +document.getElementById('peAngle').value;
   if(editingId){
     var p = gradientPresets.find(function(p){return p.id===editingId;});
-    if(p){ p.label=label; p.top=top; p.bottom=bot; p.gradType=type; p.gradAngle=ang; }
+    if(p){
+      p.label=label; p.top=top; p.bottom=bot; p.gradType=type; p.gradAngle=ang;
+      // If this was previously a multi-stop preset, clear stops so the user's edits take effect.
+      // (The editor only exposes top/bottom — to preserve multi-stop, don't edit it.)
+      delete p.stops;
+    }
   } else {
     var id = 'p'+Date.now();
     gradientPresets.push({id:id, top:top, bottom:bot, gradType:type, gradAngle:ang, label:label});
@@ -895,8 +903,18 @@ function loadPresets(){
   try{
     var key='sp_gradients_'+currentBrand;
     var s=localStorage.getItem(key);
-    if(s){var p=JSON.parse(s);if(p&&p.length)gradientPresets=p;}
-    else{
+    if(s){
+      var p=JSON.parse(s);
+      if(p&&p.length){
+        gradientPresets=p;
+        // Migration: ensure KKZ's rainbow preset (kp0) is present even if the user cached an older list.
+        // Users can still delete it after if they don't want it.
+        if(currentBrand==='kkz' && !gradientPresets.some(function(x){return x.id==='kp0';})){
+          var fresh = (PRESETS_BY_BRAND.kkz||[]).find(function(x){return x.id==='kp0';});
+          if(fresh) gradientPresets.unshift(fresh);
+        }
+      }
+    } else {
       // fall back to defaults for this brand
       gradientPresets = (PRESETS_BY_BRAND[currentBrand] || PRESETS_BY_BRAND.meowi).slice();
     }
@@ -1346,8 +1364,13 @@ function buildTextProps(l){
         +COL('Top','ptxt_gradTop',l.gradTop||'#8ab81d')
         +COL('Bottom','ptxt_gradBot',l.gradBottom||'#3c8e14')
         +'</div>'
-        +brandSwatchesHtml('ptxt_gradTop')  // two separate swatch rows to pick a quick color for top or bottom
-        +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click a swatch above → applies to <b>Top</b>; alt-click → <b>Bottom</b></div>'
+        +brandSwatchesHtml('ptxt_gradTop')  // Click = Top, Alt+Click = Bottom
+        +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click a swatch above → <b>Top</b>; alt-click → <b>Bottom</b></div>'
+        +'<div style="margin-top:8px;margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
+        +'<div class="preset-grid" style="margin-top:3px;">'
+        +gradientPresets.map(function(p){
+          return '<div class="preset-swatch" style="background:'+presetSwatchCss(p)+'" title="'+escAttr(p.label)+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
+        }).join('')+'</div></div>'
         +R('Gradient Angle','ptxt_gradAngle',(l.gradAngle==null?90:l.gradAngle),0,360,5)
       : '<div class="col2" style="margin-bottom:5px;">'
         +COL('Color','ptxt_color',l.color||'#222222')
@@ -1370,12 +1393,30 @@ function buildTextProps(l){
     +moveBtns(l.id)+'</div>';
 }
 
+// Helper: apply a layer's stops to a CanvasGradient object.
+// Uses layer.gradStops[] when present (multi-stop), otherwise the classic 2-stop (gradTop/gradBottom).
+function addLayerGradientStops(grad, layer){
+  if(layer.gradStops && layer.gradStops.length > 1){
+    var s = layer.gradStops;
+    for(var i=0;i<s.length;i++){
+      grad.addColorStop(i/(s.length-1), s[i]);
+    }
+  } else {
+    grad.addColorStop(0, layer.gradTop || '#8ab81d');
+    grad.addColorStop(1, layer.gradBottom || '#3c8e14');
+  }
+}
+
 function applyPresetToLayer(layerId,presetId){
   var layer=layers.find(function(l){return l.id==layerId;});
   var preset=gradientPresets.find(function(p){return p.id===presetId;});
   if(!layer||!preset)return;
   snapshotState();
   layer.gradTop=preset.top; layer.gradBottom=preset.bottom;
+  // Multi-stop: store the full stops array on the layer. Preset without stops clears the layer's array
+  // so the layer goes back to pure 2-stop (top/bottom) behavior.
+  if(preset.stops && preset.stops.length>1) layer.gradStops = preset.stops.slice();
+  else delete layer.gradStops;
   if(preset.gradType) layer.gradType = preset.gradType;
   if(preset.gradAngle != null) layer.gradAngle = preset.gradAngle;
   activePresetId=presetId; renderPresets(); renderProps(); redraw();
@@ -1385,10 +1426,17 @@ function applyPresetToLayer(layerId,presetId){
 // used for rendering preview swatches in property panels.
 function presetSwatchCss(p){
   var gt = p.gradType || 'linear';
-  var ang = (p.gradAngle==null ? 135 : p.gradAngle);
+  // Our internal angle convention: 0°=right (canvas math). CSS convention: 0°=up, 90°=right.
+  // To make swatch preview match canvas rendering, add 90° when outputting CSS.
+  var internalAng = (p.gradAngle==null ? 135 : p.gradAngle);
+  var cssAng = (internalAng + 90) % 360;
+  // Multi-stop preset: always render as linear for swatch preview (simplest clear visual)
+  if(p.stops && p.stops.length > 1){
+    return 'linear-gradient('+cssAng+'deg, '+p.stops.join(', ')+')';
+  }
   if(gt === 'radial') return 'radial-gradient(circle, '+p.top+', '+p.bottom+')';
-  if(gt === 'conic')  return 'conic-gradient(from '+ang+'deg, '+p.top+', '+p.bottom+', '+p.top+')';
-  return 'linear-gradient('+ang+'deg, '+p.top+', '+p.bottom+')';
+  if(gt === 'conic')  return 'conic-gradient(from '+cssAng+'deg, '+p.top+', '+p.bottom+', '+p.top+')';
+  return 'linear-gradient('+cssAng+'deg, '+p.top+', '+p.bottom+')';
 }
 
 function bindPropEvents(layer){
@@ -2076,8 +2124,7 @@ function drawTextLayer(ctx, layer){
       var gx1 = cx - Math.cos(angle)*len, gy1 = cy - Math.sin(angle)*len;
       var gx2 = cx + Math.cos(angle)*len, gy2 = cy + Math.sin(angle)*len;
       var grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
-      grad.addColorStop(0, layer.gradTop || '#8ab81d');
-      grad.addColorStop(1, layer.gradBottom || '#3c8e14');
+      addLayerGradientStops(grad, layer);
       ctx.fillStyle = grad;
     } else {
       ctx.fillStyle = layer.color || '#222';
@@ -2216,17 +2263,32 @@ function buildShapeVertices(layer){
       return {pts:pts, roundable:true};
     }
     case 'parallelogram':{
-      // Skew the top edge to the right by `skewAngle` degrees of the bounding height
+      // Skew the top edge horizontally. Positive skew = top shifts right (leans right).
+      // Negative skew = top shifts left (leans left).
       var skew = (layer.skewAngle==null?15:layer.skewAngle);
       var off = Math.tan(skew*Math.PI/180) * h;
-      // Keep shape within [x, x+w] by clamping: left-bottom moves right by off, top edges stay within w
-      var o = Math.max(0, Math.min(off, w*0.9));
-      return {pts:[
-        {x:x+o, y:y},                 // top-left
-        {x:x+w, y:y},                 // top-right
-        {x:x+w-o, y:y+h},             // bottom-right
-        {x:x, y:y+h}                  // bottom-left
-      ], roundable:true};
+      // Clamp MAGNITUDE to 90% of width so the shape stays inside its bounding box in either direction
+      var maxOff = w*0.9;
+      if(off > maxOff) off = maxOff;
+      else if(off < -maxOff) off = -maxOff;
+      if(off >= 0){
+        // Lean right: top shifts right, bottom shifts left to match (classic parallelogram)
+        return {pts:[
+          {x:x+off, y:y},           // top-left
+          {x:x+w,   y:y},           // top-right
+          {x:x+w-off, y:y+h},       // bottom-right
+          {x:x,     y:y+h}          // bottom-left
+        ], roundable:true};
+      } else {
+        // Lean left: top shifts left (via |off|), bottom shifts right
+        var a = -off;  // positive magnitude
+        return {pts:[
+          {x:x,       y:y},         // top-left (flush)
+          {x:x+w-a,   y:y},         // top-right (pulled in)
+          {x:x+w,     y:y+h},       // bottom-right (flush)
+          {x:x+a,     y:y+h}        // bottom-left (pushed out)
+        ], roundable:true};
+      }
     }
     case 'trapezoid':{
       // Top edge centered, width = bottom * topWidthPct/100
@@ -2260,25 +2322,21 @@ function drawShapeLayer(ctx,layer){
     } else {
       var gradType = layer.gradType || 'linear';
       var cx2=x+w/2, cy2=y+h/2;
-      var top = layer.gradTop||'#8ab81d';
-      var bot = layer.gradBottom||'#3c8e14';
       var grad;
       if(gradType === 'radial'){
         var rad = Math.max(w,h)/2;
         grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, rad);
-        grad.addColorStop(0, top); grad.addColorStop(1, bot);
       } else if(gradType === 'conic' && ctx.createConicGradient){
         var angRad = ((layer.gradAngle||0) - 90) * Math.PI/180;
         grad = ctx.createConicGradient(angRad, cx2, cy2);
-        grad.addColorStop(0, top); grad.addColorStop(1, bot);
       } else {
-        var ang=(layer.gradAngle||135)*Math.PI/180;
+        var ang=((layer.gradAngle==null?135:layer.gradAngle))*Math.PI/180;
         var len=Math.sqrt(w*w+h*h)/2;
         var gx1=cx2-Math.cos(ang)*len, gy1=cy2-Math.sin(ang)*len;
         var gx2=cx2+Math.cos(ang)*len, gy2=cy2+Math.sin(ang)*len;
         grad = ctx.createLinearGradient(gx1,gy1,gx2,gy2);
-        grad.addColorStop(0, top); grad.addColorStop(1, bot);
       }
+      addLayerGradientStops(grad, layer);
       fill=grad;
     }
     ctx.save();
