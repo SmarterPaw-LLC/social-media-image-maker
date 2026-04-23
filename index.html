@@ -106,7 +106,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v25</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v26</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -354,20 +354,20 @@ function setDriveApiKey(k){
   try{ localStorage.setItem('sp_drive_api_key', k); }catch(e){}
 }
 
-var _driveCache = {}; // folderId → files[]
+var _driveCache = {}; // folderId → {folders:[], images:[]}
+var _driveBreadcrumb = []; // [{id, name}, ...]  from root → current
+var _driveRootId = null; // the top-level baked folder currently being browsed
 
 function openImagePicker(){
-  // If no folders are baked in, fall back to upload
   if(!BAKED_FOLDERS.length){ addImageLayer(); return; }
-  // If user hasn't entered their API key yet, prompt them once
   if(!getDriveApiKey()){ openDriveKeyPrompt(); return; }
   var modal = document.getElementById('imagePickerModal');
   if(!modal){
     modal = document.createElement('div');
     modal.id = 'imagePickerModal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;';
-    modal.innerHTML = '<div style="background:#fff;border-radius:8px;padding:20px;width:760px;max-width:95vw;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">'
-      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap;">'
+    modal.innerHTML = '<div style="background:#fff;border-radius:8px;padding:20px;width:820px;max-width:95vw;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap;">'
       + '<h3 style="margin:0;">Image Library</h3>'
       + '<div style="display:flex;gap:6px;align-items:center;">'
       + '<select id="driveFolderSelect" style="padding:5px 8px;border:1px solid #ccc;border-radius:5px;font-size:13px;"></select>'
@@ -375,6 +375,7 @@ function openImagePicker(){
       + '<button style="padding:5px 10px;font-size:11px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;" onclick="addImageLayer();closeImagePicker();">Upload…</button>'
       + '<button style="padding:5px 10px;font-size:11px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;" onclick="closeImagePicker()">Close</button>'
       + '</div></div>'
+      + '<div id="driveBreadcrumb" style="font-size:12px;color:#555;margin-bottom:10px;min-height:18px;"></div>'
       + '<div id="driveImageGrid" style="flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;align-content:start;"></div>'
       + '</div>';
     document.body.appendChild(modal);
@@ -382,9 +383,12 @@ function openImagePicker(){
   }
   var sel = document.getElementById('driveFolderSelect');
   sel.innerHTML = BAKED_FOLDERS.map(function(f){ return '<option value="'+escAttr(f.id)+'">'+escAttr(f.name)+'</option>'; }).join('');
-  sel.onchange = function(){ loadDriveFolder(sel.value); };
+  sel.onchange = function(){
+    var f = BAKED_FOLDERS.find(function(x){return x.id===sel.value;});
+    enterRootFolder(f);
+  };
   modal.style.display = 'flex';
-  loadDriveFolder(BAKED_FOLDERS[0].id);
+  enterRootFolder(BAKED_FOLDERS[0]);
 }
 
 function closeImagePicker(){
@@ -392,22 +396,57 @@ function closeImagePicker(){
   if(modal) modal.style.display = 'none';
 }
 
+function enterRootFolder(folder){
+  _driveRootId = folder.id;
+  _driveBreadcrumb = [{id: folder.id, name: folder.name}];
+  loadDriveFolder(folder.id);
+}
+
+function navigateToBreadcrumb(index){
+  // Truncate breadcrumb to that index and reload
+  _driveBreadcrumb = _driveBreadcrumb.slice(0, index + 1);
+  var target = _driveBreadcrumb[_driveBreadcrumb.length - 1];
+  loadDriveFolder(target.id);
+}
+
+function enterSubFolder(id, name){
+  _driveBreadcrumb.push({id: id, name: name});
+  loadDriveFolder(id);
+}
+
+function renderBreadcrumb(){
+  var el = document.getElementById('driveBreadcrumb');
+  if(!el) return;
+  if(_driveBreadcrumb.length <= 1){ el.innerHTML = ''; return; }
+  var parts = _driveBreadcrumb.map(function(b, i){
+    var isLast = i === _driveBreadcrumb.length - 1;
+    if(isLast) return '<span style="color:#333;font-weight:600;">'+escAttr(b.name)+'</span>';
+    return '<a href="javascript:void(0)" onclick="navigateToBreadcrumb('+i+')" style="color:#8ab81d;text-decoration:none;">'+escAttr(b.name)+'</a>';
+  });
+  el.innerHTML = parts.join(' <span style="color:#bbb;">›</span> ');
+}
+
 function loadDriveFolder(folderId){
   var grid = document.getElementById('driveImageGrid');
   if(!grid) return;
+  renderBreadcrumb();
   if(_driveCache[folderId]){ renderDriveGrid(_driveCache[folderId]); return; }
   grid.innerHTML = '<div style="color:#888;padding:20px;grid-column:1/-1;">Loading…</div>';
   var key = getDriveApiKey();
-  var query = encodeURIComponent("'"+folderId+"' in parents and mimeType contains 'image/' and trashed=false");
+  // Fetch both folders and image files in this directory
+  var query = encodeURIComponent("'"+folderId+"' in parents and trashed=false and (mimeType='application/vnd.google-apps.folder' or mimeType contains 'image/')");
   var fields = encodeURIComponent('files(id,name,mimeType,thumbnailLink)');
-  var url = 'https://www.googleapis.com/drive/v3/files?q='+query+'&fields='+fields+'&pageSize=200&key='+encodeURIComponent(key);
+  var url = 'https://www.googleapis.com/drive/v3/files?q='+query+'&fields='+fields+'&pageSize=500&orderBy=name&key='+encodeURIComponent(key);
   fetch(url).then(function(r){
     if(!r.ok) throw new Error('HTTP '+r.status);
     return r.json();
   }).then(function(data){
-    var files = data.files || [];
-    _driveCache[folderId] = files;
-    renderDriveGrid(files);
+    var all = data.files || [];
+    var folders = all.filter(function(f){return f.mimeType === 'application/vnd.google-apps.folder';});
+    var images  = all.filter(function(f){return f.mimeType !== 'application/vnd.google-apps.folder';});
+    var entry = {folders: folders, images: images};
+    _driveCache[folderId] = entry;
+    renderDriveGrid(entry);
   }).catch(function(err){
     grid.innerHTML = '<div style="color:#c00;padding:20px;grid-column:1/-1;font-size:13px;">'
       + '<b>Failed to load folder.</b> ' + escAttr(err.message) + '<br><br>'
@@ -417,24 +456,38 @@ function loadDriveFolder(folderId){
   });
 }
 
-function renderDriveGrid(files){
+function renderDriveGrid(entry){
   var grid = document.getElementById('driveImageGrid');
   if(!grid) return;
-  if(!files.length){
-    grid.innerHTML = '<div style="color:#888;padding:20px;grid-column:1/-1;">No images in this folder.</div>';
+  var folders = entry.folders || [];
+  var images = entry.images || [];
+  if(!folders.length && !images.length){
+    grid.innerHTML = '<div style="color:#888;padding:20px;grid-column:1/-1;">This folder is empty.</div>';
     return;
   }
-  grid.innerHTML = files.map(function(f){
+  var foldersHtml = folders.map(function(f){
+    var name = escAttr(f.name);
+    var nameJs = name.replace(/\\/g,'\\\\').replace(/\x27/g,"\\'");
+    return '<div style="cursor:pointer;border:2px solid transparent;border-radius:6px;overflow:hidden;background:#f7f3e5;" '
+      + 'onmouseover="this.style.borderColor=\'#8ab81d\'" onmouseout="this.style.borderColor=\'transparent\'" '
+      + 'onclick="enterSubFolder(\''+escAttr(f.id)+'\',\''+nameJs+'\')">'
+      + '<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:48px;color:#c5a960;">📁</div>'
+      + '<div style="padding:4px 6px;font-size:11px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;">'+name+'</div>'
+      + '</div>';
+  }).join('');
+  var imagesHtml = images.map(function(f){
     var thumb = f.thumbnailLink ? f.thumbnailLink.replace(/=s\d+/, '=s400') : '';
+    var nameJs = escAttr(f.name).replace(/\\/g,'\\\\').replace(/\x27/g,"\\'");
     return '<div style="cursor:pointer;border:2px solid transparent;border-radius:6px;overflow:hidden;background:#fafafa;" '
       + 'onmouseover="this.style.borderColor=\'#8ab81d\'" onmouseout="this.style.borderColor=\'transparent\'" '
-      + 'onclick="pickDriveImage(\''+escAttr(f.id)+'\',\''+escAttr(f.name).replace(/\\/g,'\\\\').replace(/\x27/g,"\\'")+'\')">'
+      + 'onclick="pickDriveImage(\''+escAttr(f.id)+'\',\''+nameJs+'\')">'
       + '<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;overflow:hidden;background:repeating-conic-gradient(#eee 0% 25%,#fff 0% 50%) 0 0/12px 12px;">'
       + (thumb ? '<img src="'+escAttr(thumb)+'" style="max-width:100%;max-height:100%;object-fit:contain;" referrerpolicy="no-referrer" />' : '<span style="color:#bbb;font-size:11px;">no preview</span>')
       + '</div>'
       + '<div style="padding:4px 6px;font-size:11px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+escAttr(f.name)+'</div>'
       + '</div>';
   }).join('');
+  grid.innerHTML = foldersHtml + imagesHtml;
 }
 
 function pickDriveImage(fileId, fileName){
