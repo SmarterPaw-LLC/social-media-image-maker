@@ -104,14 +104,14 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&family=Fraunces:wght@400;800&family=Ultra&family=Nunito:wght@400;700&family=Barlow+Condensed:wght@400;700;800&family=Bebas+Neue&family=Oswald:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Fraunces:wght@100;200;300;400;500;600;700;800;900&family=Ultra&family=Nunito:wght@200;300;400;500;600;700;800;900&family=Barlow+Condensed:wght@100;200;300;400;500;600;700;800;900&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=DM+Sans:wght@100;200;300;400;500;600;700;800;900&display=swap" rel="stylesheet">
 </head>
 <body>
 
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v36</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v38</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -256,13 +256,13 @@ var cooperLoaded=false;
 var FONTS_BY_BRAND = {
   meowi: [
     {label:'Cooper Black',     family:'CooperBlack',       weights:[400]},
-    {label:'Poppins',          family:'Poppins',           weights:[400,500,700]}
+    {label:'Poppins',          family:'Poppins',           weights:[100,200,300,400,500,600,700,800,900]}
   ],
   kkz: [
-    {label:'Barlow Condensed', family:'Barlow Condensed',  weights:[400,700,800]},
+    {label:'Barlow Condensed', family:'Barlow Condensed',  weights:[100,200,300,400,500,600,700,800,900]},
     {label:'Bebas Neue',       family:'Bebas Neue',        weights:[400]},
-    {label:'Oswald',           family:'Oswald',            weights:[400,700]},
-    {label:'DM Sans',          family:'DM Sans',           weights:[400,500,700]}
+    {label:'Oswald',           family:'Oswald',            weights:[200,300,400,500,600,700]},
+    {label:'DM Sans',          family:'DM Sans',           weights:[100,200,300,400,500,600,700,800,900]}
   ]
 };
 
@@ -278,7 +278,9 @@ function ensureExtendedFontLoaded(family){
   if(!family) return;
   if(_loadedExtFonts[family]) return;
   _loadedExtFonts[family] = true;
-  var url = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(family).replace(/%20/g,'+') + ':wght@400;700&display=swap';
+  // Request the full weight range so the weight dropdown can pick any of 100-900.
+  // Google Fonts will ignore unavailable weights gracefully (fall back to nearest).
+  var url = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(family).replace(/%20/g,'+') + ':wght@100;200;300;400;500;600;700;800;900&display=swap';
   var link = document.createElement('link');
   link.rel = 'stylesheet';
   link.href = url;
@@ -1331,12 +1333,12 @@ function buildTextProps(l){
   }
   fontOpts += '<optgroup label="More"><option value="__browse__">Browse all Google Fonts…</option></optgroup>';
 
-  // Weight options depend on the currently selected family.
-  // For brand fonts, use their declared weights. For extended fonts, default to 400/700.
+  // Weight options. Brand fonts declare their own `weights` arrays (respecting known limits like
+  // Cooper Black = 400 only). Extended Google fonts load the full 100–900 range and are offered all.
   var selectedFont = fontList.find(function(f){return f.family===l.fontFamily;});
-  var weightsList = selectedFont ? (selectedFont.weights||[400]) : [400, 700];
+  var weightsList = selectedFont ? (selectedFont.weights||[400]) : [100,200,300,400,500,600,700,800,900];
   var weightOpts = weightsList.map(function(w){
-    var nameMap = {300:'Light',400:'Regular',500:'Medium',600:'Semibold',700:'Bold',800:'Extrabold',900:'Black'};
+    var nameMap = {100:'Thin',200:'Extralight',300:'Light',400:'Regular',500:'Medium',600:'Semibold',700:'Bold',800:'Extrabold',900:'Black'};
     return '<option value="'+w+'"'+(l.fontWeight==w?' selected':'')+'>'+(nameMap[w]||w)+'</option>';
   }).join('');
   return '<div class="prop-section">'
@@ -1381,8 +1383,8 @@ function buildTextProps(l){
     +'<div style="margin-bottom:5px;margin-top:8px;">'
     +SEL('Align','ptxt_align',[['left','Left'],['center','Center'],['right','Right']],l.align)
     +'</div>'
-    +R('Line Height','ptxt_lineh',l.lineHeight*100,50,300,5)
-    +R('Letter Spacing','ptxt_ls',l.letterSpacing,-20,50,0.5)
+    +R('Line Height','ptxt_lineh',l.lineHeight*100,50,500,1)
+    +R('Letter Spacing','ptxt_ls',l.letterSpacing,-50,200,0.5)
     +NUMPAIR('X (px)','ntxtx',l.x,'Y (px)','ntxty',l.y)
     +NUMPAIR('W (px)','ntxtw',l.w,'H (px)','ntxth',l.h)
     +R('X','ptxt_x',Math.round(l.x),-canvasW,canvasW*2,2)
@@ -1404,6 +1406,20 @@ function addLayerGradientStops(grad, layer){
   } else {
     grad.addColorStop(0, layer.gradTop || '#8ab81d');
     grad.addColorStop(1, layer.gradBottom || '#3c8e14');
+  }
+}
+
+// Called whenever the user manually edits Top or Bottom on a gradient layer.
+// This forces the layer back into 2-stop mode — the user's change has to take effect,
+// which means discarding any multi-stop array they were previously using.
+function revertToTwoStopOnEdit(layer){
+  if(layer.gradStops){
+    delete layer.gradStops;
+    // Deactivate any preset highlight since the layer no longer matches
+    if(activePresetId){
+      var p = gradientPresets.find(function(pp){return pp.id===activePresetId;});
+      if(p && p.stops){ activePresetId=''; renderPresets(); }
+    }
   }
 }
 
@@ -1499,9 +1515,11 @@ function bindPropEvents(layer){
     on('pshFillType','change',function(e){layer.fillType=e.target.value;renderProps();redraw();});
     on('pshGradType','change',function(e){layer.gradType=e.target.value;redraw();});
     on('pshGradTop','input',function(e){
-      if(layer.fillType==='solid')layer.fillColor=e.target.value;else layer.gradTop=e.target.value;redraw();
+      if(layer.fillType==='solid')layer.fillColor=e.target.value;
+      else {layer.gradTop=e.target.value; revertToTwoStopOnEdit(layer);}
+      redraw();
     });
-    on('pshGradBot','input',function(e){layer.gradBottom=e.target.value;redraw();});
+    on('pshGradBot','input',function(e){layer.gradBottom=e.target.value; revertToTwoStopOnEdit(layer); redraw();});
     rng('pshGradAngle',function(v){layer.gradAngle=v;redraw();});
     // Brand color swatches: click = top/solid, alt+click = bottom (gradient only)
     bindBrandSwatches('pshColor', function(hex){
@@ -1511,9 +1529,11 @@ function bindPropEvents(layer){
       } else if(window.__altPressed){
         layer.gradBottom=hex;
         var el=document.getElementById('pshGradBot'); if(el) el.value=hex;
+        revertToTwoStopOnEdit(layer);
       } else {
         layer.gradTop=hex;
         var el=document.getElementById('pshGradTop'); if(el) el.value=hex;
+        revertToTwoStopOnEdit(layer);
       }
       redraw();
     });
@@ -1575,8 +1595,7 @@ function bindPropEvents(layer){
           return;
         }
         layer.fontFamily = fam;
-        // Extended fonts: default weights 400/700
-        if(layer.fontWeight !== 400 && layer.fontWeight !== 700) layer.fontWeight = 400;
+        // Extended fonts support the full 100–900 range; keep whatever weight the user had set.
         ensureExtendedFontLoaded(fam);
         renderProps(); redraw();
       });
@@ -1584,8 +1603,8 @@ function bindPropEvents(layer){
     on('ptxt_weight','change',function(e){layer.fontWeight=+e.target.value;redraw();});
     on('ptxt_fillMode','change',function(e){ layer.fillMode=e.target.value; renderProps(); redraw(); });
     on('ptxt_color','input',function(e){layer.color=e.target.value;redraw();});
-    on('ptxt_gradTop','input',function(e){layer.gradTop=e.target.value;redraw();});
-    on('ptxt_gradBot','input',function(e){layer.gradBottom=e.target.value;redraw();});
+    on('ptxt_gradTop','input',function(e){layer.gradTop=e.target.value; revertToTwoStopOnEdit(layer); redraw();});
+    on('ptxt_gradBot','input',function(e){layer.gradBottom=e.target.value; revertToTwoStopOnEdit(layer); redraw();});
     rng('ptxt_gradAngle',function(v){layer.gradAngle=+v;redraw();});
     // Brand swatches: one row under the active color picker. Alt-click targets the bottom gradient color.
     if((layer.fillMode||'solid')==='solid'){
@@ -1605,6 +1624,7 @@ function bindPropEvents(layer){
           layer.gradTop=hex;
           var el=document.getElementById('ptxt_gradTop'); if(el) el.value=hex;
         }
+        revertToTwoStopOnEdit(layer);
         redraw();
       });
     }
