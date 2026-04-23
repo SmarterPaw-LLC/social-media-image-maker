@@ -104,14 +104,14 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Fraunces:wght@100;200;300;400;500;600;700;800;900&family=Ultra&family=Nunito:wght@200;300;400;500;600;700;800;900&family=Barlow+Condensed:wght@100;200;300;400;500;600;700;800;900&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=DM+Sans:wght@100;200;300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Fraunces:wght@100;200;300;400;500;600;700;800;900&family=Ultra&family=Nunito:wght@200;300;400;500;600;700;800;900&family=Barlow+Condensed:wght@100;200;300;400;500;600;700;800;900&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=DM+Sans:wght@100;200;300;400;500;600;700;800;900&family=Fredoka+One&family=Chewy&family=Kalam:wght@300;400;700&display=swap" rel="stylesheet">
 </head>
 <body>
 
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v39</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v41</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -255,8 +255,11 @@ var cooperLoaded=false;
 // The family string is what goes into the canvas `font` property.
 var FONTS_BY_BRAND = {
   meowi: [
-    {label:'Cooper Black',     family:'CooperBlack',       weights:[400]},
-    {label:'Poppins',          family:'Poppins',           weights:[100,200,300,400,500,600,700,800,900]}
+    {label:'Fredoka One',                      family:'Fredoka One', weights:[400]},
+    {label:'Chewy',                            family:'Chewy',       weights:[400]},
+    {label:'Kalam',                            family:'Kalam',       weights:[300,400,700]},
+    {label:'Cooper Black',                     family:'CooperBlack', weights:[400]},
+    {label:'Poppins',                          family:'Poppins',     weights:[100,200,300,400,500,600,700,800,900]}
   ],
   kkz: [
     {label:'Barlow Condensed', family:'Barlow Condensed',  weights:[100,200,300,400,500,600,700,800,900]},
