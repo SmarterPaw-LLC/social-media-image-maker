@@ -104,7 +104,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <body>
 
 <header>
-  <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v8</span></div>
+  <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v9</span></div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
     <button class="brand-opt active" data-brand="meowi" onclick="setBrand('meowi')">Meowi/Doggi</button>
@@ -362,7 +362,11 @@ function fitZoom(){
 }
 function applyZoom(){
   var w=document.getElementById('canvasWrap');
+  var c=document.getElementById('mainCanvas');
   w.style.width=(canvasW*zoomLevel)+'px';w.style.height=(canvasH*zoomLevel)+'px';
+  // Also scale the canvas ELEMENT's CSS display size so all its pixels are visible inside the wrap.
+  // Without this, the canvas renders at its pixel size (canvasW x canvasH CSS pixels) and gets clipped by overflow:hidden.
+  c.style.width=(canvasW*zoomLevel)+'px';c.style.height=(canvasH*zoomLevel)+'px';
   document.getElementById('zoomLabel').textContent=Math.round(zoomLevel*100)+'%';
 }
 
