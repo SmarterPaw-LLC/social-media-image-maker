@@ -81,6 +81,8 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .preset-swatch.active{border-color:var(--text);box-shadow:0 0 0 2px #fff,0 0 0 4px var(--text);}
 .preset-swatch .del-preset{display:none;position:absolute;top:-5px;right:-5px;width:14px;height:14px;background:#e53;color:#fff;border-radius:50%;font-size:9px;align-items:center;justify-content:center;cursor:pointer;}
 .preset-swatch:hover .del-preset{display:flex;}
+.preset-swatch .edit-preset{display:none;position:absolute;top:-5px;left:-5px;width:14px;height:14px;background:#555;color:#fff;border-radius:50%;font-size:8px;align-items:center;justify-content:center;cursor:pointer;line-height:1;}
+.preset-swatch:hover .edit-preset{display:flex;}
 .add-preset-btn{width:36px;height:36px;border-radius:6px;border:2px dashed var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--muted);background:none;transition:all 0.15s;}
 .add-preset-btn:hover{border-color:var(--green);color:var(--green);}
 
@@ -102,14 +104,14 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&family=Fraunces:wght@400;800&family=Ultra&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&family=Fraunces:wght@400;800&family=Ultra&family=Nunito:wght@400;700&family=Barlow+Condensed:wght@400;700;800&family=Bebas+Neue&family=Oswald:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
 </head>
 <body>
 
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v30</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v31</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -252,19 +254,52 @@ var cooperLoaded=false;
 // The family string is what goes into the canvas `font` property.
 var FONTS_BY_BRAND = {
   meowi: [
-    {label:'Cooper Black',   family:'CooperBlack',  weights:[400]},
-    {label:'Poppins',        family:'Poppins',      weights:[400,500,700]}
+    {label:'Cooper Black',     family:'CooperBlack',       weights:[400]},
+    {label:'Poppins',          family:'Poppins',           weights:[400,500,700]}
   ],
   kkz: [
-    {label:'Fraunces',       family:'Fraunces',     weights:[400,800]},
-    {label:'Ultra',          family:'Ultra',        weights:[400]},
-    {label:'Nunito',         family:'Nunito',       weights:[400,700]}
+    {label:'Barlow Condensed', family:'Barlow Condensed',  weights:[400,700,800]},
+    {label:'Bebas Neue',       family:'Bebas Neue',        weights:[400]},
+    {label:'Oswald',           family:'Oswald',            weights:[400,700]},
+    {label:'DM Sans',          family:'DM Sans',           weights:[400,500,700]}
   ]
 };
 
+// ── EXTENDED GOOGLE FONTS LIBRARY ──
+// Snapshot of ~800+ Google Fonts family names. Users can search and pick any of these
+// as a text-layer font. Each one is loaded on-demand via a <link> injection the first
+// time it is referenced, keeping initial page weight low.
+var GOOGLE_FONTS = ["ABeeZee", "Abel", "Abril Fatface", "Aclonica", "Acme", "Actor", "Adamina", "Advent Pro", "Aguafina Script", "Akronim", "Aladin", "Albert Sans", "Aldrich", "Alef", "Alegreya", "Alegreya SC", "Alegreya Sans", "Alegreya Sans SC", "Alex Brush", "Alfa Slab One", "Alice", "Alike", "Alike Angular", "Allan", "Allerta", "Allerta Stencil", "Allura", "Almendra", "Almendra Display", "Almendra SC", "Amarante", "Amaranth", "Amatic SC", "Amethysta", "Amiri", "Anaheim", "Andada", "Andika", "Angkor", "Annie Use Your Telescope", "Anonymous Pro", "Antic", "Antic Didone", "Antic Slab", "Anton", "Anton SC", "Arapey", "Arbutus", "Arbutus Slab", "Architects Daughter", "Archivo", "Archivo Black", "Archivo Narrow", "Arimo", "Arizonia", "Armata", "Artifika", "Arvo", "Asap", "Asap Condensed", "Asset", "Astloch", "Asul", "Atomic Age", "Aubrey", "Audiowide", "Autour One", "Average", "Average Sans", "Averia Gruesa Libre", "Averia Libre", "Averia Sans Libre", "Averia Serif Libre", "Bad Script", "Bakbak One", "Balthazar", "Bangers", "Barlow", "Barlow Condensed", "Barlow Semi Condensed", "Barriecito", "Barrio", "Basic", "Battambang", "Baumans", "Bayon", "Be Vietnam Pro", "Bebas Neue", "Belgrano", "Belleza", "BenchNine", "Bentham", "Berkshire Swash", "Bevan", "Big Shoulders Display", "Big Shoulders Text", "Bigelow Rules", "Bigshot One", "Bilbo", "Bilbo Swash Caps", "Biryani", "Bitter", "Black Ops One", "Bodoni Moda", "Bokor", "Bonbon", "Boogaloo", "Borel", "Bowlby One", "Bowlby One SC", "Brawler", "Bree Serif", "Bricolage Grotesque", "Bubblegum Sans", "Bubbler One", "Buda", "Buenard", "Bungee", "Bungee Hairline", "Bungee Inline", "Bungee Outline", "Bungee Shade", "Butcherman", "Butterfly Kids", "Cabin", "Cabin Condensed", "Cabin Sketch", "Caesar Dressing", "Cagliostro", "Calligraffitti", "Cambay", "Cambo", "Candal", "Cantarell", "Cantata One", "Cantora One", "Capriola", "Cardo", "Carme", "Carrois Gothic", "Carrois Gothic SC", "Carter One", "Caudex", "Caveat", "Cedarville Cursive", "Ceviche One", "Changa One", "Chango", "Chau Philomene One", "Chela One", "Chelsea Market", "Chenla", "Cherry Cream Soda", "Cherry Swash", "Chewy", "Chicle", "Chivo", "Cinzel", "Cinzel Decorative", "Clicker Script", "Coda", "Coda Caption", "Codystar", "Combo", "Comfortaa", "Coming Soon", "Commissioner", "Concert One", "Condiment", "Content", "Contrail One", "Convergence", "Cookie", "Copse", "Corben", "Cormorant", "Cormorant Garamond", "Cormorant Infant", "Cormorant SC", "Cormorant Unicase", "Cormorant Upright", "Courgette", "Cousine", "Coustard", "Covered By Your Grace", "Crafty Girls", "Creepster", "Crete Round", "Crimson Pro", "Crimson Text", "Croissant One", "Crushed", "Cuprum", "Cutive", "Cutive Mono", "DM Mono", "DM Sans", "DM Serif Display", "DM Serif Text", "Damion", "Dancing Script", "Dangrek", "Dawning of a New Day", "Days One", "Dekko", "Delius", "Delius Swash Caps", "Delius Unicase", "Della Respira", "Denk One", "Devonshire", "Dhurjati", "Didact Gothic", "Diplomata", "Diplomata SC", "Domine", "Donegal One", "Doppio One", "Dorsa", "Dosis", "Dr Sugiyama", "Droid Sans", "Droid Sans Mono", "Droid Serif", "Duru Sans", "Dynalight", "EB Garamond", "Eagle Lake", "Eater", "Economica", "Ek Mukta", "Electrolize", "Elsie", "Elsie Swash Caps", "Emblema One", "Emilys Candy", "Engagement", "Englebert", "Enriqueta", "Epilogue", "Erica One", "Esteban", "Euphoria Script", "Ewert", "Exo", "Exo 2", "Expletus Sans", "Fanwood Text", "Fascinate", "Fascinate Inline", "Faster One", "Fasthand", "Fauna One", "Federant", "Federo", "Felipa", "Fenix", "Figtree", "Finger Paint", "Fira Mono", "Fira Sans", "Fjalla One", "Fjord One", "Flamenco", "Flavors", "Fondamento", "Fontdiner Swanky", "Forum", "Francois One", "Fraunces", "Freckle Face", "Fredericka the Great", "Fredoka One", "Freehand", "Fresca", "Frijole", "Fruktur", "Fugaz One", "GFS Didot", "GFS Neohellenic", "Gabriela", "Gafata", "Galdeano", "Galindo", "Gentium Basic", "Gentium Book Basic", "Geo", "Geologica", "Geostar", "Geostar Fill", "Germania One", "Gidugu", "Gilda Display", "Give You Glory", "Glass Antiqua", "Glegoo", "Gloria Hallelujah", "Goblin One", "Gochi Hand", "Gorditas", "Goudy Bookletter 1911", "Graduate", "Grand Hotel", "Grape Nuts", "Gravitas One", "Great Vibes", "Griffy", "Gruppo", "Gudea", "Gurajada", "Habibi", "Halant", "Hammersmith One", "Hanalei", "Hanalei Fill", "Handlee", "Hanken Grotesk", "Hanuman", "Happy Monkey", "Headland One", "Henny Penny", "Herr Von Muellerhoff", "Hind", "Holtwood One SC", "Homemade Apple", "Homenaje", "IBM Plex Mono", "IBM Plex Sans", "IBM Plex Sans Condensed", "IBM Plex Serif", "IM Fell DW Pica", "IM Fell DW Pica SC", "IM Fell Double Pica", "IM Fell Double Pica SC", "IM Fell English", "IM Fell English SC", "IM Fell French Canon", "IM Fell French Canon SC", "IM Fell Great Primer", "IM Fell Great Primer SC", "Iceberg", "Iceland", "Imprima", "Inclusive Sans", "Inconsolata", "Inder", "Indie Flower", "Inika", "Instrument Sans", "Instrument Serif", "Inter", "Irish Grover", "Istok Web", "Italiana", "Italianno", "Jacques Francois", "Jacques Francois Shadow", "Jaldi", "Jim Nightshade", "Jockey One", "Jolly Lodger", "Josefin Sans", "Josefin Slab", "Jost", "Joti One", "Judson", "Julee", "Julius Sans One", "Junge", "Jura", "Just Another Hand", "Just Me Again Down Here", "Kalam", "Kameron", "Kantumruy", "Karla", "Karma", "Kaushan Script", "Kavoon", "Kdam Thmor", "Keania One", "Kelly Slab", "Kenia", "Khand", "Khmer", "Khula", "Kite One", "Knewave", "Kotta One", "Koulen", "Kranky", "Kreon", "Kristi", "Krona One", "Kumbh Sans", "La Belle Aurore", "Laila", "Lakki Reddy", "Lancelot", "Lateef", "Lato", "League Script", "Leckerli One", "Ledger", "Lekton", "Lemon", "Lexend", "Lexend Deca", "Lexend Exa", "Lexend Giga", "Lexend Mega", "Lexend Peta", "Lexend Tera", "Lexend Zetta", "Libre Baskerville", "Libre Bodoni", "Libre Caslon Display", "Libre Caslon Text", "Libre Franklin", "Life Savers", "Lilita One", "Lily Script One", "Limelight", "Linden Hill", "Lobster", "Lobster Two", "Londrina Outline", "Londrina Shadow", "Londrina Sketch", "Londrina Solid", "Lora", "Love Ya Like A Sister", "Loved by the King", "Lovers Quarrel", "Luckiest Guy", "Lusitana", "Lustria", "Macondo", "Macondo Swash Caps", "Magra", "Maiden Orange", "Mako", "Mallanna", "Mandali", "Manrope", "Marcellus", "Marcellus SC", "Marck Script", "Margarine", "Marko One", "Marmelad", "Martel", "Martel Sans", "Marvel", "Mate", "Mate SC", "Maven Pro", "McLaren", "Meddon", "MedievalSharp", "Medula One", "Megrim", "Meie Script", "Merienda", "Merienda One", "Merriweather", "Merriweather Sans", "Metal", "Metal Mania", "Metamorphous", "Metrophobic", "Michroma", "Milonga", "Miltonian", "Miltonian Tattoo", "Miniver", "Miss Fajardose", "Modak", "Modern Antiqua", "Mohave", "Molengo", "Molle", "Monda", "Monofett", "Monoton", "Monsieur La Doulaise", "Montaga", "Montez", "Montserrat", "Montserrat Alternates", "Montserrat Subrayada", "Moul", "Moulpali", "Mountains of Christmas", "Mouse Memoirs", "Mr Bedfort", "Mr Dafoe", "Mr De Haviland", "Mrs Saint Delafield", "Mrs Sheppards", "Muli", "Mulish", "Mystery Quest", "NTR", "Neucha", "Neuton", "New Rocker", "News Cycle", "Niconne", "Nixie One", "Nobile", "Nokora", "Norican", "Nosifer", "Nothing You Could Do", "Noticia Text", "Noto Sans", "Noto Serif", "Nova Cut", "Nova Flat", "Nova Mono", "Nova Oval", "Nova Round", "Nova Script", "Nova Slim", "Nova Square", "Numans", "Nunito", "Nunito Sans", "Odor Mean Chey", "Offside", "Old Standard TT", "Oldenburg", "Oleo Script", "Oleo Script Swash Caps", "Onest", "Open Sans", "Open Sans Condensed", "Oranienbaum", "Orbitron", "Oregano", "Orienta", "Original Surfer", "Oswald", "Outfit", "Over the Rainbow", "Overlock", "Overlock SC", "Overpass", "Overpass Mono", "Ovo", "Oxygen", "Oxygen Mono", "PT Mono", "PT Sans", "PT Sans Caption", "PT Sans Narrow", "PT Serif", "PT Serif Caption", "Pacifico", "Palanquin", "Palanquin Dark", "Paprika", "Parisienne", "Passero One", "Passion One", "Passions Conflict", "Pathway Gothic One", "Patrick Hand", "Patrick Hand SC", "Patua One", "Paytone One", "Peddana", "Peralta", "Permanent Marker", "Petit Formal Script", "Petrona", "Philosopher", "Piedra", "Pinyon Script", "Pirata One", "Plaster", "Play", "Playball", "Playfair Display", "Playfair Display SC", "Plus Jakarta Sans", "Podkova", "Poiret One", "Poller One", "Poly", "Pompiere", "Pontano Sans", "Poppins", "Port Lligat Sans", "Port Lligat Slab", "Potta One", "Pragati Narrow", "Prata", "Preahvihear", "Press Start 2P", "Princess Sofia", "Prociono", "Prosto One", "Puritan", "Purple Purse", "Quando", "Quantico", "Quattrocento", "Quattrocento Sans", "Questrial", "Quicksand", "Quintessential", "Qwigley", "Racing Sans One", "Radley", "Rajdhani", "Rakkas", "Raleway", "Raleway Dots", "Ramabhadra", "Ramaraja", "Rambla", "Rammetto One", "Ranchers", "Rancho", "Ranga", "Rationale", "Ravi Prakash", "Readex Pro", "Red Hat Display", "Red Hat Mono", "Red Hat Text", "Redressed", "Reem Kufi", "Reenie Beanie", "Rethink Sans", "Revalia", "Ribeye", "Ribeye Marrow", "Righteous", "Risque", "Roboto", "Roboto Condensed", "Roboto Slab", "Rochester", "Rock Salt", "Rokkitt", "Romanesco", "Ropa Sans", "Rosario", "Rosarivo", "Rouge Script", "Rozha One", "Rubik", "Rubik Dirt", "Rubik Glitch", "Rubik Iso", "Rubik Mono One", "Rubik One", "Rubik Puddles", "Ruda", "Rufina", "Ruge Boogie", "Ruluko", "Rum Raisin", "Ruslan Display", "Russo One", "Ruthie", "Rye", "STIX Two Text", "Sacramento", "Sail", "Salsa", "Sanchez", "Sancreek", "Sansita One", "Sarina", "Sarpanch", "Satisfy", "Scada", "Scheherazade", "Schibsted Grotesk", "Schoolbell", "Seaweed Script", "Sevillana", "Seymour One", "Shadows Into Light", "Shadows Into Light Two", "Shantell Sans", "Shanti", "Share", "Share Tech", "Share Tech Mono", "Shojumaru", "Short Stack", "Shrikhand", "Siemreap", "Sigmar One", "Signika", "Signika Negative", "Simonetta", "Sintony", "Sirin Stencil", "Six Caps", "Sixtyfour", "Sixtyfour Convergence", "Skranji", "Slabo 13px", "Slabo 27px", "Slackey", "Smokum", "Smythe", "Sniglet", "Snippet", "Snowburst One", "Sofadi One", "Sofia", "Sofia Sans", "Sonsie One", "Sora", "Sorts Mill Goudy", "Source Code Pro", "Source Sans Pro", "Source Serif Pro", "Space Grotesk", "Space Mono", "Special Elite", "Spectral", "Spicy Rice", "Spinnaker", "Spirax", "Spline Sans", "Spline Sans Mono", "Squada One", "Sree Krushnadevaraya", "Stalemate", "Stalinist One", "Stardos Stencil", "Stint Ultra Condensed", "Stint Ultra Expanded", "Stoke", "Strait", "Sue Ellen Francisco", "Sunshiney", "Supermercado One", "Suranna", "Suravaram", "Suwannaphum", "Swanky and Moo Moo", "Syncopate", "Syne", "Tangerine", "Taprom", "Tauri", "Teko", "Telex", "Tenali Ramakrishna", "Tenor Sans", "Text Me One", "The Girl Next Door", "Tienne", "Timmana", "Tinos", "Titan One", "Titillium Web", "Trade Winds", "Trocchi", "Trochut", "Trykker", "Tulpen One", "Ubuntu", "Ubuntu Condensed", "Ubuntu Mono", "Ultra", "Unbounded", "Uncial Antiqua", "Underdog", "Unica One", "UnifrakturCook", "UnifrakturMaguntia", "Unkempt", "Unlock", "Unna", "Urbanist", "VT323", "Vampiro One", "Varela", "Varela Round", "Vast Shadow", "Vesper Libre", "Vibur", "Vidaloka", "Viga", "Vina Sans", "Voces", "Volkhov", "Vollkorn", "Voltaire", "Waiting for the Sunrise", "Wallpoet", "Walter Turncoat", "Warnes", "Wellfleet", "Wendy One", "Wire One", "Work Sans", "Yanone Kaffeesatz", "Yellowtail", "Yeseva One", "Yesteryear", "Zen Dots", "Zen Kaku Gothic Antique", "Zen Kaku Gothic New", "Zen Maru Gothic", "Zen Old Mincho", "Zeyada", "Zilla Slab", "Zilla Slab Highlight"];
+
+// Track which extended fonts have been injected so we don't repeat
+var _loadedExtFonts = {};
+function ensureExtendedFontLoaded(family){
+  if(!family) return;
+  if(_loadedExtFonts[family]) return;
+  _loadedExtFonts[family] = true;
+  var url = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(family).replace(/%20/g,'+') + ':wght@400;700&display=swap';
+  var link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = url;
+  // After load, tell canvas to redraw so the font actually appears
+  link.onload = function(){ if(document.fonts && document.fonts.ready){ document.fonts.ready.then(redraw); } else { redraw(); } };
+  document.head.appendChild(link);
+}
+
+
 // Re-render text layers once web fonts are ready (important: canvas won't use the font until it's loaded)
 if (document.fonts && document.fonts.ready) {
-  document.fonts.ready.then(function(){ redraw(); });
+  document.fonts.ready.then(function(){
+    // Ensure any text layer using a non-brand font has its link injected
+    layers.forEach(function(l){
+      if(l.type==='text' && l.fontFamily){
+        var brandFonts = [].concat(FONTS_BY_BRAND.meowi||[], FONTS_BY_BRAND.kkz||[]);
+        var isBrand = brandFonts.some(function(f){return f.family===l.fontFamily;});
+        if(!isBrand) ensureExtendedFontLoaded(l.fontFamily);
+      }
+    });
+    redraw();
+  });
 }
 
 // ── BRAND LOGOS ──
@@ -655,8 +690,19 @@ function renderPresets(){
   gradientPresets.forEach(function(p){
     var sw=document.createElement('div');
     sw.className='preset-swatch'+(p.id===activePresetId?' active':'');
-    sw.style.background='linear-gradient(135deg,'+p.top+','+p.bottom+')';
+    // Render preview matching the preset's actual gradient type where possible (CSS supports all three)
+    var gt = p.gradType || 'linear';
+    var ang = (p.gradAngle==null ? 135 : p.gradAngle);
+    if(gt === 'radial')       sw.style.background='radial-gradient(circle, '+p.top+', '+p.bottom+')';
+    else if(gt === 'conic')   sw.style.background='conic-gradient(from '+ang+'deg, '+p.top+', '+p.bottom+', '+p.top+')';
+    else                      sw.style.background='linear-gradient('+ang+'deg, '+p.top+', '+p.bottom+')';
     sw.title=p.label;
+    // Edit button
+    var edit=document.createElement('div');edit.className='edit-preset';edit.textContent='✎';
+    edit.title='Edit preset';
+    edit.onclick=function(e){e.stopPropagation();openPresetEditor(p.id);};
+    sw.appendChild(edit);
+    // Delete button
     var del=document.createElement('div');del.className='del-preset';del.textContent='×';
     del.onclick=function(e){e.stopPropagation();deletePreset(p.id);};
     sw.appendChild(del);
@@ -664,32 +710,130 @@ function renderPresets(){
     g.appendChild(sw);
   });
   // add button
-  var add=document.createElement('button');add.className='add-preset-btn';add.textContent='+';add.title='Save current sticker gradient as preset';
-  add.onclick=saveCurrentAsPreset;g.appendChild(add);
+  var add=document.createElement('button');add.className='add-preset-btn';add.textContent='+';add.title='Create a new preset';
+  add.onclick=function(){openPresetEditor(null);};g.appendChild(add);
 }
 function applyPreset(p){
   activePresetId=p.id;
   var layer=layers.find(function(l){return l.id===selectedId;});
   if(layer){
     snapshotState();
-    if(layer.type==='sticker'){layer.gradTop=p.top;layer.gradBottom=p.bottom;renderProps();redraw();}
-    else if(layer.type==='shape'){layer.gradTop=p.top;layer.gradBottom=p.bottom;if(layer.fillType!=='solid')layer.fillType='gradient';renderProps();redraw();}
+    if(layer.type==='sticker'){
+      layer.gradTop=p.top; layer.gradBottom=p.bottom;
+      if(p.gradType) layer.gradType = p.gradType;
+      if(p.gradAngle != null) layer.gradAngle = p.gradAngle;
+      renderProps(); redraw();
+    } else if(layer.type==='shape'){
+      layer.gradTop=p.top; layer.gradBottom=p.bottom;
+      if(p.gradType) layer.gradType = p.gradType;
+      if(p.gradAngle != null) layer.gradAngle = p.gradAngle;
+      if(layer.fillType!=='solid') layer.fillType='gradient';
+      renderProps(); redraw();
+    }
   }
   renderPresets();
 }
-function saveCurrentAsPreset(){
-  var layer=layers.find(function(l){return l.id===selectedId;});
-  var top='#8ab81d',bot='#3c8e14';
-  if(layer){
-    if(layer.type==='sticker'){top=layer.gradTop;bot=layer.gradBottom;}
-    else if(layer.type==='shape'){top=layer.gradTop;bot=layer.gradBottom;}
+
+// ── PRESET EDITOR MODAL ──
+// Opens for creating a new preset (id=null) or editing an existing one (id=presetId).
+function openPresetEditor(presetId){
+  var existing = presetId ? gradientPresets.find(function(p){return p.id===presetId;}) : null;
+  var initial = existing || {
+    top:'#8ab81d', bottom:'#3c8e14',
+    gradType:'linear', gradAngle:135,
+    label:'Custom '+(gradientPresets.length+1)
+  };
+  var modal = document.getElementById('presetEditorModal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'presetEditorModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1100;';
+    modal.innerHTML = '<div style="background:#fff;border-radius:8px;padding:22px;width:440px;max-width:92vw;">'
+      + '<h3 style="margin:0 0 14px 0;" id="presetEditorTitle">Gradient Preset</h3>'
+      + '<label style="font-size:11px;font-weight:600;color:#555;">Name</label>'
+      + '<input id="peLabel" type="text" style="width:100%;box-sizing:border-box;padding:8px 10px;margin:4px 0 12px 0;border:1px solid #ccc;border-radius:5px;font-size:13px;background:#fff;">'
+      + '<div style="display:flex;gap:12px;margin-bottom:12px;">'
+      +   '<div style="flex:1;"><label style="font-size:11px;font-weight:600;color:#555;">Color 1 (Top)</label>'
+      +     '<input id="peTop" type="color" style="width:100%;height:36px;padding:2px;border:1px solid #ccc;border-radius:5px;margin-top:4px;cursor:pointer;"></div>'
+      +   '<div style="flex:1;"><label style="font-size:11px;font-weight:600;color:#555;">Color 2 (Bottom)</label>'
+      +     '<input id="peBot" type="color" style="width:100%;height:36px;padding:2px;border:1px solid #ccc;border-radius:5px;margin-top:4px;cursor:pointer;"></div>'
+      + '</div>'
+      + '<label style="font-size:11px;font-weight:600;color:#555;">Gradient Type</label>'
+      + '<select id="peType" style="width:100%;box-sizing:border-box;padding:7px 9px;margin:4px 0 12px 0;border:1px solid #ccc;border-radius:5px;font-size:13px;background:#fff;">'
+      +   '<option value="linear">Linear</option><option value="radial">Radial</option><option value="conic">Conic</option>'
+      + '</select>'
+      + '<div id="peAngleRow"><label style="font-size:11px;font-weight:600;color:#555;">Angle: <span id="peAngleVal">135</span>°</label>'
+      +   '<input id="peAngle" type="range" min="0" max="360" step="5" style="width:100%;"></div>'
+      + '<div style="margin:14px 0 10px 0;"><label style="font-size:11px;font-weight:600;color:#555;">Preview</label>'
+      +   '<div id="pePreview" style="height:60px;border-radius:6px;border:1px solid #ccc;margin-top:4px;"></div></div>'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px;border-top:1px solid #eee;padding-top:12px;">'
+      +   '<button id="peDeleteBtn" style="padding:7px 14px;font-size:12px;border:1px solid #e53;border-radius:5px;background:#fff;color:#e53;cursor:pointer;">Delete</button>'
+      +   '<div style="display:flex;gap:8px;">'
+      +     '<button style="padding:7px 14px;font-size:12px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;" onclick="closePresetEditor()">Cancel</button>'
+      +     '<button style="padding:7px 14px;font-size:12px;border:1px solid var(--green);border-radius:5px;background:var(--green);color:#fff;cursor:pointer;font-weight:600;" onclick="savePresetEditor()">Save</button>'
+      +   '</div>'
+      + '</div></div>';
+    document.body.appendChild(modal);
+    modal.addEventListener('click', function(e){ if(e.target===modal) closePresetEditor(); });
   }
-  var label=prompt('Preset name:','Custom '+(gradientPresets.length+1));
-  if(!label)return;
-  var id='p'+Date.now();
-  gradientPresets.push({id:id,top:top,bottom:bot,label:label});
-  activePresetId=id;
-  savePresets();renderPresets();
+  modal._editingId = presetId;
+  document.getElementById('presetEditorTitle').textContent = presetId ? 'Edit Preset' : 'New Preset';
+  document.getElementById('peLabel').value = initial.label;
+  document.getElementById('peTop').value = initial.top;
+  document.getElementById('peBot').value = initial.bottom;
+  document.getElementById('peType').value = initial.gradType || 'linear';
+  document.getElementById('peAngle').value = initial.gradAngle==null ? 135 : initial.gradAngle;
+  document.getElementById('peAngleVal').textContent = initial.gradAngle==null ? 135 : initial.gradAngle;
+  document.getElementById('peDeleteBtn').style.display = presetId ? '' : 'none';
+  document.getElementById('peDeleteBtn').onclick = function(){
+    if(confirm('Delete this preset?')){ deletePreset(presetId); closePresetEditor(); }
+  };
+  // Live preview
+  function updatePreview(){
+    var top = document.getElementById('peTop').value;
+    var bot = document.getElementById('peBot').value;
+    var type = document.getElementById('peType').value;
+    var ang = +document.getElementById('peAngle').value;
+    var pv = document.getElementById('pePreview');
+    document.getElementById('peAngleVal').textContent = ang;
+    // Hide angle for radial (it doesn't apply)
+    document.getElementById('peAngleRow').style.display = (type==='radial') ? 'none' : '';
+    if(type==='radial')     pv.style.background = 'radial-gradient(circle, '+top+', '+bot+')';
+    else if(type==='conic') pv.style.background = 'conic-gradient(from '+ang+'deg, '+top+', '+bot+', '+top+')';
+    else                    pv.style.background = 'linear-gradient('+ang+'deg, '+top+', '+bot+')';
+  }
+  ['peTop','peBot','peType','peAngle'].forEach(function(id){
+    document.getElementById(id).oninput = updatePreview;
+    document.getElementById(id).onchange = updatePreview;
+  });
+  updatePreview();
+  modal.style.display = 'flex';
+}
+function closePresetEditor(){
+  var modal = document.getElementById('presetEditorModal');
+  if(modal) modal.style.display = 'none';
+}
+function savePresetEditor(){
+  var modal = document.getElementById('presetEditorModal');
+  var editingId = modal && modal._editingId;
+  var label = (document.getElementById('peLabel').value || 'Custom').trim();
+  var top = document.getElementById('peTop').value;
+  var bot = document.getElementById('peBot').value;
+  var type = document.getElementById('peType').value;
+  var ang = +document.getElementById('peAngle').value;
+  if(editingId){
+    var p = gradientPresets.find(function(p){return p.id===editingId;});
+    if(p){ p.label=label; p.top=top; p.bottom=bot; p.gradType=type; p.gradAngle=ang; }
+  } else {
+    var id = 'p'+Date.now();
+    gradientPresets.push({id:id, top:top, bottom:bot, gradType:type, gradAngle:ang, label:label});
+    activePresetId = id;
+  }
+  savePresets();
+  renderPresets();
+  // Refresh props panel so any sticker/shape preset swatch list updates
+  renderProps();
+  closePresetEditor();
 }
 function deletePreset(id){
   gradientPresets=gradientPresets.filter(function(p){return p.id!==id;});
@@ -805,6 +949,7 @@ function addStickerLayer(){
     align:'left',
     gradTop:preset?preset.top:'#8ab81d',
     gradBottom:preset?preset.bottom:'#3c8e14',
+    gradType:'linear', gradAngle:180,  // 180 = top→bottom; preserves legacy look
     padTop:40,padBottom:40,bleed:22,
     shadowColor:'#1a4d00',shadowOpacity:45,shadowSpread:10,
     lineGap:999,opacity:100,scale:1,rotation:0,
@@ -1005,8 +1150,10 @@ function buildStickerProps(l){
     +'<div style="margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
     +'<div class="preset-grid" style="margin-top:3px;">'
     +gradientPresets.map(function(p){
-      return '<div class="preset-swatch" style="background:linear-gradient(135deg,'+p.top+','+p.bottom+')" title="'+p.label+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
+      return '<div class="preset-swatch" style="background:'+presetSwatchCss(p)+'" title="'+p.label+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
     }).join('')+'</div></div>'
+    +SEL('Gradient Type','pGradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']],l.gradType||'linear')
+    +R('Gradient Angle','pGradAngle',l.gradAngle==null?180:l.gradAngle,0,360,5)
     +R('Pad Top','ppadTop',l.padTop,0,200,4)
     +R('Pad Bot','ppadBot',l.padBottom,0,200,4)
     +R('Outline','pbleed',l.bleed,0,100,2)
@@ -1035,7 +1182,7 @@ function buildShapeProps(l){
     +'<div style="margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
     +'<div class="preset-grid" style="margin-top:3px;">'
     +gradientPresets.map(function(p){
-      return '<div class="preset-swatch" style="background:linear-gradient(135deg,'+p.top+','+p.bottom+')" title="'+p.label+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
+      return '<div class="preset-swatch" style="background:'+presetSwatchCss(p)+'" title="'+p.label+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
     }).join('')+'</div></div>'
     +SEL('Gradient Type','pshGradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']],l.gradType||'linear')
     +R('Gradient Angle','pshGradAngle',l.gradAngle,0,360,5)
@@ -1074,14 +1221,26 @@ function buildSvgProps(l){
 
 // ── TEXT LAYER PROPERTIES PANEL ──
 function buildTextProps(l){
-  // Build font options from the current brand's list
+  // Brand default fonts (shown first in dropdown)
   var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
-  var fontOpts = fontList.map(function(f){
-    return '<option value="'+escAttr(f.family)+'"'+(l.fontFamily===f.family?' selected':'')+'>'+escAttr(f.label)+'</option>';
-  }).join('');
-  // Weight options depend on the currently selected family
-  var selectedFont = fontList.find(function(f){return f.family===l.fontFamily;}) || fontList[0];
-  var weightOpts = (selectedFont.weights||[400]).map(function(w){
+  // Is the current font one of the brand defaults?
+  var isBrandFont = fontList.some(function(f){return f.family===l.fontFamily;});
+  var fontOpts = '<optgroup label="Brand">'
+    + fontList.map(function(f){
+        return '<option value="'+escAttr(f.family)+'"'+(l.fontFamily===f.family?' selected':'')+'>'+escAttr(f.label)+'</option>';
+      }).join('')
+    + '</optgroup>';
+  // If not a brand font, show the current font as the selected option
+  if(!isBrandFont && l.fontFamily){
+    fontOpts += '<optgroup label="Current"><option value="'+escAttr(l.fontFamily)+'" selected>'+escAttr(l.fontFamily)+'</option></optgroup>';
+  }
+  fontOpts += '<optgroup label="More"><option value="__browse__">Browse all Google Fonts…</option></optgroup>';
+
+  // Weight options depend on the currently selected family.
+  // For brand fonts, use their declared weights. For extended fonts, default to 400/700.
+  var selectedFont = fontList.find(function(f){return f.family===l.fontFamily;});
+  var weightsList = selectedFont ? (selectedFont.weights||[400]) : [400, 700];
+  var weightOpts = weightsList.map(function(w){
     var nameMap = {300:'Light',400:'Regular',500:'Medium',600:'Semibold',700:'Bold',800:'Extrabold',900:'Black'};
     return '<option value="'+w+'"'+(l.fontWeight==w?' selected':'')+'>'+(nameMap[w]||w)+'</option>';
   }).join('');
@@ -1093,6 +1252,15 @@ function buildTextProps(l){
     +'<select id="ptxt_family">'+fontOpts+'</select></div>'
     +'<div><label style="font-size:10px;color:var(--muted);">Weight</label>'
     +'<select id="ptxt_weight">'+weightOpts+'</select></div>'
+    +'</div>'
+    // Hidden search UI revealed when user picks "Browse all Google Fonts…"
+    +'<div id="ptxt_browse" class="hidden" style="margin-top:5px;padding:8px;background:#f4faf4;border-radius:6px;border:1px solid #d5e8bc;">'
+    +'<label style="font-size:10px;color:var(--muted);">Search Google Fonts</label>'
+    +'<input type="text" id="ptxt_search" list="ptxt_fontlist" placeholder="Type to filter…" style="width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:5px;font-size:12px;background:#fff;">'
+    +'<datalist id="ptxt_fontlist">'
+    + GOOGLE_FONTS.map(function(n){return '<option value="'+escAttr(n)+'">';}).join('')
+    +'</datalist>'
+    +'<button type="button" id="ptxt_apply" style="margin-top:6px;padding:5px 10px;font-size:11px;border:1px solid var(--green);border-radius:5px;background:var(--green);color:#fff;cursor:pointer;font-weight:600;">Apply</button>'
     +'</div>'
     +R('Size (px)','ptxt_size',l.fontSize,8,400,1)
     +'<div class="col2" style="margin-bottom:5px;">'
@@ -1116,8 +1284,20 @@ function applyPresetToLayer(layerId,presetId){
   var preset=gradientPresets.find(function(p){return p.id===presetId;});
   if(!layer||!preset)return;
   snapshotState();
-  layer.gradTop=preset.top;layer.gradBottom=preset.bottom;
-  activePresetId=presetId;renderPresets();renderProps();redraw();
+  layer.gradTop=preset.top; layer.gradBottom=preset.bottom;
+  if(preset.gradType) layer.gradType = preset.gradType;
+  if(preset.gradAngle != null) layer.gradAngle = preset.gradAngle;
+  activePresetId=presetId; renderPresets(); renderProps(); redraw();
+}
+
+// Returns a CSS background string that matches a preset's gradient type,
+// used for rendering preview swatches in property panels.
+function presetSwatchCss(p){
+  var gt = p.gradType || 'linear';
+  var ang = (p.gradAngle==null ? 135 : p.gradAngle);
+  if(gt === 'radial') return 'radial-gradient(circle, '+p.top+', '+p.bottom+')';
+  if(gt === 'conic')  return 'conic-gradient(from '+ang+'deg, '+p.top+', '+p.bottom+', '+p.top+')';
+  return 'linear-gradient('+ang+'deg, '+p.top+', '+p.bottom+')';
 }
 
 function bindPropEvents(layer){
@@ -1159,6 +1339,8 @@ function bindPropEvents(layer){
     on('palign','change',function(e){layer.align=e.target.value;redraw();});
     on('pgradTop','input',function(e){layer.gradTop=e.target.value;redraw();});
     on('pgradBot','input',function(e){layer.gradBottom=e.target.value;redraw();});
+    on('pGradType','change',function(e){layer.gradType=e.target.value;redraw();});
+    rng('pGradAngle',function(v){layer.gradAngle=+v;redraw();});
     on('pshadowColor','input',function(e){layer.shadowColor=e.target.value;redraw();});
     rng('ppadTop',function(v){layer.padTop=v;redraw();});
     rng('ppadBot',function(v){layer.padBottom=v;redraw();});
@@ -1205,13 +1387,41 @@ function bindPropEvents(layer){
   } else if(layer.type==='text'){
     on('ptxt_text','input',function(e){layer.text=e.target.value;redraw();});
     on('ptxt_family','change',function(e){
-      layer.fontFamily=e.target.value;
-      // When changing family, reset to that family's first available weight
-      var fontList=FONTS_BY_BRAND[currentBrand]||FONTS_BY_BRAND.meowi;
-      var f=fontList.find(function(f){return f.family===layer.fontFamily;});
+      var val = e.target.value;
+      if(val === '__browse__'){
+        // Reveal the search UI; don't change the layer yet
+        document.getElementById('ptxt_browse').classList.remove('hidden');
+        // Restore the dropdown's visible value to the current font so it doesn't stay on "Browse…"
+        e.target.value = layer.fontFamily;
+        return;
+      }
+      layer.fontFamily = val;
+      // Reset weight to first available for brand fonts
+      var fontList = FONTS_BY_BRAND[currentBrand]||FONTS_BY_BRAND.meowi;
+      var f = fontList.find(function(f){return f.family===layer.fontFamily;});
       if(f && f.weights && f.weights.indexOf(layer.fontWeight)===-1) layer.fontWeight=f.weights[0];
+      // Extended fonts don't live in FONTS_BY_BRAND — ensure they're loaded
+      if(!f) ensureExtendedFontLoaded(layer.fontFamily);
       renderProps(); redraw();
     });
+    // Apply button inside the browse panel
+    var applyBtn = document.getElementById('ptxt_apply');
+    if(applyBtn){
+      applyBtn.addEventListener('click', function(){
+        var fam = document.getElementById('ptxt_search').value.trim();
+        if(!fam) return;
+        // Check it's a known Google Font (case-sensitive match against GOOGLE_FONTS)
+        if(GOOGLE_FONTS.indexOf(fam) === -1){
+          alert('Not a recognized Google Fonts family: "' + fam + '"');
+          return;
+        }
+        layer.fontFamily = fam;
+        // Extended fonts: default weights 400/700
+        if(layer.fontWeight !== 400 && layer.fontWeight !== 700) layer.fontWeight = 400;
+        ensureExtendedFontLoaded(fam);
+        renderProps(); redraw();
+      });
+    }
     on('ptxt_weight','change',function(e){layer.fontWeight=+e.target.value;redraw();});
     on('ptxt_color','input',function(e){layer.color=e.target.value;redraw();});
     on('ptxt_align','change',function(e){layer.align=e.target.value;redraw();});
@@ -1941,10 +2151,45 @@ function drawStickerLayer(ctx,layer){
       else{px2=acx+Math.sin(angle)*radius;py2=acy+Math.cos(angle)*radius;rot2=-angle;}
       c.save();c.translate(px2,py2);c.rotate(rot2);c.textAlign='center';c.textBaseline='alphabetic';
       if(pass==='stroke')c.strokeText(ch,0,0);
-      else if(useGrad){var lg=c.createLinearGradient(0,TOP-py2,0,(TOP+textH)-py2);lg.addColorStop(0,gradTop);lg.addColorStop(1,gradBot);c.fillStyle=lg;c.fillText(ch,0,0);}
+      else if(useGrad){
+        // Build a gradient appropriate to the sticker type, positioned in the overall block's
+        // coordinate system, but offset by (-px2, -py2) because we've already translated c.
+        var lg = buildStickerFillGradient(c, -px2, -py2);
+        c.fillStyle=lg;c.fillText(ch,0,0);
+      }
       else c.fillText(ch,0,0);
       c.restore();chX+=chW;
     }
+  }
+  // Builds a gradient in canvas-c's current coordinate system (which may be translated/rotated)
+  // targeting the overall text block [TOP, TOP+textH] vertically and [HPAD, HPAD+cw] horizontally.
+  // Apply ox/oy offsets to compensate for any prior translation on c.
+  function buildStickerFillGradient(c, ox, oy){
+    ox = ox || 0; oy = oy || 0;
+    var gradType = layer.gradType || 'linear';
+    var blockX = HPAD, blockY = TOP, blockW = cw, blockH = textH;
+    var cxg = blockX + blockW/2 + ox;
+    var cyg = blockY + blockH/2 + oy;
+    if(gradType === 'radial'){
+      var r = Math.max(blockW, blockH)/2;
+      var g = c.createRadialGradient(cxg, cyg, 0, cxg, cyg, r);
+      g.addColorStop(0, gradTop); g.addColorStop(1, gradBot);
+      return g;
+    }
+    if(gradType === 'conic' && c.createConicGradient){
+      var angRad = ((layer.gradAngle||0) - 90) * Math.PI/180;
+      var g2 = c.createConicGradient(angRad, cxg, cyg);
+      g2.addColorStop(0, gradTop); g2.addColorStop(1, gradBot);
+      return g2;
+    }
+    // Linear with angle. Default angle 180 = top→bottom (preserves v29 behavior).
+    var ang = ((layer.gradAngle==null ? 180 : layer.gradAngle) - 90) * Math.PI/180;
+    var len = Math.sqrt(blockW*blockW + blockH*blockH)/2;
+    var gx1 = cxg - Math.cos(ang)*len, gy1 = cyg - Math.sin(ang)*len;
+    var gx2 = cxg + Math.cos(ang)*len, gy2 = cyg + Math.sin(ang)*len;
+    var g3 = c.createLinearGradient(gx1, gy1, gx2, gy2);
+    g3.addColorStop(0, gradTop); g3.addColorStop(1, gradBot);
+    return g3;
   }
   var off=document.createElement('canvas');off.width=Math.round(cw)+HPAD*2;off.height=Math.round(totalH)+VPAD*2;
   var oc=off.getContext('2d');
@@ -1959,8 +2204,10 @@ function drawStickerLayer(ctx,layer){
   oc.save();oc.strokeStyle='#fff';oc.lineWidth=outline*2.5;oc.lineJoin='round';oc.lineCap='round';oc.fillStyle='#fff';
   rowPos.forEach(function(rp){curved(oc,rp.row.text,FONT.replace('{S}',rp.row.size),getX(rp.row),rp.y,rp.row.curve,'stroke');curved(oc,rp.row.text,FONT.replace('{S}',rp.row.size),getX(rp.row),rp.y,rp.row.curve,'fill');});
   oc.restore();
-  var grad=oc.createLinearGradient(0,TOP,0,y);grad.addColorStop(0,gradTop);grad.addColorStop(1,gradBot);
-  oc.save();oc.fillStyle=grad;
+  // Gradient fill pass. For straight (non-curved) text we set fillStyle once on oc.
+  // For curved text, `curved()` builds its own per-character gradient via buildStickerFillGradient.
+  oc.save();
+  oc.fillStyle = buildStickerFillGradient(oc, 0, 0);
   rowPos.forEach(function(rp){var isCurved=rp.row.curve!==0;curved(oc,rp.row.text,FONT.replace('{S}',rp.row.size),getX(rp.row),rp.y,rp.row.curve,'fill',isCurved);});
   oc.restore();
   ctx.save();
