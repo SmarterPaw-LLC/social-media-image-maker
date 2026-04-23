@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmarterPaw Social Image Tool</title>
+<style>
+  :root {
+    --green: #8ab81d;
+    --green-dark: #3c8e14;
+    --orange: #f6ae40;
+    --orange-dark: #f07830;
+    --bg: #f4f5f0;
+    --panel: #ffffff;
+    --border: #e0e0d8;
+    --text: #1a1a1a;
+    --muted: #888;
+    --radius: 10px;
+    --shadow: 0 2px 16px rgba(0,0,0,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* ── Header ── */
+  header {
+    background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%);
+    color: #fff; padding: 16px 24px;
+    display: flex; align-items: center; gap: 16px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  }
+  header h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
+  header span { font-size: 13px; opacity: 0.8; }
+  .header-spacer { flex: 1; }
+  .btn-export {
+    background: #fff; color: var(--green-dark);
+    border: none; border-radius: 8px;
+    padding: 10px 20px; font-size: 14px; font-weight: 700;
+    cursor: pointer; letter-spacing: 0.02em;
+    transition: transform 0.15s, box-shadow 0.15s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  }
+  .btn-export:hover { transform: scale(1.03); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
+
+  /* ── Layout ── */
+  .app { display: flex; height: calc(100vh - 57px); overflow: hidden; }
+
+  /* ── Left panel ── */
+  .sidebar {
+    width: 300px; flex-shrink: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+
+  .panel-section { display: flex; flex-direction: column; gap: 8px; }
+  .panel-section h3 {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted);
+    padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+
+  label { font-size: 13px; font-weight: 600; color: var(--text); display: block; margin-bottom: 3px; }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; padding: 8px 10px; border: 1.5px solid var(--border);
+    border-radius: 6px; font-size: 13px; background: #fafafa;
+    transition: border-color 0.15s;
+    font-family: inherit;
+  }
+  input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
+    outline: none; border-color: var(--green);
+  }
+  textarea { resize: vertical; min-height: 60px; }
+  input[type=range] { width: 100%; accent-color: var(--green); }
+  input[type=color] { width: 44px; height: 32px; border: 1.5px solid var(--border); border-radius: 6px; cursor: pointer; padding: 2px; }
+
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row label { margin: 0; flex: 1; }
+  .col2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  .range-row { display: flex; gap: 8px; align-items: center; }
+  .range-row input[type=range] { flex: 1; }
+  .range-val { font-size: 12px; color: var(--muted); width: 30px; text-align: right; flex-shrink: 0; }
+
+  .color-row { display: flex; gap: 8px; align-items: center; }
+  .color-row label { margin: 0; flex: 1; font-size: 12px; }
+
+  .size-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; padding: 8px 6px; border: 2px solid var(--border);
+    border-radius: 8px; cursor: pointer; font-size: 11px; font-weight: 600;
+    color: var(--muted); background: #fafafa; transition: all 0.15s;
+    line-height: 1.2;
+  }
+  .size-btn:hover { border-color: var(--green); color: var(--green); }
+  .size-btn.active { border-color: var(--green); background: #f0f8e8; color: var(--green-dark); }
+  .size-btn .ratio { font-size: 18px; }
+  .sizes-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+
+  .layer-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border: 1.5px solid var(--border);
+    border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600;
+    background: #fafafa; transition: all 0.15s;
+  }
+  .layer-item:hover { border-color: var(--green); }
+  .layer-item.active { border-color: var(--green); background: #f0f8e8; }
+  .layer-item .ltype { font-size: 16px; }
+  .layer-item .lname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .layer-del { color: #ccc; font-size: 14px; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+  .layer-del:hover { color: #e53; background: #fee; }
+
+  .btn-add {
+    width: 100%; padding: 9px; border: 2px dashed var(--border);
+    border-radius: 8px; font-size: 13px; font-weight: 600;
+    color: var(--muted); background: none; cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-add:hover { border-color: var(--green); color: var(--green); }
+
+  .tab-row { display: flex; gap: 4px; }
+  .tab {
+    flex: 1; padding: 7px; text-align: center; font-size: 12px; font-weight: 700;
+    border: 1.5px solid var(--border); border-radius: 6px; cursor: pointer;
+    background: #fafafa; color: var(--muted); transition: all 0.15s;
+  }
+  .tab.active { border-color: var(--green); background: #f0f8e8; color: var(--green-dark); }
+
+  /* ── Canvas area ── */
+  .canvas-area {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    overflow: auto; background: #e8e8e0;
+    position: relative; padding: 32px;
+  }
+  .canvas-wrap {
+    position: relative; box-shadow: 0 8px 48px rgba(0,0,0,0.2);
+    border-radius: 4px; overflow: hidden; cursor: default;
+    background: #fff;
+    user-select: none;
+  }
+  #mainCanvas { display: block; }
+
+  .drop-hint {
+    position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    pointer-events: none; opacity: 0; transition: opacity 0.2s;
+    background: rgba(138,184,29,0.08);
+    border: 3px dashed var(--green);
+    border-radius: 4px; font-size: 16px; font-weight: 700; color: var(--green);
+  }
+  .canvas-wrap.drag-over .drop-hint { opacity: 1; }
+
+  .zoom-controls {
+    position: absolute; bottom: 16px; right: 16px;
+    display: flex; gap: 6px;
+  }
+  .zoom-btn {
+    width: 32px; height: 32px; border-radius: 8px;
+    border: 1.5px solid var(--border); background: var(--panel);
+    font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow); transition: all 0.15s;
+  }
+  .zoom-btn:hover { border-color: var(--green); }
+  .zoom-label { background: var(--panel); border: 1.5px solid var(--border); border-radius: 8px; padding: 0 10px; font-size: 12px; font-weight: 700; color: var(--muted); display: flex; align-items: center; box-shadow: var(--shadow); }
+
+  .hidden { display: none !important; }
+  .divider { height: 1px; background: var(--border); margin: 2px 0; }
+
+  .prop-section { display: flex; flex-direction: column; gap: 8px; }
+  .sticker-line { display: flex; gap: 6px; align-items: center; }
+  .sticker-line input { flex: 1; }
+  .sticker-line button { padding: 4px 8px; border: 1.5px solid var(--border); border-radius: 5px; cursor: pointer; font-size: 12px; background: #fafafa; }
+  .sticker-line button:hover { border-color: #e53; color: #e53; }
+
+  .alert { padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+  .alert-green { background: #f0f8e8; color: var(--green-dark); border: 1px solid #c5e0a0; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🐾 Social Image Tool</h1>
+    <span>SmarterPaw Marketing</span>
+  </div>
+  <div class="header-spacer"></div>
+  <button class="btn-export" onclick="exportImage()">⬇ Export PNG</button>
+</header>
+
+<div class="app">
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+
+    <!-- Canvas size -->
+    <div class="panel-section">
+      <h3>Canvas Size</h3>
+      <div class="sizes-grid" id="sizeGrid"></div>
+      <div class="col2" style="margin-top:4px;">
+        <div>
+          <label>W (px)</label>
+          <input type="number" id="customW" value="1080" min="100" max="4000" onchange="applyCustomSize()">
+        </div>
+        <div>
+          <label>H (px)</label>
+          <input type="number" id="customH" value="1080" min="100" max="4000" onchange="applyCustomSize()">
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Layers -->
+    <div class="panel-section">
+      <h3>Layers</h3>
+      <div id="layerList" style="display:flex;flex-direction:column;gap:5px;"></div>
+      <div style="display:flex;gap:5px;margin-top:2px;">
+        <button class="btn-add" onclick="addImageLayer()" style="flex:1">+ Image</button>
+        <button class="btn-add" onclick="addStickerLayer()" style="flex:1">+ Sticker</button>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Layer properties -->
+    <div class="panel-section" id="propPanel">
+      <h3>Properties</h3>
+      <div id="propContent">
+        <div class="alert alert-green">Select or add a layer to edit its properties.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Canvas ── -->
+  <div class="canvas-area" id="canvasArea">
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="mainCanvas"></canvas>
+      <div class="drop-hint">Drop image here</div>
+    </div>
+    <div class="zoom-controls">
+      <button class="zoom-btn" onclick="zoom(-0.1)">−</button>
+      <div class="zoom-label" id="zoomLabel">100%</div>
+      <button class="zoom-btn" onclick="zoom(0.1)">+</button>
+      <button class="zoom-btn" onclick="fitZoom()" title="Fit">⊡</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// FONT LOAD
+// ─────────────────────────────────────────────
+var COOPER_URL = 'https://cdn.shopify.com/s/files/1/0657/0831/files/CooperBlack-Std.otf';
+var cooperLoaded = false;
+(function() {
+  var ff = new FontFace('CooperBlack', 'url(' + COOPER_URL + ')');
+  ff.load().then(function(f) { document.fonts.add(f); cooperLoaded = true; redraw(); });
+})();
+
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+var canvasW = 1080, canvasH = 1080;
+var zoomLevel = 0.5;
+var layers = [];   // [{type:'image'|'sticker', ...}]
+var selectedId = null;
+var dragState = null;  // {layerId, startX, startY, origX, origY}
+var nextId = 1;
+
+var SIZES = [
+  { label: 'Square', sub: '1:1', w: 1080, h: 1080, icon: '⬛' },
+  { label: 'Portrait', sub: '4:5', w: 1080, h: 1350, icon: '▬' },
+  { label: 'Story', sub: '9:16', w: 1080, h: 1920, icon: '▮' },
+  { label: 'Landscape', sub: '16:9', w: 1920, h: 1080, icon: '▬' },
+  { label: 'Twitter', sub: '2:1', w: 1600, h: 800, icon: '🐦' },
+  { label: 'FB Cover', sub: '2.7:1', w: 1640, h: 624, icon: '📘' },
+];
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', function() {
+  buildSizeGrid();
+  setCanvasSize(1080, 1080);
+  fitZoom();
+  bindCanvasEvents();
+  bindDrop();
+  redraw();
+});
+
+// ─────────────────────────────────────────────
+// SIZE GRID
+// ─────────────────────────────────────────────
+function buildSizeGrid() {
+  var grid = document.getElementById('sizeGrid');
+  grid.innerHTML = '';
+  SIZES.forEach(function(s, i) {
+    var btn = document.createElement('div');
+    btn.className = 'size-btn' + (i === 0 ? ' active' : '');
+    btn.innerHTML = '<span class="ratio">' + s.icon + '</span>' + s.label + '<br><small>' + s.sub + '</small>';
+    btn.onclick = function() {
+      document.querySelectorAll('.size-btn').forEach(function(b){b.classList.remove('active');});
+      btn.classList.add('active');
+      setCanvasSize(s.w, s.h);
+    };
+    grid.appendChild(btn);
+  });
+}
+
+function applyCustomSize() {
+  var w = parseInt(document.getElementById('customW').value) || 1080;
+  var h = parseInt(document.getElementById('customH').value) || 1080;
+  document.querySelectorAll('.size-btn').forEach(function(b){b.classList.remove('active');});
+  setCanvasSize(w, h);
+}
+
+function setCanvasSize(w, h) {
+  canvasW = w; canvasH = h;
+  document.getElementById('customW').value = w;
+  document.getElementById('customH').value = h;
+  var canvas = document.getElementById('mainCanvas');
+  canvas.width = w; canvas.height = h;
+  var wrap = document.getElementById('canvasWrap');
+  wrap.style.width = (w * zoomLevel) + 'px';
+  wrap.style.height = (h * zoomLevel) + 'px';
+  redraw();
+}
+
+// ─────────────────────────────────────────────
+// ZOOM
+// ─────────────────────────────────────────────
+function zoom(delta) {
+  zoomLevel = Math.max(0.05, Math.min(3, zoomLevel + delta));
+  applyZoom();
+}
+function fitZoom() {
+  var area = document.getElementById('canvasArea');
+  var pw = area.clientWidth - 80, ph = area.clientHeight - 80;
+  zoomLevel = Math.min(pw / canvasW, ph / canvasH, 1);
+  applyZoom();
+}
+function applyZoom() {
+  var wrap = document.getElementById('canvasWrap');
+  wrap.style.width  = (canvasW * zoomLevel) + 'px';
+  wrap.style.height = (canvasH * zoomLevel) + 'px';
+  document.getElementById('zoomLabel').textContent = Math.round(zoomLevel * 100) + '%';
+}
+
+// ─────────────────────────────────────────────
+// LAYERS
+// ─────────────────────────────────────────────
+function addImageLayer(imgEl, filename) {
+  var id = nextId++;
+  layers.push({
+    id: id, type: 'image',
+    name: filename || 'Image ' + id,
+    img: imgEl || null,
+    x: 0, y: 0,
+    w: canvasW, h: canvasH,
+    opacity: 100,
+    fit: 'cover',   // cover | contain | fill
+    flipH: false, flipV: false,
+  });
+  selectLayer(id);
+  renderLayerList();
+  redraw();
+  if (!imgEl) promptImageUpload(id);
+}
+
+function addStickerLayer() {
+  var id = nextId++;
+  layers.push({
+    id: id, type: 'sticker',
+    name: 'Sticker ' + id,
+    x: 50, y: 50,
+    lines: [
+      { text: 'YOUR TEXT', size: 120, offsetX: 0, curve: 0 },
+    ],
+    align: 'left',
+    gradTop: '#8ab81d',
+    gradBottom: '#3c8e14',
+    padTop: 40, padBottom: 40,
+    bleed: 22,
+    shadowColor: '#1a4d00',
+    shadowOpacity: 45,
+    shadowSpread: 10,
+    lineGap: 999,
+    opacity: 100,
+    scale: 1,
+    rotation: 0,
+  });
+  selectLayer(id);
+  renderLayerList();
+  redraw();
+}
+
+function selectLayer(id) {
+  selectedId = id;
+  renderLayerList();
+  renderProps();
+}
+
+function deleteLayer(id) {
+  layers = layers.filter(function(l){ return l.id !== id; });
+  if (selectedId === id) { selectedId = layers.length ? layers[layers.length-1].id : null; }
+  renderLayerList();
+  renderProps();
+  redraw();
+}
+
+function moveLayer(id, dir) {
+  var idx = layers.findIndex(function(l){return l.id===id;});
+  var newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= layers.length) return;
+  var tmp = layers[idx]; layers[idx] = layers[newIdx]; layers[newIdx] = tmp;
+  renderLayerList();
+  redraw();
+}
+
+function renderLayerList() {
+  var list = document.getElementById('layerList');
+  list.innerHTML = '';
+  // render in reverse (top layer first in UI)
+  for (var i = layers.length - 1; i >= 0; i--) {
+    (function(layer, idx) {
+      var item = document.createElement('div');
+      item.className = 'layer-item' + (layer.id === selectedId ? ' active' : '');
+      var icon = layer.type === 'image' ? '🖼' : '✍️';
+      item.innerHTML = '<span class="ltype">' + icon + '</span>'
+        + '<span class="lname">' + layer.name + '</span>'
+        + '<span class="layer-del" title="Delete">✕</span>';
+      item.onclick = function(e) {
+        if (e.target.classList.contains('layer-del')) { deleteLayer(layer.id); return; }
+        selectLayer(layer.id);
+      };
+      list.appendChild(item);
+    })(layers[i], i);
+  }
+}
+
+// ─────────────────────────────────────────────
+// PROPS PANEL
+// ─────────────────────────────────────────────
+function renderProps() {
+  var layer = layers.find(function(l){return l.id===selectedId;});
+  var el = document.getElementById('propContent');
+  if (!layer) { el.innerHTML = '<div class="alert alert-green">Select or add a layer to edit.</div>'; return; }
+  if (layer.type === 'image') el.innerHTML = buildImageProps(layer);
+  else el.innerHTML = buildStickerProps(layer);
+  bindPropEvents(layer);
+}
+
+function buildImageProps(layer) {
+  return '<div class="prop-section">'
+    + '<label>Replace Image</label>'
+    + '<button class="btn-add" onclick="promptImageUpload(' + layer.id + ')">📁 Choose File…</button>'
+    + '<input type="file" id="fileInput_' + layer.id + '" accept="image/*" style="display:none" onchange="handleFileInput(event,' + layer.id + ')">'
+    + '</div>'
+    + field('Position X', 'number', 'prop_x', layer.x)
+    + field('Position Y', 'number', 'prop_y', layer.y)
+    + field('Width', 'number', 'prop_w', layer.w)
+    + field('Height', 'number', 'prop_h', layer.h)
+    + '<label>Fit</label>'
+    + '<select id="prop_fit">'
+    + opt('cover', 'Cover (crop to fill)', layer.fit)
+    + opt('contain', 'Contain (letterbox)', layer.fit)
+    + opt('fill', 'Stretch to fill', layer.fit)
+    + '</select>'
+    + rangeField('Opacity', 'prop_opacity', layer.opacity, 0, 100, 1)
+    + '<div class="col2">'
+    + '<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="prop_flipH"' + (layer.flipH?' checked':'') + '> Flip H</label>'
+    + '<label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="prop_flipV"' + (layer.flipV?' checked':'') + '> Flip V</label>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;margin-top:4px;">'
+    + '<button class="btn-add" style="flex:1" onclick="moveLayer(' + layer.id + ',-1)">↓ Move Down</button>'
+    + '<button class="btn-add" style="flex:1" onclick="moveLayer(' + layer.id + ',1)">↑ Move Up</button>'
+    + '</div>';
+}
+
+function buildStickerProps(layer) {
+  var linesHtml = layer.lines.map(function(line, i) {
+    return '<div style="margin-bottom:8px;padding:8px;border:1.5px solid var(--border);border-radius:6px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+      + '<b style="font-size:12px;">Line ' + (i+1) + '</b>'
+      + (layer.lines.length > 1 ? '<button onclick="removeStickerLine(' + layer.id + ',' + i + ')" style="background:none;border:none;color:#e53;cursor:pointer;font-size:14px;">✕</button>' : '')
+      + '</div>'
+      + '<label style="font-size:11px;">Text</label>'
+      + '<input type="text" class="sl_text" data-li="' + i + '" value="' + escAttr(line.text) + '">'
+      + '<div style="margin-top:6px;">'
+      + rangeField('Size', 'sl_size_' + i, line.size, 20, 400, 2)
+      + rangeField('X Offset', 'sl_offsetX_' + i, line.offsetX, -400, 400, 4)
+      + rangeField('Curve', 'sl_curve_' + i, line.curve, -100, 100, 2)
+      + '</div>'
+      + '</div>';
+  }).join('');
+
+  return '<div class="prop-section">'
+    + '<button class="btn-add" onclick="addStickerLine(' + layer.id + ')">+ Add Line</button>'
+    + linesHtml
+    + '<label>Text Align</label>'
+    + '<select id="prop_align">'
+    + opt('left','Left',layer.align)+opt('center','Center',layer.align)+opt('right','Right',layer.align)
+    + '</select>'
+    + '<div class="col2">'
+    + '<div><label style="font-size:11px;">Grad Top</label><input type="color" id="prop_gradTop" value="' + layer.gradTop + '"></div>'
+    + '<div><label style="font-size:11px;">Grad Bottom</label><input type="color" id="prop_gradBottom" value="' + layer.gradBottom + '"></div>'
+    + '</div>'
+    + rangeField('Pad Top', 'prop_padTop', layer.padTop, 0, 200, 4)
+    + rangeField('Pad Bottom', 'prop_padBottom', layer.padBottom, 0, 200, 4)
+    + rangeField('Outline Size', 'prop_bleed', layer.bleed, 0, 100, 2)
+    + '<label style="font-size:11px;">Shadow Color</label>'
+    + '<input type="color" id="prop_shadowColor" value="' + layer.shadowColor + '">'
+    + rangeField('Shadow Opacity', 'prop_shadowOpacity', layer.shadowOpacity, 0, 100, 5)
+    + rangeField('Shadow Spread', 'prop_shadowSpread', layer.shadowSpread, 0, 20, 1)
+    + rangeField('Line Gap', 'prop_lineGap', layer.lineGap === 999 ? 0 : layer.lineGap, -40, 40, 2)
+    + rangeField('Position X', 'prop_x', layer.x, -canvasW, canvasW*2, 2)
+    + rangeField('Position Y', 'prop_y', layer.y, -canvasH, canvasH*2, 2)
+    + rangeField('Scale', 'prop_scale', Math.round(layer.scale*100), 10, 300, 2)
+    + rangeField('Rotation', 'prop_rotation', layer.rotation, -180, 180, 1)
+    + rangeField('Opacity', 'prop_opacity', layer.opacity, 0, 100, 1)
+    + '<div style="display:flex;gap:6px;margin-top:4px;">'
+    + '<button class="btn-add" style="flex:1" onclick="moveLayer(' + layer.id + ',-1)">↓ Move Down</button>'
+    + '<button class="btn-add" style="flex:1" onclick="moveLayer(' + layer.id + ',1)">↑ Move Up</button>'
+    + '</div>';
+}
+
+function field(label, type, id, val) {
+  return '<div style="margin-bottom:6px;"><label style="font-size:11px;">' + label + '</label>'
+    + '<input type="' + type + '" id="' + id + '" value="' + val + '"></div>';
+}
+function rangeField(label, id, val, min, max, step) {
+  return '<div style="margin-bottom:6px;">'
+    + '<label style="font-size:11px;">' + label + '</label>'
+    + '<div class="range-row"><input type="range" id="' + id + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + val + '">'
+    + '<span class="range-val" id="' + id + '_v">' + val + '</span></div></div>';
+}
+function opt(val, label, current) {
+  return '<option value="' + val + '"' + (current===val?' selected':'') + '>' + label + '</option>';
+}
+function escAttr(s) { return String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+
+function bindPropEvents(layer) {
+  // generic helper
+  function on(id, evt, fn) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener(evt, fn);
+  }
+  function onRange(id, fn) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', function() {
+      document.getElementById(id+'_v').textContent = el.value;
+      fn(el.value);
+    });
+  }
+
+  if (layer.type === 'image') {
+    on('prop_x','input',function(e){layer.x=+e.target.value;redraw();});
+    on('prop_y','input',function(e){layer.y=+e.target.value;redraw();});
+    on('prop_w','input',function(e){layer.w=+e.target.value;redraw();});
+    on('prop_h','input',function(e){layer.h=+e.target.value;redraw();});
+    on('prop_fit','change',function(e){layer.fit=e.target.value;redraw();});
+    on('prop_flipH','change',function(e){layer.flipH=e.target.checked;redraw();});
+    on('prop_flipV','change',function(e){layer.flipV=e.target.checked;redraw();});
+    onRange('prop_opacity',function(v){layer.opacity=+v;redraw();});
+  } else {
+    // sticker line text
+    document.querySelectorAll('.sl_text').forEach(function(el) {
+      el.addEventListener('input', function() {
+        var i = +el.dataset.li;
+        layer.lines[i].text = el.value;
+        redraw();
+      });
+    });
+    // sticker line ranges
+    layer.lines.forEach(function(_, i) {
+      onRange('sl_size_'+i, function(v){layer.lines[i].size=+v;redraw();});
+      onRange('sl_offsetX_'+i, function(v){layer.lines[i].offsetX=+v;redraw();});
+      onRange('sl_curve_'+i, function(v){layer.lines[i].curve=+v;redraw();});
+    });
+    on('prop_align','change',function(e){layer.align=e.target.value;redraw();});
+    on('prop_gradTop','input',function(e){layer.gradTop=e.target.value;redraw();});
+    on('prop_gradBottom','input',function(e){layer.gradBottom=e.target.value;redraw();});
+    on('prop_shadowColor','input',function(e){layer.shadowColor=e.target.value;redraw();});
+    onRange('prop_padTop',function(v){layer.padTop=+v;redraw();});
+    onRange('prop_padBottom',function(v){layer.padBottom=+v;redraw();});
+    onRange('prop_bleed',function(v){layer.bleed=+v;redraw();});
+    onRange('prop_shadowOpacity',function(v){layer.shadowOpacity=+v;redraw();});
+    onRange('prop_shadowSpread',function(v){layer.shadowSpread=+v;redraw();});
+    onRange('prop_lineGap',function(v){layer.lineGap=+v===0?999:+v;redraw();});
+    onRange('prop_x',function(v){layer.x=+v;redraw();});
+    onRange('prop_y',function(v){layer.y=+v;redraw();});
+    onRange('prop_scale',function(v){layer.scale=+v/100;redraw();});
+    onRange('prop_rotation',function(v){layer.rotation=+v;redraw();});
+    onRange('prop_opacity',function(v){layer.opacity=+v;redraw();});
+  }
+}
+
+function addStickerLine(id) {
+  var layer = layers.find(function(l){return l.id===id;});
+  if (!layer) return;
+  layer.lines.push({ text: 'MORE TEXT', size: 80, offsetX: 0, curve: 0 });
+  renderProps();
+  redraw();
+}
+function removeStickerLine(id, i) {
+  var layer = layers.find(function(l){return l.id===id;});
+  if (!layer || layer.lines.length <= 1) return;
+  layer.lines.splice(i, 1);
+  renderProps();
+  redraw();
+}
+
+// ─────────────────────────────────────────────
+// IMAGE UPLOAD
+// ─────────────────────────────────────────────
+function promptImageUpload(layerId) {
+  var fi = document.getElementById('fileInput_' + layerId);
+  if (fi) { fi.click(); return; }
+  // create temp input
+  var input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*';
+  input.onchange = function(e) { handleFileInput(e, layerId); };
+  input.click();
+}
+function handleFileInput(e, layerId) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(ev) {
+    var img = new Image();
+    img.onload = function() {
+      var layer = layers.find(function(l){return l.id===layerId;});
+      if (layer) {
+        layer.img = img;
+        layer.name = file.name.replace(/\.[^.]+$/,'');
+        // default: fit to canvas
+        layer.w = canvasW; layer.h = canvasH;
+        layer.x = 0; layer.y = 0;
+        renderLayerList();
+        renderProps();
+        redraw();
+      }
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ─────────────────────────────────────────────
+// DRAG & DROP FILES onto canvas
+// ─────────────────────────────────────────────
+function bindDrop() {
+  var wrap = document.getElementById('canvasWrap');
+  wrap.addEventListener('dragover', function(e){ e.preventDefault(); wrap.classList.add('drag-over'); });
+  wrap.addEventListener('dragleave', function(){ wrap.classList.remove('drag-over'); });
+  wrap.addEventListener('drop', function(e) {
+    e.preventDefault(); wrap.classList.remove('drag-over');
+    var files = Array.from(e.dataTransfer.files).filter(function(f){ return f.type.startsWith('image/'); });
+    files.forEach(function(file) {
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        var img = new Image();
+        img.onload = function() {
+          addImageLayer(img, file.name.replace(/\.[^.]+$/,''));
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  });
+}
+
+// ─────────────────────────────────────────────
+// CANVAS DRAG (move layers)
+// ─────────────────────────────────────────────
+function bindCanvasEvents() {
+  var wrap = document.getElementById('canvasWrap');
+
+  wrap.addEventListener('mousedown', function(e) {
+    var rect = wrap.getBoundingClientRect();
+    var cx = (e.clientX - rect.left) / zoomLevel;
+    var cy = (e.clientY - rect.top)  / zoomLevel;
+
+    // find topmost layer hit
+    for (var i = layers.length - 1; i >= 0; i--) {
+      var l = layers[i];
+      var bds = getLayerBounds(l);
+      if (cx >= bds.x && cx <= bds.x+bds.w && cy >= bds.y && cy <= bds.y+bds.h) {
+        selectLayer(l.id);
+        dragState = { layerId: l.id, startX: e.clientX, startY: e.clientY, origX: l.x, origY: l.y };
+        break;
+      }
+    }
+  });
+
+  window.addEventListener('mousemove', function(e) {
+    if (!dragState) return;
+    var layer = layers.find(function(l){return l.id===dragState.layerId;});
+    if (!layer) return;
+    var dx = (e.clientX - dragState.startX) / zoomLevel;
+    var dy = (e.clientY - dragState.startY) / zoomLevel;
+    layer.x = Math.round(dragState.origX + dx);
+    layer.y = Math.round(dragState.origY + dy);
+    // update props if open
+    var px = document.getElementById('prop_x');
+    if (px) { px.value = layer.x; }
+    var py = document.getElementById('prop_y');
+    if (py) { py.value = layer.y; }
+    redraw();
+  });
+
+  window.addEventListener('mouseup', function() { dragState = null; });
+}
+
+function getLayerBounds(layer) {
+  if (layer.type === 'image') {
+    return { x: layer.x, y: layer.y, w: layer.w, h: layer.h };
+  } else {
+    // sticker — rough bounds based on largest line
+    var maxSize = Math.max.apply(null, layer.lines.map(function(l){return l.size;}));
+    var h = layer.lines.reduce(function(s,l){return s+l.size;}, 0) + layer.padTop + layer.padBottom;
+    var w = canvasW * 0.6;
+    return { x: layer.x, y: layer.y, w: w * layer.scale, h: h * layer.scale };
+  }
+}
+
+// ─────────────────────────────────────────────
+// REDRAW
+// ─────────────────────────────────────────────
+function redraw() {
+  var canvas = document.getElementById('mainCanvas');
+  var ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvasW, canvasH);
+
+  // checkerboard bg
+  drawCheckerboard(ctx);
+
+  layers.forEach(function(layer) {
+    ctx.save();
+    ctx.globalAlpha = (layer.opacity || 100) / 100;
+    if (layer.type === 'image') drawImageLayer(ctx, layer);
+    else drawStickerLayer(ctx, layer);
+    ctx.restore();
+  });
+}
+
+function drawCheckerboard(ctx) {
+  var sz = 24;
+  for (var y = 0; y < canvasH; y += sz) {
+    for (var x = 0; x < canvasW; x += sz) {
+      ctx.fillStyle = (Math.floor(x/sz) + Math.floor(y/sz)) % 2 === 0 ? '#e8e8e0' : '#d8d8d0';
+      ctx.fillRect(x, y, sz, sz);
+    }
+  }
+}
+
+function drawImageLayer(ctx, layer) {
+  if (!layer.img) return;
+  var img = layer.img, x = layer.x, y = layer.y, w = layer.w, h = layer.h;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  if (layer.flipH || layer.flipV) {
+    ctx.translate(x + w/2, y + h/2);
+    ctx.scale(layer.flipH ? -1 : 1, layer.flipV ? -1 : 1);
+    ctx.translate(-(x + w/2), -(y + h/2));
+  }
+  if (layer.fit === 'fill') {
+    ctx.drawImage(img, x, y, w, h);
+  } else {
+    var sw = img.naturalWidth, sh = img.naturalHeight;
+    var scale, sx, sy, dw, dh, dx, dy;
+    if (layer.fit === 'cover') {
+      scale = Math.max(w/sw, h/sh);
+    } else {
+      scale = Math.min(w/sw, h/sh);
+    }
+    dw = sw*scale; dh = sh*scale;
+    dx = x + (w-dw)/2; dy = y + (h-dh)/2;
+    ctx.drawImage(img, dx, dy, dw, dh);
+  }
+  ctx.restore();
+}
+
+// ─────────────────────────────────────────────
+// BUBBLE STICKER RENDERER (ported from bubble-sticker.liquid)
+// ─────────────────────────────────────────────
+function drawStickerLayer(ctx, layer) {
+  var lines = layer.lines.filter(function(l){ return l.text && l.text.trim(); });
+  if (!lines.length) return;
+
+  var align = layer.align || 'left';
+  var TOP_PADDING = layer.padTop || 40;
+  var BOTTOM_PADDING = layer.padBottom || 40;
+  var gradTop = layer.gradTop || '#8ab81d';
+  var gradBottom = layer.gradBottom || '#3c8e14';
+  var lineGapRaw = (layer.lineGap === 999 || layer.lineGap === undefined) ? NaN : layer.lineGap;
+
+  // shadow
+  var hex = (layer.shadowColor || '#1a4d00').replace('#','');
+  if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  var sr = parseInt(hex.substring(0,2),16);
+  var sg = parseInt(hex.substring(2,4),16);
+  var sb = parseInt(hex.substring(4,6),16);
+  var shadowOpacity = (layer.shadowOpacity || 45) / 100;
+  var shadowSpread  = (layer.shadowSpread  || 10) / 10;
+  var shadowColorStr = 'rgba('+sr+','+sg+','+sb+','+shadowOpacity+')';
+
+  var avgSize = lines.reduce(function(s,l){return s+l.size;},0) / lines.length;
+  var bleedOverride = layer.bleed;
+  var outlineScale = (!isNaN(bleedOverride) && bleedOverride > 0) ? (bleedOverride/100) : 0.22;
+  var outline  = Math.max(6, Math.round(avgSize * outlineScale));
+  var shadow   = Math.max(2, Math.round(avgSize * 0.06));
+  var shadowDx = Math.max(1, Math.round(avgSize * 0.04));
+  var shadowDy = Math.max(2, Math.round(avgSize * 0.08));
+  var strokeBleed = Math.ceil(outline*1.5) + shadowDx + Math.ceil(shadow) + 8;
+  var edgeReserve = strokeBleed;
+
+  // measure canvas width from canvasW scaled by layer scale
+  var cw = canvasW * (layer.scale || 1);
+  var maxW = cw - strokeBleed * 2;
+
+  var FONT = 'normal {SIZE}px CooperBlack, serif';
+
+  // use an offscreen canvas for measurement
+  var tmp = document.createElement('canvas');
+  var tctx = tmp.getContext('2d');
+  function measureLine(text, size) {
+    tctx.font = FONT.replace('{SIZE}', size);
+    return tctx.measureText(text).width;
+  }
+
+  // auto-scale
+  lines = lines.map(function(l) {
+    var sf = 1;
+    l.text.split(' ').forEach(function(word) {
+      var w = measureLine(word, l.size);
+      if (w > maxW) sf = Math.min(sf, maxW/w);
+    });
+    if (sf < 1) return { text: l.text, size: Math.max(12, Math.floor(l.size*sf)), offsetX: l.offsetX, curve: l.curve };
+    return l;
+  });
+  avgSize = lines.reduce(function(s,l){return s+l.size;},0)/lines.length;
+  outline  = Math.max(6, Math.round(avgSize * outlineScale));
+  shadow   = Math.max(2, Math.round(avgSize * 0.06));
+  shadowDx = Math.max(1, Math.round(avgSize * 0.04));
+  shadowDy = Math.max(2, Math.round(avgSize * 0.08));
+
+  function wrapWords(text, size) {
+    var words = text.split(' '), rows = [], cur = '';
+    words.forEach(function(w) {
+      var test = cur ? cur+' '+w : w;
+      if (measureLine(test,size) > maxW && cur) { rows.push(cur); cur=w; } else cur=test;
+    });
+    if (cur) rows.push(cur);
+    return rows;
+  }
+
+  function buildRows() {
+    var rows = [];
+    lines.forEach(function(line, li) {
+      wrapWords(line.text, line.size).forEach(function(row) {
+        rows.push({ text: row, size: line.size, offsetX: line.offsetX||0, curve: line.curve||0 });
+      });
+      if (li < lines.length - 1) {
+        var next = lines[li+1].size;
+        var avg2 = (line.size + next) / 2;
+        var gap = (!isNaN(lineGapRaw) && lineGapRaw !== 0)
+          ? lineGapRaw * (avg2/60)
+          : (avg2 >= 80 ? avg2 * -0.10 : avg2 * 0.12);
+        rows.push({ gap: gap });
+      }
+    });
+    return rows;
+  }
+
+  var allRows = buildRows();
+  var textH = 0;
+  allRows.forEach(function(r){ textH += r.gap !== undefined ? r.gap : r.size; });
+
+  // build row y positions
+  var rowPositions = [], y = TOP_PADDING;
+  allRows.forEach(function(r) {
+    if (r.gap !== undefined) { y += r.gap; return; }
+    y += r.size;
+    rowPositions.push({ row: r, y: y });
+  });
+
+  var totalH = TOP_PADDING + textH + BOTTOM_PADDING + shadowDy + Math.ceil(shadow*2) + 8;
+
+  // render to offscreen, then stamp onto main canvas
+  var offCanvas = document.createElement('canvas');
+  offCanvas.width = Math.round(cw);
+  offCanvas.height = Math.round(totalH);
+  var octx = offCanvas.getContext('2d');
+
+  function getX(r) {
+    if (align === 'center') return cw/2 + (r.offsetX||0);
+    if (align === 'right')  return cw - edgeReserve + (r.offsetX||0);
+    return edgeReserve + (r.offsetX||0);
+  }
+
+  function drawCurvedText(c, text, font, cx, cy, curveAmount, pass, useGrad) {
+    c.font = font;
+    c.textAlign = align === 'center' ? 'center' : align === 'right' ? 'right' : 'left';
+    c.textBaseline = 'alphabetic';
+    if (curveAmount === 0) {
+      if (pass === 'stroke') c.strokeText(text, cx, cy);
+      else c.fillText(text, cx, cy);
+      return;
+    }
+    var totalW = c.measureText(text).width;
+    var absC = Math.abs(curveAmount);
+    var radius = totalW * (110 - absC) / (absC * 0.9 + 0.1);
+    radius = Math.max(radius, totalW * 0.6);
+    var arcBelow = curveAmount > 0;
+    var totalAngle = totalW / radius;
+    var startAngle = -totalAngle / 2;
+    var arcCX = align === 'left' ? cx + totalW/2 : align === 'right' ? cx - totalW/2 : cx;
+    var arcCY = arcBelow ? cy + radius : cy - radius;
+    var chX = 0;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      var chW = c.measureText(ch).width;
+      var angle = startAngle + (chX + chW/2) / radius;
+      var px2, py2, rot;
+      if (arcBelow) {
+        px2 = arcCX + Math.sin(angle)*radius; py2 = arcCY - Math.cos(angle)*radius; rot = angle;
+      } else {
+        px2 = arcCX + Math.sin(angle)*radius; py2 = arcCY + Math.cos(angle)*radius; rot = -angle;
+      }
+      c.save(); c.translate(px2, py2); c.rotate(rot);
+      c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+      if (pass === 'stroke') {
+        c.strokeText(ch, 0, 0);
+      } else if (useGrad) {
+        var lg = c.createLinearGradient(0, TOP_PADDING-py2, 0, (TOP_PADDING+textH)-py2);
+        lg.addColorStop(0, gradTop); lg.addColorStop(1, gradBottom);
+        c.fillStyle = lg; c.fillText(ch, 0, 0);
+      } else {
+        c.fillText(ch, 0, 0);
+      }
+      c.restore(); chX += chW;
+    }
+  }
+
+  // pass 1: shadow
+  var shadowOff = document.createElement('canvas');
+  shadowOff.width = offCanvas.width; shadowOff.height = offCanvas.height;
+  var sctx = shadowOff.getContext('2d');
+  sctx.strokeStyle = '#ffffff'; sctx.lineWidth = outline*2; sctx.lineJoin = 'round';
+  rowPositions.forEach(function(rp) {
+    drawCurvedText(sctx, rp.row.text, FONT.replace('{SIZE}',rp.row.size), getX(rp.row), rp.y, rp.row.curve, 'stroke');
+  });
+  octx.save();
+  octx.shadowColor   = shadowColorStr;
+  octx.shadowBlur    = shadow * 2 * shadowSpread;
+  octx.shadowOffsetX = shadowDx * shadowSpread;
+  octx.shadowOffsetY = shadowDy * shadowSpread;
+  octx.drawImage(shadowOff, 0, 0);
+  octx.restore();
+
+  // pass 2: white stroke+fill
+  octx.save();
+  octx.strokeStyle = '#ffffff'; octx.lineWidth = outline*2.5;
+  octx.lineJoin = 'round'; octx.lineCap = 'round'; octx.fillStyle = '#ffffff';
+  rowPositions.forEach(function(rp) {
+    drawCurvedText(octx, rp.row.text, FONT.replace('{SIZE}',rp.row.size), getX(rp.row), rp.y, rp.row.curve, 'stroke');
+    drawCurvedText(octx, rp.row.text, FONT.replace('{SIZE}',rp.row.size), getX(rp.row), rp.y, rp.row.curve, 'fill');
+  });
+  octx.restore();
+
+  // pass 3: gradient text
+  var grad = octx.createLinearGradient(0, TOP_PADDING, 0, y);
+  grad.addColorStop(0, gradTop); grad.addColorStop(1, gradBottom);
+  octx.save(); octx.fillStyle = grad;
+  rowPositions.forEach(function(rp) {
+    var isCurved = rp.row.curve !== 0;
+    drawCurvedText(octx, rp.row.text, FONT.replace('{SIZE}',rp.row.size), getX(rp.row), rp.y, rp.row.curve, 'fill', isCurved);
+  });
+  octx.restore();
+
+  // stamp onto main canvas at layer position, with rotation
+  ctx.save();
+  var lx = layer.x || 0, ly = layer.y || 0;
+  var scale = layer.scale || 1;
+  var rot = (layer.rotation || 0) * Math.PI / 180;
+  ctx.translate(lx, ly);
+  ctx.rotate(rot);
+  ctx.scale(scale, scale);
+  ctx.drawImage(offCanvas, 0, 0, cw, totalH, 0, 0, cw, totalH);
+  ctx.restore();
+}
+
+// ─────────────────────────────────────────────
+// EXPORT
+// ─────────────────────────────────────────────
+function exportImage() {
+  // redraw without checkerboard
+  var canvas = document.getElementById('mainCanvas');
+  var ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvasW, canvasH);
+  layers.forEach(function(layer) {
+    ctx.save();
+    ctx.globalAlpha = (layer.opacity || 100) / 100;
+    if (layer.type === 'image') drawImageLayer(ctx, layer);
+    else drawStickerLayer(ctx, layer);
+    ctx.restore();
+  });
+  var link = document.createElement('a');
+  link.download = 'smarterpaw-social-' + canvasW + 'x' + canvasH + '.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+  // restore checkerboard
+  redraw();
+}
+</script>
+</body>
+</html>
