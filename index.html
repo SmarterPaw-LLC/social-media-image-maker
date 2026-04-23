@@ -106,7 +106,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v20</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v21</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -474,14 +474,14 @@ function openDriveConfig(){
       + '<h3 style="margin:0 0 4px 0;">Google Drive Setup</h3>'
       + '<p style="font-size:12px;color:#666;margin:0 0 16px 0;">Configure your Drive API key and folders. Saved to this browser only.</p>'
       + '<label style="font-size:12px;font-weight:600;">Google API Key</label>'
-      + '<input id="driveApiKeyInput" type="text" style="width:100%;padding:7px;margin:4px 0 12px 0;border:1px solid #ccc;border-radius:5px;font-family:monospace;font-size:12px;" placeholder="AIza…">'
+      + '<input id="driveApiKeyInput" type="text" style="width:100%;box-sizing:border-box;padding:8px 10px;margin:4px 0 12px 0;border:1px solid #ccc;border-radius:5px;font-family:monospace;font-size:12px;background:#fff;" placeholder="AIza…">'
       + '<label style="font-size:12px;font-weight:600;">Folders</label>'
       + '<p style="font-size:11px;color:#888;margin:2px 0 6px 0;">Each folder must be shared as "Anyone with the link can view". Paste the folder ID (the part after /folders/ in the URL).</p>'
       + '<div id="driveFoldersList" style="margin-bottom:8px;"></div>'
-      + '<button class="btn-add" style="font-size:11px;padding:4px 10px;" onclick="addDriveFolderRow()">+ Add folder</button>'
+      + '<button style="padding:6px 12px;font-size:12px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;color:#555;" onclick="addDriveFolderRow()">+ Add folder</button>'
       + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;border-top:1px solid #eee;padding-top:12px;">'
-      + '<button class="btn-add" onclick="closeDriveConfig()">Cancel</button>'
-      + '<button class="btn-add" style="background:#8ab81d;color:#fff;" onclick="saveDriveConfigFromUI()">Save</button>'
+      + '<button style="padding:7px 14px;font-size:12px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;" onclick="closeDriveConfig()">Cancel</button>'
+      + '<button style="padding:7px 14px;font-size:12px;border:1px solid var(--green);border-radius:5px;background:var(--green);color:#fff;cursor:pointer;font-weight:600;" onclick="saveDriveConfigFromUI()">Save</button>'
       + '</div></div>';
     document.body.appendChild(modal);
     modal.addEventListener('click', function(e){ if(e.target===modal) closeDriveConfig(); });
@@ -504,9 +504,9 @@ function addDriveFolderRow(name, id){
   var row = document.createElement('div');
   row.className = 'drive-folder-row';
   row.style.cssText = 'display:flex;gap:6px;margin-bottom:5px;';
-  row.innerHTML = '<input type="text" class="df-name" placeholder="Display name" value="'+escAttr(name||'')+'" style="flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:12px;">'
-    + '<input type="text" class="df-id" placeholder="Folder ID" value="'+escAttr(id||'')+'" style="flex:2;padding:6px;border:1px solid #ccc;border-radius:4px;font-size:12px;font-family:monospace;">'
-    + '<button class="btn-add" style="padding:4px 10px;font-size:11px;" onclick="this.parentNode.remove()">✕</button>';
+  row.innerHTML = '<input type="text" class="df-name" placeholder="Display name" value="'+escAttr(name||'')+'" style="flex:1;min-width:0;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:12px;background:#fff;">'
+    + '<input type="text" class="df-id" placeholder="Folder ID (from Drive URL)" value="'+escAttr(id||'')+'" style="flex:2;min-width:0;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:12px;font-family:monospace;background:#fff;">'
+    + '<button style="padding:4px 10px;font-size:12px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;color:#888;flex-shrink:0;" onclick="this.parentNode.remove()">✕</button>';
   list.appendChild(row);
 }
 
