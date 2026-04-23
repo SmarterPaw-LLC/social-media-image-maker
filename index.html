@@ -111,7 +111,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v31</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v33</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -231,6 +231,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
           <option value="1" selected>1× (canvas size)</option>
           <option value="2">2× (double / retina)</option>
           <option value="3">3×</option>
+          <option value="4">4×</option>
         </select>
       </div>
       <div id="exportInfo" style="font-size:11px;color:var(--muted);"></div>
@@ -348,6 +349,50 @@ var PRESETS_BY_BRAND = {
     {id:'kp8', top:'#ECA223', bottom:'#ECA223', label:'Orange #ECA223'}
   ]
 };
+
+// ── BRAND COLOR PALETTES ──
+// Quick-pick swatches shown next to color pickers. Click → applies to the currently-edited field.
+var BRAND_COLORS = {
+  meowi: [
+    '#8ab81d', '#3c8e14', '#2d6a2d', '#1a4d00',                  // greens (Meowi/Doggi)
+    '#f6ae40', '#f07830', '#f37733',                              // oranges
+    '#f5e020', '#ffd23f',                                         // yellows
+    '#5d539e', '#f472b6',                                         // accent: purple + pink
+    '#ffffff', '#000000'                                          // neutrals
+  ],
+  kkz: [
+    '#81C568', '#00A76B', '#2F6E3B', '#183F20',                  // greens
+    '#F4EA11', '#ECA223',                                         // yellows/orange
+    '#ffffff', '#000000'                                          // neutrals
+  ]
+};
+
+// Render a row of clickable color swatches for the current brand. Clicking a swatch calls the handler
+// bound in bindBrandSwatches(). Pass a uniquely-identifying idSuffix for multiple pickers per props panel.
+function brandSwatchesHtml(idSuffix){
+  var palette = BRAND_COLORS[currentBrand] || BRAND_COLORS.meowi;
+  return '<div id="brand_sw_'+idSuffix+'" style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;">'
+    + palette.map(function(c){
+        return '<div class="brand-swatch" data-hex="'+c+'" '
+          + 'style="width:18px;height:18px;border-radius:4px;border:1px solid rgba(0,0,0,0.2);background:'+c+';cursor:pointer;" '
+          + 'title="'+c+'"></div>';
+      }).join('')
+    + '</div>';
+}
+// Wire swatch clicks after HTML is inserted.
+function bindBrandSwatches(idSuffix, applyFn){
+  var wrap = document.getElementById('brand_sw_'+idSuffix);
+  if(!wrap) return;
+  wrap.querySelectorAll('.brand-swatch').forEach(function(el){
+    el.addEventListener('click', function(){ applyFn(el.dataset.hex); });
+  });
+}
+
+// Track alt-key state so swatch handlers know whether to target gradient bottom
+window.__altPressed = false;
+window.addEventListener('keydown', function(e){ if(e.altKey) window.__altPressed = true; });
+window.addEventListener('keyup',   function(e){ if(!e.altKey) window.__altPressed = false; });
+window.addEventListener('blur',    function(){ window.__altPressed = false; });
 
 function setBrand(b){
   currentBrand = b;
@@ -519,6 +564,9 @@ var SHAPES=[
   {id:'starburst',label:'Burst',icon:'✳'},
   {id:'diamond',label:'Diamond',icon:'◆'},
   {id:'hexagon',label:'Hex',icon:'⬡'},
+  {id:'parallelogram',label:'Parallelogram',icon:'▰'},
+  {id:'trapezoid',label:'Trapezoid',icon:'⏢'},
+  {id:'polygon',label:'Polygon',icon:'⬢'}
 ];
 
 // Gradient presets — populated by setBrand() based on currentBrand
@@ -882,10 +930,16 @@ function addShapeLayer(shapeId){
     fillColor:'#8ab81d',
     gradTop:preset?preset.top:'#8ab81d',
     gradBottom:preset?preset.bottom:'#3c8e14',
+    gradType:'linear',        // linear | radial | conic
     gradAngle:135,
     strokeColor:'rgba(0,0,0,0)',strokeWidth:0,
-    opacity:100,cornerRadius:32,
+    opacity:100,cornerRadius:0,   // 0 = no rounding; applied universally to any shape
     rotation:0,
+    // Parametric shape parameters — only some are meaningful per shape:
+    skewAngle:15,      // parallelogram: degrees of top shift from vertical sides
+    topWidthPct:60,    // trapezoid: top edge width as % of bottom
+    polygonSides:6,    // regular polygon: number of sides (3..8)
+    polygonRotation:0  // regular polygon: rotation in degrees
   });
   selectLayer(id);renderLayerList();redraw();
 }
@@ -970,7 +1024,12 @@ function addTextLayer(){
     fontFamily:defaultFont.family,
     fontWeight:defaultFont.weights[0],
     fontSize:72,
+    // Fill: 'solid' uses color; 'gradient' uses gradTop/gradBottom/gradAngle (linear only)
+    fillMode:'solid',
     color:'#222222',
+    gradTop:'#8ab81d',
+    gradBottom:'#3c8e14',
+    gradAngle:90,  // top-to-bottom by default
     align:'left',
     lineHeight:1.2,
     letterSpacing:0,
@@ -1173,22 +1232,40 @@ function buildStickerProps(l){
 }
 
 function buildShapeProps(l){
+  // Per-shape parametric controls
+  var params = '';
+  if(l.shape==='parallelogram'){
+    params = R('Skew Angle','pshSkew', (l.skewAngle==null?15:l.skewAngle), -60, 60, 1);
+  } else if(l.shape==='trapezoid'){
+    params = R('Top Width (%)','pshTopW', (l.topWidthPct==null?60:l.topWidthPct), 5, 100, 1);
+  } else if(l.shape==='polygon'){
+    params = R('Sides','pshSides', (l.polygonSides||6), 3, 8, 1)
+           + R('Rotation','pshPolyRot', (l.polygonRotation||0), 0, 360, 5);
+  }
+  var isSolid = l.fillType==='solid';
   return '<div class="prop-section">'
     +SEL('Fill Type','pshFillType',[['gradient','Gradient'],['solid','Solid']],l.fillType)
-    +'<div class="col2" style="margin-bottom:5px;">'
-    +COL('Top / Solid','pshGradTop',l.fillType==='solid'?l.fillColor:l.gradTop)
-    +COL('Bottom','pshGradBot',l.gradBottom)
-    +'</div>'
-    +'<div style="margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
+    +(isSolid
+      ? '<div style="margin-bottom:5px;">'+COL('Color','pshGradTop',l.fillColor||l.gradTop||'#8ab81d')+'</div>'
+        +brandSwatchesHtml('pshColor')
+      : '<div class="col2" style="margin-bottom:5px;">'
+        +COL('Top','pshGradTop',l.gradTop||'#8ab81d')
+        +COL('Bottom','pshGradBot',l.gradBottom||'#3c8e14')
+        +'</div>'
+        +brandSwatchesHtml('pshColor')
+        +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click = Top · Alt+Click = Bottom</div>'
+    )
+    +'<div style="margin-top:8px;margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
     +'<div class="preset-grid" style="margin-top:3px;">'
     +gradientPresets.map(function(p){
       return '<div class="preset-swatch" style="background:'+presetSwatchCss(p)+'" title="'+p.label+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
     }).join('')+'</div></div>'
-    +SEL('Gradient Type','pshGradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']],l.gradType||'linear')
-    +R('Gradient Angle','pshGradAngle',l.gradAngle,0,360,5)
+    +(!isSolid ? SEL('Gradient Type','pshGradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']],l.gradType||'linear') : '')
+    +(!isSolid ? R('Gradient Angle','pshGradAngle',l.gradAngle,0,360,5) : '')
+    +params
+    +R('Corner Radius','pshCorner',l.cornerRadius||0,0,200,1)
     +COL('Stroke','pshStroke',l.strokeColor==='rgba(0,0,0,0)'?'#000000':l.strokeColor)
     +R('Stroke Width','pshStrokeW',l.strokeWidth,0,40,1)
-    +(l.shape==='roundrect'?R('Corner Radius','pshCorner',l.cornerRadius,0,200,4):'')
     +NUMPAIR('X (px)','nshx',l.x,'Y (px)','nshy',l.y)
     +NUMPAIR('W (px)','nshw',l.w,'H (px)','nshh',l.h)
     +R('X','pshx',Math.round(l.x),-canvasW,canvasW*2,2)
@@ -1263,8 +1340,22 @@ function buildTextProps(l){
     +'<button type="button" id="ptxt_apply" style="margin-top:6px;padding:5px 10px;font-size:11px;border:1px solid var(--green);border-radius:5px;background:var(--green);color:#fff;cursor:pointer;font-weight:600;">Apply</button>'
     +'</div>'
     +R('Size (px)','ptxt_size',l.fontSize,8,400,1)
-    +'<div class="col2" style="margin-bottom:5px;">'
-    +COL('Color','ptxt_color',l.color||'#222222')
+    +SEL('Fill','ptxt_fillMode',[['solid','Solid Color'],['gradient','Gradient']],l.fillMode||'solid')
+    +(l.fillMode==='gradient'
+      ? '<div class="col2" style="margin-bottom:5px;">'
+        +COL('Top','ptxt_gradTop',l.gradTop||'#8ab81d')
+        +COL('Bottom','ptxt_gradBot',l.gradBottom||'#3c8e14')
+        +'</div>'
+        +brandSwatchesHtml('ptxt_gradTop')  // two separate swatch rows to pick a quick color for top or bottom
+        +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click a swatch above → applies to <b>Top</b>; alt-click → <b>Bottom</b></div>'
+        +R('Gradient Angle','ptxt_gradAngle',(l.gradAngle==null?90:l.gradAngle),0,360,5)
+      : '<div class="col2" style="margin-bottom:5px;">'
+        +COL('Color','ptxt_color',l.color||'#222222')
+        +'<span></span>'
+        +'</div>'
+        +brandSwatchesHtml('ptxt_color')
+    )
+    +'<div style="margin-bottom:5px;margin-top:8px;">'
     +SEL('Align','ptxt_align',[['left','Left'],['center','Center'],['right','Right']],l.align)
     +'</div>'
     +R('Line Height','ptxt_lineh',l.lineHeight*100,50,300,5)
@@ -1364,9 +1455,29 @@ function bindPropEvents(layer){
     });
     on('pshGradBot','input',function(e){layer.gradBottom=e.target.value;redraw();});
     rng('pshGradAngle',function(v){layer.gradAngle=v;redraw();});
+    // Brand color swatches: click = top/solid, alt+click = bottom (gradient only)
+    bindBrandSwatches('pshColor', function(hex){
+      if(layer.fillType==='solid'){
+        layer.fillColor=hex;
+        var el=document.getElementById('pshGradTop'); if(el) el.value=hex;
+      } else if(window.__altPressed){
+        layer.gradBottom=hex;
+        var el=document.getElementById('pshGradBot'); if(el) el.value=hex;
+      } else {
+        layer.gradTop=hex;
+        var el=document.getElementById('pshGradTop'); if(el) el.value=hex;
+      }
+      redraw();
+    });
     on('pshStroke','input',function(e){layer.strokeColor=e.target.value;redraw();});
     rng('pshStrokeW',function(v){layer.strokeWidth=v;redraw();});
-    if(layer.shape==='roundrect')rng('pshCorner',function(v){layer.cornerRadius=v;redraw();});
+    // Universal corner radius — works on any shape
+    rng('pshCorner',function(v){layer.cornerRadius=+v;redraw();});
+    // Parametric shape controls
+    rng('pshSkew',function(v){layer.skewAngle=+v;redraw();});
+    rng('pshTopW',function(v){layer.topWidthPct=+v;redraw();});
+    rng('pshSides',function(v){layer.polygonSides=Math.max(3,Math.min(8,Math.round(+v)));redraw();});
+    rng('pshPolyRot',function(v){layer.polygonRotation=+v;redraw();});
     num('nshx',function(v){layer.x=v;redraw();},'pshx');
     num('nshy',function(v){layer.y=v;redraw();},'pshy');
     num('nshw',function(v){layer.w=v;redraw();},'pshw');
@@ -1423,7 +1534,32 @@ function bindPropEvents(layer){
       });
     }
     on('ptxt_weight','change',function(e){layer.fontWeight=+e.target.value;redraw();});
+    on('ptxt_fillMode','change',function(e){ layer.fillMode=e.target.value; renderProps(); redraw(); });
     on('ptxt_color','input',function(e){layer.color=e.target.value;redraw();});
+    on('ptxt_gradTop','input',function(e){layer.gradTop=e.target.value;redraw();});
+    on('ptxt_gradBot','input',function(e){layer.gradBottom=e.target.value;redraw();});
+    rng('ptxt_gradAngle',function(v){layer.gradAngle=+v;redraw();});
+    // Brand swatches: one row under the active color picker. Alt-click targets the bottom gradient color.
+    if((layer.fillMode||'solid')==='solid'){
+      bindBrandSwatches('ptxt_color', function(hex){
+        layer.color=hex;
+        var el=document.getElementById('ptxt_color'); if(el) el.value=hex;
+        redraw();
+      });
+    } else {
+      bindBrandSwatches('ptxt_gradTop', function(hex){
+        // plain click → top; detect alt via the most recent mousedown event
+        var applyToBottom = window.__altPressed === true;
+        if(applyToBottom){
+          layer.gradBottom=hex;
+          var el=document.getElementById('ptxt_gradBot'); if(el) el.value=hex;
+        } else {
+          layer.gradTop=hex;
+          var el=document.getElementById('ptxt_gradTop'); if(el) el.value=hex;
+        }
+        redraw();
+      });
+    }
     on('ptxt_align','change',function(e){layer.align=e.target.value;redraw();});
     rng('ptxt_size',function(v){layer.fontSize=v;redraw();});
     rng('ptxt_lineh',function(v){layer.lineHeight=v/100;redraw();});
@@ -1903,10 +2039,8 @@ function drawTextLayer(ctx, layer){
     var letterSpacing=(layer.letterSpacing||0);
 
     ctx.save();
-    ctx.fillStyle=layer.color||'#222';
     ctx.font=weight+' '+size+'px '+family+', sans-serif';
     ctx.textBaseline='top';
-    // Canvas 2D has no native letterSpacing; we handle it manually by drawing char by char when nonzero
     var useManualKerning = Math.abs(letterSpacing) > 0.01;
 
     // Word-wrap: split input into paragraphs (keep explicit \n), then wrap each to the layer width
@@ -1930,7 +2064,24 @@ function drawTextLayer(ctx, layer){
     });
 
     var lineH = size*lineHeight;
+    var totalH = lines.length * lineH;
     ctx.textAlign = (align==='center')?'center':(align==='right')?'right':'left';
+
+    // Build fill: solid color OR linear gradient spanning the full text block
+    if(layer.fillMode === 'gradient'){
+      var angle = (layer.gradAngle==null ? 90 : layer.gradAngle) * Math.PI/180;
+      var cx = x + w/2, cy = y + totalH/2;
+      // Use the text block diagonal as the gradient span so it covers all content
+      var len = Math.sqrt(w*w + totalH*totalH)/2;
+      var gx1 = cx - Math.cos(angle)*len, gy1 = cy - Math.sin(angle)*len;
+      var gx2 = cx + Math.cos(angle)*len, gy2 = cy + Math.sin(angle)*len;
+      var grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
+      grad.addColorStop(0, layer.gradTop || '#8ab81d');
+      grad.addColorStop(1, layer.gradBottom || '#3c8e14');
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = layer.color || '#222';
+    }
 
     lines.forEach(function(line, i){
       var drawX = x;
@@ -1945,7 +2096,7 @@ function drawTextLayer(ctx, layer){
     });
 
     // Track the actual rendered height on the layer so bounds/selection match
-    layer._renderedH = lines.length * lineH;
+    layer._renderedH = totalH;
     ctx.restore();
   });
 }
@@ -2009,10 +2160,100 @@ function drawSvgLayer(ctx,layer){
   });
 }
 
+// Generic rounded polygon path builder: takes an array of {x,y} vertices (in order), and a corner radius.
+// Produces a closed path on ctx using arc() at each vertex. r=0 gives sharp corners.
+// Algorithm: at each vertex V with neighbors P (prev) and N (next), move the "corner start" back along PV by r,
+// and arc tangent to NV, using arcTo. arcTo handles both convex and concave corners gracefully (star points).
+function drawRoundedPolygon(ctx, pts, r){
+  if(!pts || !pts.length) return;
+  if(r<=0){
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for(var i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    return;
+  }
+  // Clamp r so it never exceeds half the shortest adjacent edge
+  var n = pts.length;
+  var effR = r;
+  for(var i=0;i<n;i++){
+    var a=pts[i], b=pts[(i+1)%n];
+    var d=Math.hypot(b.x-a.x,b.y-a.y);
+    effR = Math.min(effR, d/2);
+  }
+  // Start from midpoint of the last edge to ensure the arcTo at vertex 0 has a starting direction
+  var last = pts[n-1], first = pts[0];
+  ctx.moveTo((last.x+first.x)/2, (last.y+first.y)/2);
+  for(var j=0;j<n;j++){
+    var curr = pts[j];
+    var next = pts[(j+1)%n];
+    ctx.arcTo(curr.x, curr.y, next.x, next.y, effR);
+  }
+  ctx.closePath();
+}
+
+// Build the vertex list for a given layer. Returns {pts, roundable} where roundable says
+// whether we should apply cornerRadius through drawRoundedPolygon (vs a native primitive like circle).
+function buildShapeVertices(layer){
+  var x=layer.x, y=layer.y, w=layer.w, h=layer.h;
+  switch(layer.shape){
+    case 'triangle':
+      return {pts:[{x:x+w/2,y:y},{x:x+w,y:y+h},{x:x,y:y+h}], roundable:true};
+    case 'diamond':
+      return {pts:[{x:x+w/2,y:y},{x:x+w,y:y+h/2},{x:x+w/2,y:y+h},{x:x,y:y+h/2}], roundable:true};
+    case 'hexagon':{
+      var cx=x+w/2, cy=y+h/2, r=Math.min(w,h)/2;
+      var pts=[]; for(var i=0;i<6;i++){var a=(Math.PI/3)*i-Math.PI/2; pts.push({x:cx+Math.cos(a)*r, y:cy+Math.sin(a)*r});}
+      return {pts:pts, roundable:true};
+    }
+    case 'star':{
+      var cx=x+w/2, cy=y+h/2, outer=Math.min(w,h)/2, inner=outer*0.45;
+      var pts=[]; for(var i=0;i<10;i++){var rr=(i%2===0)?outer:inner; var a=(Math.PI/5)*i-Math.PI/2; pts.push({x:cx+Math.cos(a)*rr, y:cy+Math.sin(a)*rr});}
+      return {pts:pts, roundable:true};
+    }
+    case 'starburst':{
+      var cx=x+w/2, cy=y+h/2, outer=Math.min(w,h)/2, inner=outer*0.67;
+      var pts=[]; for(var i=0;i<24;i++){var rr=(i%2===0)?outer:inner; var a=(Math.PI/12)*i-Math.PI/2; pts.push({x:cx+Math.cos(a)*rr, y:cy+Math.sin(a)*rr});}
+      return {pts:pts, roundable:true};
+    }
+    case 'parallelogram':{
+      // Skew the top edge to the right by `skewAngle` degrees of the bounding height
+      var skew = (layer.skewAngle==null?15:layer.skewAngle);
+      var off = Math.tan(skew*Math.PI/180) * h;
+      // Keep shape within [x, x+w] by clamping: left-bottom moves right by off, top edges stay within w
+      var o = Math.max(0, Math.min(off, w*0.9));
+      return {pts:[
+        {x:x+o, y:y},                 // top-left
+        {x:x+w, y:y},                 // top-right
+        {x:x+w-o, y:y+h},             // bottom-right
+        {x:x, y:y+h}                  // bottom-left
+      ], roundable:true};
+    }
+    case 'trapezoid':{
+      // Top edge centered, width = bottom * topWidthPct/100
+      var pct = (layer.topWidthPct==null?60:layer.topWidthPct)/100;
+      var topW = w*pct;
+      var tx = x + (w-topW)/2;
+      return {pts:[
+        {x:tx, y:y}, {x:tx+topW, y:y},
+        {x:x+w, y:y+h}, {x:x, y:y+h}
+      ], roundable:true};
+    }
+    case 'polygon':{
+      // Regular N-gon fit to bounding box
+      var sides = Math.max(3, Math.min(8, layer.polygonSides||6));
+      var rot = ((layer.polygonRotation||0)-90) * Math.PI/180; // default flat top at 0°
+      var cx=x+w/2, cy=y+h/2, r=Math.min(w,h)/2;
+      var pts=[]; for(var i=0;i<sides;i++){var a=(2*Math.PI/sides)*i+rot; pts.push({x:cx+Math.cos(a)*r, y:cy+Math.sin(a)*r});}
+      return {pts:pts, roundable:true};
+    }
+  }
+  return {pts:null, roundable:false};
+}
+
 function drawShapeLayer(ctx,layer){
   withRotation(ctx,layer,function(){
     var x=layer.x,y=layer.y,w=layer.w,h=layer.h;
-    // build fill
+    // Build fill (color or gradient)
     var fill;
     if(layer.fillType==='solid'){
       fill=layer.fillColor||'#8ab81d';
@@ -2025,22 +2266,18 @@ function drawShapeLayer(ctx,layer){
       if(gradType === 'radial'){
         var rad = Math.max(w,h)/2;
         grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, rad);
-        grad.addColorStop(0, top);
-        grad.addColorStop(1, bot);
+        grad.addColorStop(0, top); grad.addColorStop(1, bot);
       } else if(gradType === 'conic' && ctx.createConicGradient){
-        var angRad = ((layer.gradAngle||0) - 90) * Math.PI/180;  // start at top like CSS conic-gradient
+        var angRad = ((layer.gradAngle||0) - 90) * Math.PI/180;
         grad = ctx.createConicGradient(angRad, cx2, cy2);
-        grad.addColorStop(0, top);
-        grad.addColorStop(1, bot);
+        grad.addColorStop(0, top); grad.addColorStop(1, bot);
       } else {
-        // linear (default)
         var ang=(layer.gradAngle||135)*Math.PI/180;
         var len=Math.sqrt(w*w+h*h)/2;
         var gx1=cx2-Math.cos(ang)*len, gy1=cy2-Math.sin(ang)*len;
         var gx2=cx2+Math.cos(ang)*len, gy2=cy2+Math.sin(ang)*len;
         grad = ctx.createLinearGradient(gx1,gy1,gx2,gy2);
-        grad.addColorStop(0, top);
-        grad.addColorStop(1, bot);
+        grad.addColorStop(0, top); grad.addColorStop(1, bot);
       }
       fill=grad;
     }
@@ -2048,16 +2285,25 @@ function drawShapeLayer(ctx,layer){
     ctx.fillStyle=fill;
     if(layer.strokeWidth>0){ctx.strokeStyle=layer.strokeColor||'#000';ctx.lineWidth=layer.strokeWidth;}
     ctx.beginPath();
-    switch(layer.shape){
-      case 'rect':ctx.rect(x,y,w,h);break;
-      case 'roundrect':var r=Math.min(layer.cornerRadius||32,w/2,h/2);ctx.roundRect(x,y,w,h,r);break;
-      case 'circle':ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);break;
-      case 'triangle':ctx.moveTo(x+w/2,y);ctx.lineTo(x+w,y+h);ctx.lineTo(x,y+h);ctx.closePath();break;
-      case 'diamond':ctx.moveTo(x+w/2,y);ctx.lineTo(x+w,y+h/2);ctx.lineTo(x+w/2,y+h);ctx.lineTo(x,y+h/2);ctx.closePath();break;
-      case 'star':drawStar(ctx,x+w/2,y+h/2,5,Math.min(w,h)/2,Math.min(w,h)/4);break;
-      case 'starburst':drawStar(ctx,x+w/2,y+h/2,12,Math.min(w,h)/2,Math.min(w,h)/3);break;
-      case 'hexagon':drawPolygon(ctx,x+w/2,y+h/2,6,Math.min(w,h)/2);break;
-      default:ctx.rect(x,y,w,h);
+    var cr = layer.cornerRadius||0;
+    // Primitive shapes (native paths, no polygon rounding)
+    if(layer.shape==='rect'){
+      if(cr>0) ctx.roundRect(x,y,w,h,Math.min(cr,w/2,h/2)); else ctx.rect(x,y,w,h);
+    } else if(layer.shape==='roundrect'){
+      // "roundrect" is just a rect with radius — default to 32 if cr is 0 so it isn't surprising
+      var r = cr>0 ? Math.min(cr,w/2,h/2) : Math.min(32,w/2,h/2);
+      ctx.roundRect(x,y,w,h,r);
+    } else if(layer.shape==='circle'){
+      ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);
+    } else {
+      // Polygonal: build vertex list, then render rounded
+      var v = buildShapeVertices(layer);
+      if(v.pts && v.pts.length){
+        drawRoundedPolygon(ctx, v.pts, cr);
+      } else {
+        // Fallback
+        ctx.rect(x,y,w,h);
+      }
     }
     ctx.fill();
     if(layer.strokeWidth>0)ctx.stroke();
@@ -2257,6 +2503,13 @@ document.addEventListener('DOMContentLoaded',function(){
     document.querySelector('.btn-primary').textContent='Export '+this.value.toUpperCase();
     updateExportInfo();
   });
+  // Keep output dimensions display in sync when user changes scale/custom inputs
+  var scaleSel=document.getElementById('exportScale');
+  if(scaleSel) scaleSel.addEventListener('change',updateExportInfo);
+  var ewIn=document.getElementById('exportW');
+  var ehIn=document.getElementById('exportH');
+  if(ewIn) ewIn.addEventListener('input',updateExportInfo);
+  if(ehIn) ehIn.addEventListener('input',updateExportInfo);
 });
 function updateExportInfo(){
   var info=document.getElementById('exportInfo');if(!info)return;
@@ -2278,10 +2531,20 @@ function doExport(){
 
   console.log('[export] canvasW=',canvasW,' canvasH=',canvasH,' mode=',mode,' ew=',ew,' eh=',eh,' layers=',layers.length);
 
-  // Strategy: always render at 1:1 (canvasW × canvasH) first, then resize if needed.
-  // This avoids any scaling-during-draw issues, especially with the sticker's internal off-screen canvas.
-  var baseCanvas=document.createElement('canvas');baseCanvas.width=canvasW;baseCanvas.height=canvasH;
-  var bctx=baseCanvas.getContext('2d');
+  // Strategy: render at the TARGET resolution natively using ctx.scale(). This gives sharp
+  // output at 2x/3x/4x (text, shapes, gradients are all resolution-independent). For raster
+  // images, the source pixels are still the limiting factor — but at least everything else
+  // stays crisp.
+  var outCanvas=document.createElement('canvas');
+  outCanvas.width=ew;
+  outCanvas.height=eh;
+  var bctx=outCanvas.getContext('2d');
+  bctx.imageSmoothingEnabled=true;
+  bctx.imageSmoothingQuality='high';
+  // Apply the scale uniformly in both axes (handles non-uniform custom sizes too)
+  var scaleX = ew / canvasW;
+  var scaleY = eh / canvasH;
+  bctx.scale(scaleX, scaleY);
 
   layers.forEach(function(layer,i){
     bctx.save();bctx.globalAlpha=(layer.opacity||100)/100;
@@ -2294,17 +2557,6 @@ function doExport(){
     }catch(e){console.error('[export] layer',i,'type',layer.type,'error:',e);}
     bctx.restore();
   });
-
-  // Now resize to requested output dimensions if different
-  var outCanvas;
-  if(ew===canvasW&&eh===canvasH){
-    outCanvas=baseCanvas;
-  } else {
-    outCanvas=document.createElement('canvas');outCanvas.width=ew;outCanvas.height=eh;
-    var octx=outCanvas.getContext('2d');
-    octx.imageSmoothingEnabled=true;octx.imageSmoothingQuality='high';
-    octx.drawImage(baseCanvas,0,0,canvasW,canvasH,0,0,ew,eh);
-  }
 
   var mime={'png':'image/png','jpeg':'image/jpeg','webp':'image/webp'}[format]||'image/png';
   var dataUrl=format==='png'?outCanvas.toDataURL('image/png'):outCanvas.toDataURL(mime,quality);
