@@ -106,7 +106,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v23</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v25</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -154,6 +154,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button class="btn-add" onclick="addSvgLayer()">+ SVG</button>
     </div>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
+    <button class="btn-add" style="margin-top:2px;background:#f5f5f5;border:1px dashed #aaa;font-size:11px;" onclick="openDriveKeyPrompt()">⚙ Drive API Key…</button>
     <!-- Shape picker (hidden by default) -->
     <div id="shapeMenu" class="hidden" style="border:1.5px solid var(--border);border-radius:8px;padding:8px;background:#fafafa;">
       <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px;">Pick a shape</div>
@@ -342,8 +343,7 @@ function addLogoLayer(key){
 // EDIT THIS LIST to add/remove folders. Each folder must be shared in Drive as
 // "Anyone with the link can view". Paste the folder ID from the URL (the part after /folders/).
 var BAKED_FOLDERS = [
-  // { name: 'Lifestyle', id: 'YOUR_FOLDER_ID_HERE' },
-  // { name: 'Product Shots', id: 'YOUR_FOLDER_ID_HERE' },
+  { name: 'Product Shots', id: '1XFznAZBzu6eCnReTWneq-QhhuyxiRoWw' },
 ];
 
 // API key is still required by Google even for public folders. Stored in localStorage per user.
