@@ -100,13 +100,16 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .btn-primary{padding:9px 20px;background:linear-gradient(135deg,var(--green),var(--green-dark));color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;}
 .btn-cancel{padding:9px 16px;background:#fafafa;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;}
 </style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&family=Fraunces:wght@400;800&family=Ultra&family=Nunito:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
 
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v26</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v30</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -146,15 +149,18 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <h3>Layers</h3>
     <div id="layerList" style="display:flex;flex-direction:column;gap:4px;"></div>
     <div class="col2" style="margin-top:3px;">
-      <button class="btn-add" onclick="openImagePicker()">+ Image</button>
+      <button class="btn-add" onclick="addImageLayer()">+ Image</button>
       <button class="btn-add" id="addStickerBtn" onclick="addStickerLayer()">+ Sticker</button>
     </div>
     <div class="col2">
+      <button class="btn-add" onclick="addTextLayer()">+ Text</button>
       <button class="btn-add" onclick="openShapeMenu()">+ Shape</button>
+    </div>
+    <div class="col2">
       <button class="btn-add" onclick="addSvgLayer()">+ SVG</button>
+      <span></span>
     </div>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
-    <button class="btn-add" style="margin-top:2px;background:#f5f5f5;border:1px dashed #aaa;font-size:11px;" onclick="openDriveKeyPrompt()">⚙ Drive API Key…</button>
     <!-- Shape picker (hidden by default) -->
     <div id="shapeMenu" class="hidden" style="border:1.5px solid var(--border);border-radius:8px;padding:8px;background:#fafafa;">
       <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px;">Pick a shape</div>
@@ -240,6 +246,27 @@ var COOPER_URL='https://cdn.shopify.com/s/files/1/0657/0831/files/CooperBlack-St
 var cooperLoaded=false;
 (function(){var ff=new FontFace('CooperBlack','url('+COOPER_URL+')');ff.load().then(function(f){document.fonts.add(f);cooperLoaded=true;redraw();});})();
 
+// ── TEXT-LAYER FONTS ──
+// Per-brand font lists shown in the text-layer Font dropdown.
+// Each entry: {label, family, weights:[], style}
+// The family string is what goes into the canvas `font` property.
+var FONTS_BY_BRAND = {
+  meowi: [
+    {label:'Cooper Black',   family:'CooperBlack',  weights:[400]},
+    {label:'Poppins',        family:'Poppins',      weights:[400,500,700]}
+  ],
+  kkz: [
+    {label:'Fraunces',       family:'Fraunces',     weights:[400,800]},
+    {label:'Ultra',          family:'Ultra',        weights:[400]},
+    {label:'Nunito',         family:'Nunito',       weights:[400,700]}
+  ]
+};
+
+// Re-render text layers once web fonts are ready (important: canvas won't use the font until it's loaded)
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(function(){ redraw(); });
+}
+
 // ── BRAND LOGOS ──
 // Default logos are hosted on Shopify CDN. Users can override via "Set Logos" UI (stored in localStorage).
 var DEFAULT_LOGO_URLS = {
@@ -274,10 +301,16 @@ var PRESETS_BY_BRAND = {
     {id:'mp4', top:'#f37733', bottom:'#f5e020', label:'Hybrid Blend'}
   ],
   kkz: [
-    {id:'kp1', top:'#2e7d3c', bottom:'#184721', label:'KKZ Green'},
-    {id:'kp2', top:'#ffffff', bottom:'#e6e6e6', label:'KKZ White'},
-    {id:'kp3', top:'#ff6b35', bottom:'#d94a1a', label:'KKZ Orange'},
-    {id:'kp4', top:'#ffd23f', bottom:'#f2a900', label:'KKZ Yellow'}
+    // Brand gradients
+    {id:'kp1', top:'#81C568', bottom:'#00A76B', label:'KKZ Green Gradient'},
+    {id:'kp2', top:'#F4EA11', bottom:'#ECA223', label:'KKZ Yellow Gradient'},
+    // Solid brand colors (top==bottom so gradient renders as solid)
+    {id:'kp3', top:'#81C568', bottom:'#81C568', label:'Lime #81C568'},
+    {id:'kp4', top:'#00A76B', bottom:'#00A76B', label:'Emerald #00A76B'},
+    {id:'kp5', top:'#2F6E3B', bottom:'#2F6E3B', label:'Green #2F6E3B'},
+    {id:'kp6', top:'#183F20', bottom:'#183F20', label:'Dark Green #183F20'},
+    {id:'kp7', top:'#F4EA11', bottom:'#F4EA11', label:'Yellow #F4EA11'},
+    {id:'kp8', top:'#ECA223', bottom:'#ECA223', label:'Orange #ECA223'}
   ]
 };
 
@@ -337,220 +370,6 @@ function addLogoLayer(key){
     alert('Failed to load logo from:\n' + src + '\n\nCheck your internet connection.');
   };
   img.src = src;
-}
-
-// ── GOOGLE DRIVE IMAGE LIBRARY ──
-// EDIT THIS LIST to add/remove folders. Each folder must be shared in Drive as
-// "Anyone with the link can view". Paste the folder ID from the URL (the part after /folders/).
-var BAKED_FOLDERS = [
-  { name: 'Product Shots', id: '1XFznAZBzu6eCnReTWneq-QhhuyxiRoWw' },
-];
-
-// API key is still required by Google even for public folders. Stored in localStorage per user.
-function getDriveApiKey(){
-  try{ return localStorage.getItem('sp_drive_api_key') || ''; }catch(e){ return ''; }
-}
-function setDriveApiKey(k){
-  try{ localStorage.setItem('sp_drive_api_key', k); }catch(e){}
-}
-
-var _driveCache = {}; // folderId → {folders:[], images:[]}
-var _driveBreadcrumb = []; // [{id, name}, ...]  from root → current
-var _driveRootId = null; // the top-level baked folder currently being browsed
-
-function openImagePicker(){
-  if(!BAKED_FOLDERS.length){ addImageLayer(); return; }
-  if(!getDriveApiKey()){ openDriveKeyPrompt(); return; }
-  var modal = document.getElementById('imagePickerModal');
-  if(!modal){
-    modal = document.createElement('div');
-    modal.id = 'imagePickerModal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;';
-    modal.innerHTML = '<div style="background:#fff;border-radius:8px;padding:20px;width:820px;max-width:95vw;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">'
-      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap;">'
-      + '<h3 style="margin:0;">Image Library</h3>'
-      + '<div style="display:flex;gap:6px;align-items:center;">'
-      + '<select id="driveFolderSelect" style="padding:5px 8px;border:1px solid #ccc;border-radius:5px;font-size:13px;"></select>'
-      + '<button style="padding:5px 10px;font-size:11px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;" onclick="openDriveKeyPrompt()">Change key</button>'
-      + '<button style="padding:5px 10px;font-size:11px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;" onclick="addImageLayer();closeImagePicker();">Upload…</button>'
-      + '<button style="padding:5px 10px;font-size:11px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;" onclick="closeImagePicker()">Close</button>'
-      + '</div></div>'
-      + '<div id="driveBreadcrumb" style="font-size:12px;color:#555;margin-bottom:10px;min-height:18px;"></div>'
-      + '<div id="driveImageGrid" style="flex:1;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;align-content:start;"></div>'
-      + '</div>';
-    document.body.appendChild(modal);
-    modal.addEventListener('click', function(e){ if(e.target===modal) closeImagePicker(); });
-  }
-  var sel = document.getElementById('driveFolderSelect');
-  sel.innerHTML = BAKED_FOLDERS.map(function(f){ return '<option value="'+escAttr(f.id)+'">'+escAttr(f.name)+'</option>'; }).join('');
-  sel.onchange = function(){
-    var f = BAKED_FOLDERS.find(function(x){return x.id===sel.value;});
-    enterRootFolder(f);
-  };
-  modal.style.display = 'flex';
-  enterRootFolder(BAKED_FOLDERS[0]);
-}
-
-function closeImagePicker(){
-  var modal = document.getElementById('imagePickerModal');
-  if(modal) modal.style.display = 'none';
-}
-
-function enterRootFolder(folder){
-  _driveRootId = folder.id;
-  _driveBreadcrumb = [{id: folder.id, name: folder.name}];
-  loadDriveFolder(folder.id);
-}
-
-function navigateToBreadcrumb(index){
-  // Truncate breadcrumb to that index and reload
-  _driveBreadcrumb = _driveBreadcrumb.slice(0, index + 1);
-  var target = _driveBreadcrumb[_driveBreadcrumb.length - 1];
-  loadDriveFolder(target.id);
-}
-
-function enterSubFolder(id, name){
-  _driveBreadcrumb.push({id: id, name: name});
-  loadDriveFolder(id);
-}
-
-function renderBreadcrumb(){
-  var el = document.getElementById('driveBreadcrumb');
-  if(!el) return;
-  if(_driveBreadcrumb.length <= 1){ el.innerHTML = ''; return; }
-  var parts = _driveBreadcrumb.map(function(b, i){
-    var isLast = i === _driveBreadcrumb.length - 1;
-    if(isLast) return '<span style="color:#333;font-weight:600;">'+escAttr(b.name)+'</span>';
-    return '<a href="javascript:void(0)" onclick="navigateToBreadcrumb('+i+')" style="color:#8ab81d;text-decoration:none;">'+escAttr(b.name)+'</a>';
-  });
-  el.innerHTML = parts.join(' <span style="color:#bbb;">›</span> ');
-}
-
-function loadDriveFolder(folderId){
-  var grid = document.getElementById('driveImageGrid');
-  if(!grid) return;
-  renderBreadcrumb();
-  if(_driveCache[folderId]){ renderDriveGrid(_driveCache[folderId]); return; }
-  grid.innerHTML = '<div style="color:#888;padding:20px;grid-column:1/-1;">Loading…</div>';
-  var key = getDriveApiKey();
-  // Fetch both folders and image files in this directory
-  var query = encodeURIComponent("'"+folderId+"' in parents and trashed=false and (mimeType='application/vnd.google-apps.folder' or mimeType contains 'image/')");
-  var fields = encodeURIComponent('files(id,name,mimeType,thumbnailLink)');
-  var url = 'https://www.googleapis.com/drive/v3/files?q='+query+'&fields='+fields+'&pageSize=500&orderBy=name&key='+encodeURIComponent(key);
-  fetch(url).then(function(r){
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(function(data){
-    var all = data.files || [];
-    var folders = all.filter(function(f){return f.mimeType === 'application/vnd.google-apps.folder';});
-    var images  = all.filter(function(f){return f.mimeType !== 'application/vnd.google-apps.folder';});
-    var entry = {folders: folders, images: images};
-    _driveCache[folderId] = entry;
-    renderDriveGrid(entry);
-  }).catch(function(err){
-    grid.innerHTML = '<div style="color:#c00;padding:20px;grid-column:1/-1;font-size:13px;">'
-      + '<b>Failed to load folder.</b> ' + escAttr(err.message) + '<br><br>'
-      + 'Common causes:<ul style="margin:8px 0 0 0;padding-left:20px;"><li>API key invalid or not restricted to allow this domain</li>'
-      + '<li>Folder not shared as "Anyone with the link"</li>'
-      + '<li>Google Drive API not enabled in the key\'s Cloud project</li></ul></div>';
-  });
-}
-
-function renderDriveGrid(entry){
-  var grid = document.getElementById('driveImageGrid');
-  if(!grid) return;
-  var folders = entry.folders || [];
-  var images = entry.images || [];
-  if(!folders.length && !images.length){
-    grid.innerHTML = '<div style="color:#888;padding:20px;grid-column:1/-1;">This folder is empty.</div>';
-    return;
-  }
-  var foldersHtml = folders.map(function(f){
-    var name = escAttr(f.name);
-    var nameJs = name.replace(/\\/g,'\\\\').replace(/\x27/g,"\\'");
-    return '<div style="cursor:pointer;border:2px solid transparent;border-radius:6px;overflow:hidden;background:#f7f3e5;" '
-      + 'onmouseover="this.style.borderColor=\'#8ab81d\'" onmouseout="this.style.borderColor=\'transparent\'" '
-      + 'onclick="enterSubFolder(\''+escAttr(f.id)+'\',\''+nameJs+'\')">'
-      + '<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:48px;color:#c5a960;">📁</div>'
-      + '<div style="padding:4px 6px;font-size:11px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;">'+name+'</div>'
-      + '</div>';
-  }).join('');
-  var imagesHtml = images.map(function(f){
-    var thumb = f.thumbnailLink ? f.thumbnailLink.replace(/=s\d+/, '=s400') : '';
-    var nameJs = escAttr(f.name).replace(/\\/g,'\\\\').replace(/\x27/g,"\\'");
-    return '<div style="cursor:pointer;border:2px solid transparent;border-radius:6px;overflow:hidden;background:#fafafa;" '
-      + 'onmouseover="this.style.borderColor=\'#8ab81d\'" onmouseout="this.style.borderColor=\'transparent\'" '
-      + 'onclick="pickDriveImage(\''+escAttr(f.id)+'\',\''+nameJs+'\')">'
-      + '<div style="aspect-ratio:1;display:flex;align-items:center;justify-content:center;overflow:hidden;background:repeating-conic-gradient(#eee 0% 25%,#fff 0% 50%) 0 0/12px 12px;">'
-      + (thumb ? '<img src="'+escAttr(thumb)+'" style="max-width:100%;max-height:100%;object-fit:contain;" referrerpolicy="no-referrer" />' : '<span style="color:#bbb;font-size:11px;">no preview</span>')
-      + '</div>'
-      + '<div style="padding:4px 6px;font-size:11px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+escAttr(f.name)+'</div>'
-      + '</div>';
-  }).join('');
-  grid.innerHTML = foldersHtml + imagesHtml;
-}
-
-function pickDriveImage(fileId, fileName){
-  var url = 'https://drive.google.com/uc?export=view&id=' + encodeURIComponent(fileId);
-  var img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.onload = function(){
-    snapshotState();
-    var id = nextId++;
-    var natW = img.naturalWidth || canvasW;
-    var natH = img.naturalHeight || canvasH;
-    var scale = Math.min(canvasW*0.8/natW, canvasH*0.8/natH, 1);
-    var dw = natW*scale, dh = natH*scale;
-    layers.push({
-      id: id, type:'image', name: fileName || 'Image',
-      img: img, src: url,
-      x:(canvasW-dw)/2, y:(canvasH-dh)/2,
-      w: dw, h: dh,
-      opacity:100, fit:'contain', flipH:false, flipV:false, rotation:0
-    });
-    selectLayer(id); renderLayerList(); redraw();
-    closeImagePicker();
-  };
-  img.onerror = function(){
-    alert('Could not load image from Drive.\n\nMake sure the file is shared as "Anyone with the link".');
-  };
-  img.src = url;
-}
-
-// ── DRIVE API KEY PROMPT ──
-function openDriveKeyPrompt(){
-  var modal = document.getElementById('driveKeyModal');
-  if(!modal){
-    modal = document.createElement('div');
-    modal.id = 'driveKeyModal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1100;';
-    modal.innerHTML = '<div style="background:#fff;border-radius:8px;padding:22px;width:520px;max-width:92vw;">'
-      + '<h3 style="margin:0 0 4px 0;">Google Drive API Key</h3>'
-      + '<p style="font-size:12px;color:#666;margin:0 0 14px 0;">Required by Google for reading public folders. Saved in this browser only. '
-      + '<a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:#8ab81d;">Get one here</a>.</p>'
-      + '<input id="driveKeyInput" type="text" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #ccc;border-radius:5px;font-family:monospace;font-size:12px;background:#fff;" placeholder="AIza…">'
-      + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">'
-      + '<button style="padding:7px 14px;font-size:12px;border:1px solid #ccc;border-radius:5px;background:#fff;cursor:pointer;" onclick="closeDriveKeyPrompt()">Cancel</button>'
-      + '<button style="padding:7px 14px;font-size:12px;border:1px solid var(--green);border-radius:5px;background:var(--green);color:#fff;cursor:pointer;font-weight:600;" onclick="saveDriveKey()">Save</button>'
-      + '</div></div>';
-    document.body.appendChild(modal);
-    modal.addEventListener('click', function(e){ if(e.target===modal) closeDriveKeyPrompt(); });
-  }
-  document.getElementById('driveKeyInput').value = getDriveApiKey();
-  modal.style.display = 'flex';
-  setTimeout(function(){ document.getElementById('driveKeyInput').focus(); }, 50);
-}
-function closeDriveKeyPrompt(){
-  var modal = document.getElementById('driveKeyModal');
-  if(modal) modal.style.display = 'none';
-}
-function saveDriveKey(){
-  var k = document.getElementById('driveKeyInput').value.trim();
-  setDriveApiKey(k);
-  _driveCache = {};
-  closeDriveKeyPrompt();
-  // If the picker was waiting, open it now
-  if(k && BAKED_FOLDERS.length) openImagePicker();
 }
 
 // ── LOGO MANAGER (user-uploaded logos) ──
@@ -993,6 +812,30 @@ function addStickerLayer(){
   selectLayer(id);renderLayerList();redraw();
 }
 
+// ── TEXT LAYER ──
+function addTextLayer(){
+  snapshotState();
+  var id=nextId++;
+  // Pick first font in the current brand's list
+  var fontList=FONTS_BY_BRAND[currentBrand]||FONTS_BY_BRAND.meowi;
+  var defaultFont=fontList[0];
+  layers.push({
+    id:id, type:'text', name:'Text '+id,
+    text:'Your text here',
+    fontFamily:defaultFont.family,
+    fontWeight:defaultFont.weights[0],
+    fontSize:72,
+    color:'#222222',
+    align:'left',
+    lineHeight:1.2,
+    letterSpacing:0,
+    x:canvasW*0.1, y:canvasH*0.4,
+    w:canvasW*0.8, h:200,   // h auto-adjusts on draw based on content
+    opacity:100, rotation:0
+  });
+  selectLayer(id);renderLayerList();redraw();
+}
+
 // ── SELECT / DELETE / MOVE ──
 function selectLayer(id){selectedId=id;renderLayerList();renderProps();}
 function deleteLayer(id){
@@ -1068,6 +911,7 @@ function renderProps(){
   else if(layer.type==='sticker')el.innerHTML=buildStickerProps(layer);
   else if(layer.type==='shape')el.innerHTML=buildShapeProps(layer);
   else if(layer.type==='svg')el.innerHTML=buildSvgProps(layer);
+  else if(layer.type==='text')el.innerHTML=buildTextProps(layer);
   bindPropEvents(layer);
 }
 
@@ -1193,6 +1037,7 @@ function buildShapeProps(l){
     +gradientPresets.map(function(p){
       return '<div class="preset-swatch" style="background:linear-gradient(135deg,'+p.top+','+p.bottom+')" title="'+p.label+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
     }).join('')+'</div></div>'
+    +SEL('Gradient Type','pshGradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']],l.gradType||'linear')
     +R('Gradient Angle','pshGradAngle',l.gradAngle,0,360,5)
     +COL('Stroke','pshStroke',l.strokeColor==='rgba(0,0,0,0)'?'#000000':l.strokeColor)
     +R('Stroke Width','pshStrokeW',l.strokeWidth,0,40,1)
@@ -1224,6 +1069,45 @@ function buildSvgProps(l){
     +R('Height','svgh',Math.round(l.h),10,canvasH*3,2)
     +R('Rotation','svgrotation',l.rotation,-180,180,1)
     +R('Opacity','svgopacity',l.opacity,0,100,1)
+    +moveBtns(l.id)+'</div>';
+}
+
+// ── TEXT LAYER PROPERTIES PANEL ──
+function buildTextProps(l){
+  // Build font options from the current brand's list
+  var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+  var fontOpts = fontList.map(function(f){
+    return '<option value="'+escAttr(f.family)+'"'+(l.fontFamily===f.family?' selected':'')+'>'+escAttr(f.label)+'</option>';
+  }).join('');
+  // Weight options depend on the currently selected family
+  var selectedFont = fontList.find(function(f){return f.family===l.fontFamily;}) || fontList[0];
+  var weightOpts = (selectedFont.weights||[400]).map(function(w){
+    var nameMap = {300:'Light',400:'Regular',500:'Medium',600:'Semibold',700:'Bold',800:'Extrabold',900:'Black'};
+    return '<option value="'+w+'"'+(l.fontWeight==w?' selected':'')+'>'+(nameMap[w]||w)+'</option>';
+  }).join('');
+  return '<div class="prop-section">'
+    +'<label style="font-size:10px;color:var(--muted);">Text</label>'
+    +'<textarea id="ptxt_text" rows="3" style="width:100%;padding:7px 9px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fafafa;font-family:inherit;resize:vertical;">'+escAttr(l.text)+'</textarea>'
+    +'<div class="col2" style="margin-top:5px;gap:5px;">'
+    +'<div><label style="font-size:10px;color:var(--muted);">Font</label>'
+    +'<select id="ptxt_family">'+fontOpts+'</select></div>'
+    +'<div><label style="font-size:10px;color:var(--muted);">Weight</label>'
+    +'<select id="ptxt_weight">'+weightOpts+'</select></div>'
+    +'</div>'
+    +R('Size (px)','ptxt_size',l.fontSize,8,400,1)
+    +'<div class="col2" style="margin-bottom:5px;">'
+    +COL('Color','ptxt_color',l.color||'#222222')
+    +SEL('Align','ptxt_align',[['left','Left'],['center','Center'],['right','Right']],l.align)
+    +'</div>'
+    +R('Line Height','ptxt_lineh',l.lineHeight*100,50,300,5)
+    +R('Letter Spacing','ptxt_ls',l.letterSpacing,-20,50,0.5)
+    +NUMPAIR('X (px)','ntxtx',l.x,'Y (px)','ntxty',l.y)
+    +NUMPAIR('W (px)','ntxtw',l.w,'H (px)','ntxth',l.h)
+    +R('X','ptxt_x',Math.round(l.x),-canvasW,canvasW*2,2)
+    +R('Y','ptxt_y',Math.round(l.y),-canvasH,canvasH*2,2)
+    +R('Width','ptxt_w',Math.round(l.w),10,canvasW*3,2)
+    +R('Rotation','ptxt_rot',l.rotation,-180,180,1)
+    +R('Opacity','ptxt_opacity',l.opacity,0,100,1)
     +moveBtns(l.id)+'</div>';
 }
 
@@ -1292,6 +1176,7 @@ function bindPropEvents(layer){
     rng('psopacity',function(v){layer.opacity=v;redraw();});
   } else if(layer.type==='shape'){
     on('pshFillType','change',function(e){layer.fillType=e.target.value;renderProps();redraw();});
+    on('pshGradType','change',function(e){layer.gradType=e.target.value;redraw();});
     on('pshGradTop','input',function(e){
       if(layer.fillType==='solid')layer.fillColor=e.target.value;else layer.gradTop=e.target.value;redraw();
     });
@@ -1317,6 +1202,31 @@ function bindPropEvents(layer){
     rng('svgw',function(v){layer.w=v;redraw();});rng('svgh',function(v){layer.h=v;redraw();});
     rng('svgrotation',function(v){layer.rotation=v;redraw();});
     rng('svgopacity',function(v){layer.opacity=v;redraw();});
+  } else if(layer.type==='text'){
+    on('ptxt_text','input',function(e){layer.text=e.target.value;redraw();});
+    on('ptxt_family','change',function(e){
+      layer.fontFamily=e.target.value;
+      // When changing family, reset to that family's first available weight
+      var fontList=FONTS_BY_BRAND[currentBrand]||FONTS_BY_BRAND.meowi;
+      var f=fontList.find(function(f){return f.family===layer.fontFamily;});
+      if(f && f.weights && f.weights.indexOf(layer.fontWeight)===-1) layer.fontWeight=f.weights[0];
+      renderProps(); redraw();
+    });
+    on('ptxt_weight','change',function(e){layer.fontWeight=+e.target.value;redraw();});
+    on('ptxt_color','input',function(e){layer.color=e.target.value;redraw();});
+    on('ptxt_align','change',function(e){layer.align=e.target.value;redraw();});
+    rng('ptxt_size',function(v){layer.fontSize=v;redraw();});
+    rng('ptxt_lineh',function(v){layer.lineHeight=v/100;redraw();});
+    rng('ptxt_ls',function(v){layer.letterSpacing=+v;redraw();});
+    num('ntxtx',function(v){layer.x=v;redraw();},'ptxt_x');
+    num('ntxty',function(v){layer.y=v;redraw();},'ptxt_y');
+    num('ntxtw',function(v){layer.w=v;redraw();},'ptxt_w');
+    num('ntxth',function(v){layer.h=v;redraw();});
+    rng('ptxt_x',function(v){layer.x=v;redraw();});
+    rng('ptxt_y',function(v){layer.y=v;redraw();});
+    rng('ptxt_w',function(v){layer.w=v;redraw();});
+    rng('ptxt_rot',function(v){layer.rotation=v;redraw();});
+    rng('ptxt_opacity',function(v){layer.opacity=v;redraw();});
   }
 }
 
@@ -1524,24 +1434,28 @@ function getLayerBounds(layer){
     var totalH=(layer.padTop||40)+textH+(layer.padBottom||40)+sdy+Math.ceil(shadow*2)+8;
     return{x:layer.x,y:layer.y,w:w,h:totalH*sc};
   }
+  if(layer.type==='text'){
+    // Height is whatever the last render produced. Falls back to the stored h or font-based estimate.
+    var h = layer._renderedH || layer.h || (layer.fontSize||72) * (layer.lineHeight||1.2);
+    return {x:layer.x, y:layer.y, w:layer.w, h:h};
+  }
   return{x:layer.x,y:layer.y,w:layer.w||100,h:layer.h||100};
 }
 function syncPropXY(l){
-  var px=document.getElementById(l.type==='sticker'?'psx':l.type==='shape'?'pshx':l.type==='svg'?'svgx':'px');
-  var py=document.getElementById(l.type==='sticker'?'psy':l.type==='shape'?'pshy':l.type==='svg'?'svgy':'py');
+  var px=document.getElementById(l.type==='sticker'?'psx':l.type==='shape'?'pshx':l.type==='svg'?'svgx':l.type==='text'?'ptxt_x':'px');
+  var py=document.getElementById(l.type==='sticker'?'psy':l.type==='shape'?'pshy':l.type==='svg'?'svgy':l.type==='text'?'ptxt_y':'py');
   if(px)px.value=l.x;if(py)py.value=l.y;
-  // also update numeric inputs
-  var nxId=l.type==='sticker'?'nsx':l.type==='shape'?'nshx':l.type==='svg'?'nsvgx':'nx';
-  var nyId=l.type==='sticker'?'nsy':l.type==='shape'?'nshy':l.type==='svg'?'nsvgy':'ny';
+  var nxId=l.type==='sticker'?'nsx':l.type==='shape'?'nshx':l.type==='svg'?'nsvgx':l.type==='text'?'ntxtx':'nx';
+  var nyId=l.type==='sticker'?'nsy':l.type==='shape'?'nshy':l.type==='svg'?'nsvgy':l.type==='text'?'ntxty':'ny';
   var nx=document.getElementById(nxId),ny=document.getElementById(nyId);
   if(nx)nx.value=Math.round(l.x);if(ny)ny.value=Math.round(l.y);
 }
 function syncPropWH(l){
-  var pw=document.getElementById(l.type==='shape'?'pshw':l.type==='svg'?'svgw':'pw');
+  var pw=document.getElementById(l.type==='shape'?'pshw':l.type==='svg'?'svgw':l.type==='text'?'ptxt_w':'pw');
   var ph=document.getElementById(l.type==='shape'?'pshh':l.type==='svg'?'svgh':'ph');
   if(pw)pw.value=l.w;if(ph)ph.value=l.h;
-  var nwId=l.type==='shape'?'nshw':l.type==='svg'?'nsvgw':'nw';
-  var nhId=l.type==='shape'?'nshh':l.type==='svg'?'nsvgh':'nh';
+  var nwId=l.type==='shape'?'nshw':l.type==='svg'?'nsvgw':l.type==='text'?'ntxtw':'nw';
+  var nhId=l.type==='shape'?'nshh':l.type==='svg'?'nsvgh':l.type==='text'?'ntxth':'nh';
   var nw=document.getElementById(nwId),nh=document.getElementById(nhId);
   if(nw)nw.value=Math.round(l.w);if(nh)nh.value=Math.round(l.h);
 }
@@ -1558,6 +1472,7 @@ function redraw(){
     else if(layer.type==='sticker')drawStickerLayer(ctx,layer);
     else if(layer.type==='shape')drawShapeLayer(ctx,layer);
     else if(layer.type==='svg')drawSvgLayer(ctx,layer);
+    else if(layer.type==='text')drawTextLayer(ctx,layer);
     ctx.restore();
   });
   // draw selection outline + resize handle (but NOT during crop mode — crop has its own overlay)
@@ -1763,6 +1678,94 @@ function withRotation(ctx,layer,fn){
   ctx.save();ctx.translate(cx,cy);ctx.rotate(layer.rotation*Math.PI/180);ctx.translate(-cx,-cy);fn();ctx.restore();
 }
 
+// ── DRAW TEXT LAYER ──
+// Renders a text block with word-wrap within the layer's width.
+// Respects font, weight, size, color, alignment, line-height, letter-spacing, opacity, rotation.
+function drawTextLayer(ctx, layer){
+  if(!layer.text) return;
+  withRotation(ctx, layer, function(){
+    var x=layer.x, y=layer.y, w=layer.w;
+    var size=layer.fontSize||72;
+    var weight=layer.fontWeight||400;
+    var family=layer.fontFamily||'sans-serif';
+    var align=layer.align||'left';
+    var lineHeight=(layer.lineHeight||1.2);
+    var letterSpacing=(layer.letterSpacing||0);
+
+    ctx.save();
+    ctx.fillStyle=layer.color||'#222';
+    ctx.font=weight+' '+size+'px '+family+', sans-serif';
+    ctx.textBaseline='top';
+    // Canvas 2D has no native letterSpacing; we handle it manually by drawing char by char when nonzero
+    var useManualKerning = Math.abs(letterSpacing) > 0.01;
+
+    // Word-wrap: split input into paragraphs (keep explicit \n), then wrap each to the layer width
+    var paragraphs = String(layer.text).split('\n');
+    var lines = [];
+    paragraphs.forEach(function(p){
+      if(p.length===0){ lines.push(''); return; }
+      var words = p.split(' ');
+      var cur = '';
+      words.forEach(function(word){
+        var test = cur ? cur+' '+word : word;
+        var testW = measureTextWithSpacing(ctx, test, letterSpacing);
+        if(testW > w && cur){
+          lines.push(cur);
+          cur = word;
+        } else {
+          cur = test;
+        }
+      });
+      if(cur) lines.push(cur);
+    });
+
+    var lineH = size*lineHeight;
+    ctx.textAlign = (align==='center')?'center':(align==='right')?'right':'left';
+
+    lines.forEach(function(line, i){
+      var drawX = x;
+      if(align==='center') drawX = x + w/2;
+      else if(align==='right') drawX = x + w;
+      var drawY = y + i*lineH;
+      if(useManualKerning){
+        drawTextWithLetterSpacing(ctx, line, drawX, drawY, letterSpacing, align, w);
+      } else {
+        ctx.fillText(line, drawX, drawY);
+      }
+    });
+
+    // Track the actual rendered height on the layer so bounds/selection match
+    layer._renderedH = lines.length * lineH;
+    ctx.restore();
+  });
+}
+
+// Measures text width including per-character letter spacing
+function measureTextWithSpacing(ctx, text, letterSpacing){
+  var base = ctx.measureText(text).width;
+  if(!letterSpacing) return base;
+  // (text.length - 1) gaps between characters
+  return base + Math.max(0, text.length - 1) * letterSpacing;
+}
+
+function drawTextWithLetterSpacing(ctx, text, x, y, letterSpacing, align, boxW){
+  // For letter-spacing we need to draw char by char. Compute the total width first, then start position based on align.
+  var totalW = measureTextWithSpacing(ctx, text, letterSpacing);
+  var cursor;
+  if(align==='center') cursor = x - totalW/2;
+  else if(align==='right') cursor = x - totalW;
+  else cursor = x;
+  // Force left alignment for character-by-character draw
+  var savedAlign = ctx.textAlign;
+  ctx.textAlign = 'left';
+  for(var i=0; i<text.length; i++){
+    var ch = text[i];
+    ctx.fillText(ch, cursor, y);
+    cursor += ctx.measureText(ch).width + letterSpacing;
+  }
+  ctx.textAlign = savedAlign;
+}
+
 function drawImageLayer(ctx,layer){
   if(!layer.img)return;
   withRotation(ctx,layer,function(){
@@ -1804,13 +1807,31 @@ function drawShapeLayer(ctx,layer){
     if(layer.fillType==='solid'){
       fill=layer.fillColor||'#8ab81d';
     } else {
-      var ang=(layer.gradAngle||135)*Math.PI/180;
-      var cx2=x+w/2,cy2=y+h/2,len=Math.sqrt(w*w+h*h)/2;
-      var gx1=cx2-Math.cos(ang)*len,gy1=cy2-Math.sin(ang)*len;
-      var gx2=cx2+Math.cos(ang)*len,gy2=cy2+Math.sin(ang)*len;
-      var grad=ctx.createLinearGradient(gx1,gy1,gx2,gy2);
-      grad.addColorStop(0,layer.gradTop||'#8ab81d');
-      grad.addColorStop(1,layer.gradBottom||'#3c8e14');
+      var gradType = layer.gradType || 'linear';
+      var cx2=x+w/2, cy2=y+h/2;
+      var top = layer.gradTop||'#8ab81d';
+      var bot = layer.gradBottom||'#3c8e14';
+      var grad;
+      if(gradType === 'radial'){
+        var rad = Math.max(w,h)/2;
+        grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, rad);
+        grad.addColorStop(0, top);
+        grad.addColorStop(1, bot);
+      } else if(gradType === 'conic' && ctx.createConicGradient){
+        var angRad = ((layer.gradAngle||0) - 90) * Math.PI/180;  // start at top like CSS conic-gradient
+        grad = ctx.createConicGradient(angRad, cx2, cy2);
+        grad.addColorStop(0, top);
+        grad.addColorStop(1, bot);
+      } else {
+        // linear (default)
+        var ang=(layer.gradAngle||135)*Math.PI/180;
+        var len=Math.sqrt(w*w+h*h)/2;
+        var gx1=cx2-Math.cos(ang)*len, gy1=cy2-Math.sin(ang)*len;
+        var gx2=cx2+Math.cos(ang)*len, gy2=cy2+Math.sin(ang)*len;
+        grad = ctx.createLinearGradient(gx1,gy1,gx2,gy2);
+        grad.addColorStop(0, top);
+        grad.addColorStop(1, bot);
+      }
       fill=grad;
     }
     ctx.save();
@@ -2022,6 +2043,7 @@ function doExport(){
       else if(layer.type==='sticker')drawStickerLayer(bctx,layer);
       else if(layer.type==='shape')drawShapeLayer(bctx,layer);
       else if(layer.type==='svg')drawSvgLayer(bctx,layer);
+      else if(layer.type==='text')drawTextLayer(bctx,layer);
     }catch(e){console.error('[export] layer',i,'type',layer.type,'error:',e);}
     bctx.restore();
   });
