@@ -111,7 +111,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v38</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v39</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -341,7 +341,7 @@ var PRESETS_BY_BRAND = {
   kkz: [
     // KKZ rainbow — from the live site CSS: linear-gradient(to right, …)
     {id:'kp0', stops:['#6B3FA0','#00AEEF','#8DC63F','#FFD700','#F7941D','#E63329','#6B3FA0'],
-     top:'#6B3FA0', bottom:'#E63329', gradAngle:0, label:'KKZ Rainbow'},
+     top:'#6B3FA0', bottom:'#E63329', gradAngle:0, label:'KKZ Rainbow', locked:true},
     // Brand gradients
     {id:'kp1', top:'#81C568', bottom:'#00A76B', label:'KKZ Green Gradient'},
     {id:'kp2', top:'#F4EA11', bottom:'#ECA223', label:'KKZ Yellow Gradient'},
@@ -686,6 +686,8 @@ function bindKeyboardShortcuts(){
     // Delete / Backspace on selected layer
     if((e.key === 'Delete' || e.key === 'Backspace') && selectedId != null){
       if(cropState) return; // don't delete while cropping
+      var sel=layers.find(function(l){return l.id===selectedId;});
+      if(sel && sel.locked) return; // don't delete locked layers
       e.preventDefault();
       snapshotState();
       deleteLayer(selectedId);
@@ -745,16 +747,24 @@ function renderPresets(){
     sw.className='preset-swatch'+(p.id===activePresetId?' active':'');
     // Render preview matching the preset's actual gradient type where possible (CSS supports all three)
     sw.style.background = presetSwatchCss(p);
-    sw.title=p.label;
-    // Edit button
-    var edit=document.createElement('div');edit.className='edit-preset';edit.textContent='✎';
-    edit.title='Edit preset';
-    edit.onclick=function(e){e.stopPropagation();openPresetEditor(p.id);};
-    sw.appendChild(edit);
-    // Delete button
-    var del=document.createElement('div');del.className='del-preset';del.textContent='×';
-    del.onclick=function(e){e.stopPropagation();deletePreset(p.id);};
-    sw.appendChild(del);
+    sw.title = p.label + (p.locked ? ' (locked)' : '');
+    if(p.locked){
+      // Small lock indicator in the corner — no edit/delete buttons
+      var lock=document.createElement('div');
+      lock.textContent='🔒';
+      lock.style.cssText='position:absolute;top:1px;right:1px;font-size:9px;opacity:0.85;pointer-events:none;text-shadow:0 0 2px rgba(0,0,0,0.5);';
+      sw.appendChild(lock);
+    } else {
+      // Edit button
+      var edit=document.createElement('div');edit.className='edit-preset';edit.textContent='✎';
+      edit.title='Edit preset';
+      edit.onclick=function(e){e.stopPropagation();openPresetEditor(p.id);};
+      sw.appendChild(edit);
+      // Delete button
+      var del=document.createElement('div');del.className='del-preset';del.textContent='×';
+      del.onclick=function(e){e.stopPropagation();deletePreset(p.id);};
+      sw.appendChild(del);
+    }
     sw.onclick=function(){applyPreset(p);};
     g.appendChild(sw);
   });
@@ -791,6 +801,10 @@ function applyPreset(p){
 // Opens for creating a new preset (id=null) or editing an existing one (id=presetId).
 function openPresetEditor(presetId){
   var existing = presetId ? gradientPresets.find(function(p){return p.id===presetId;}) : null;
+  if(existing && existing.locked){
+    alert('This preset is locked and cannot be edited. To customize, apply it to a layer and create a new preset from there.');
+    return;
+  }
   var initial = existing || {
     top:'#8ab81d', bottom:'#3c8e14',
     gradType:'linear', gradAngle:135,
@@ -894,6 +908,8 @@ function savePresetEditor(){
   closePresetEditor();
 }
 function deletePreset(id){
+  var p = gradientPresets.find(function(p){return p.id===id;});
+  if(p && p.locked){ alert('This preset is locked and cannot be deleted.'); return; }
   gradientPresets=gradientPresets.filter(function(p){return p.id!==id;});
   if(activePresetId===id)activePresetId=gradientPresets.length?gradientPresets[0].id:'';
   savePresets();renderPresets();
@@ -909,12 +925,18 @@ function loadPresets(){
       var p=JSON.parse(s);
       if(p&&p.length){
         gradientPresets=p;
-        // Migration: ensure KKZ's rainbow preset (kp0) is present even if the user cached an older list.
-        // Users can still delete it after if they don't want it.
-        if(currentBrand==='kkz' && !gradientPresets.some(function(x){return x.id==='kp0';})){
+        // Migration: always overwrite the canonical KKZ rainbow (kp0) with the fresh definition.
+        // This ensures the locked flag + correct stops array are restored even if a prior edit
+        // broke the preset in localStorage.
+        if(currentBrand==='kkz'){
           var fresh = (PRESETS_BY_BRAND.kkz||[]).find(function(x){return x.id==='kp0';});
-          if(fresh) gradientPresets.unshift(fresh);
+          if(fresh){
+            var idx = gradientPresets.findIndex(function(x){return x.id==='kp0';});
+            if(idx >= 0) gradientPresets[idx] = fresh;
+            else         gradientPresets.unshift(fresh);
+          }
         }
+        savePresets();
       }
     } else {
       // fall back to defaults for this brand
@@ -1080,14 +1102,28 @@ function renderLayerList(){
     (function(layer,layerIdx){
       var item=document.createElement('div');
       item.className='layer-item'+(layer.id===selectedId?' active':'');
-      item.draggable=true;
+      if(layer.hidden) item.style.opacity='0.5';
+      item.draggable = !layer.locked;  // locked layers can't be dragged either
       item.dataset.layerId=layer.id;
-      var icons={image:'🖼',sticker:'✍️',shape:'⬛',svg:'📐'};
-      item.innerHTML='<span class="ltype" style="cursor:grab;">⋮⋮</span>'
+      var icons={image:'🖼',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷'};
+      var eyeIcon = layer.hidden ? '⊘' : '●';   // filled circle = visible, crossed circle = hidden
+      var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
+      var lockIcon = layer.locked ? '🔒' : '🔓';
+      var lockOpacity = layer.locked ? '' : 'opacity:0.35;';
+      item.innerHTML='<span class="ltype" style="cursor:'+(layer.locked?'not-allowed':'grab')+';">⋮⋮</span>'
         +'<span class="ltype">'+(icons[layer.type]||'▫')+'</span>'
         +'<span class="lname">'+layer.name+'</span>'
+        +'<span class="layer-vis" title="'+(layer.hidden?'Show':'Hide')+' layer" '
+          +'style="cursor:pointer;font-size:13px;font-weight:bold;'+eyeColor+'">'+eyeIcon+'</span>'
+        +'<span class="layer-lock" title="'+(layer.locked?'Unlock':'Lock')+' layer" '
+          +'style="cursor:pointer;font-size:12px;'+lockOpacity+'">'+lockIcon+'</span>'
         +'<span class="layer-del" title="Delete">✕</span>';
-      item.onclick=function(e){if(e.target.classList.contains('layer-del')){deleteLayer(layer.id);return;}selectLayer(layer.id);};
+      item.onclick=function(e){
+        if(e.target.classList.contains('layer-del')){ if(layer.locked){alert('Unlock the layer first to delete it.');return;} deleteLayer(layer.id);return;}
+        if(e.target.classList.contains('layer-vis')){ layer.hidden=!layer.hidden; renderLayerList(); redraw(); return; }
+        if(e.target.classList.contains('layer-lock')){ layer.locked=!layer.locked; renderLayerList(); renderProps(); return; }
+        selectLayer(layer.id);
+      };
       item.addEventListener('dragstart',function(e){
         e.dataTransfer.effectAllowed='move';
         e.dataTransfer.setData('text/plain',String(layer.id));
@@ -1131,12 +1167,24 @@ function renderProps(){
   var layer=layers.find(function(l){return l.id===selectedId;});
   var el=document.getElementById('propContent');
   if(!layer){el.innerHTML='<div class="alert alert-green">Select or add a layer to edit.</div>';return;}
-  if(layer.type==='image')el.innerHTML=buildImageProps(layer);
-  else if(layer.type==='sticker')el.innerHTML=buildStickerProps(layer);
-  else if(layer.type==='shape')el.innerHTML=buildShapeProps(layer);
-  else if(layer.type==='svg')el.innerHTML=buildSvgProps(layer);
-  else if(layer.type==='text')el.innerHTML=buildTextProps(layer);
-  bindPropEvents(layer);
+  var lockedBanner = layer.locked
+    ? '<div style="margin-bottom:8px;padding:8px 10px;background:#f6f3e8;border:1px solid #d9ca8a;border-radius:6px;font-size:11px;color:#7a6300;">'
+      +'🔒 This layer is locked. Unlock it in the layer list to edit.'
+      +'</div>'
+    : '';
+  var innerHtml = '';
+  if(layer.type==='image')       innerHtml=buildImageProps(layer);
+  else if(layer.type==='sticker') innerHtml=buildStickerProps(layer);
+  else if(layer.type==='shape')   innerHtml=buildShapeProps(layer);
+  else if(layer.type==='svg')     innerHtml=buildSvgProps(layer);
+  else if(layer.type==='text')    innerHtml=buildTextProps(layer);
+  // If locked, wrap the controls with pointer-events:none and dim them
+  if(layer.locked){
+    el.innerHTML = lockedBanner + '<div style="pointer-events:none;opacity:0.55;">'+innerHtml+'</div>';
+  } else {
+    el.innerHTML = innerHtml;
+    bindPropEvents(layer);
+  }
 }
 
 function R(label,id,val,min,max,step){
@@ -1412,13 +1460,27 @@ function addLayerGradientStops(grad, layer){
 // Called whenever the user manually edits Top or Bottom on a gradient layer.
 // This forces the layer back into 2-stop mode — the user's change has to take effect,
 // which means discarding any multi-stop array they were previously using.
+// EXCEPTION: if the layer is tied to a locked preset (e.g. brand rainbow), keep the stops intact.
 function revertToTwoStopOnEdit(layer){
   if(layer.gradStops){
+    // If the currently-active preset is locked AND its stops match this layer's stops, don't revert.
+    var p = activePresetId ? gradientPresets.find(function(pp){return pp.id===activePresetId;}) : null;
+    if(p && p.locked && p.stops && JSON.stringify(p.stops)===JSON.stringify(layer.gradStops)){
+      // Locked preset applied — restore the preset's original top/bottom on the layer, keep stops.
+      layer.gradTop = p.top;
+      layer.gradBottom = p.bottom;
+      // Force the color inputs back to the preset values
+      var t = document.getElementById('pshGradTop'); if(t) t.value = p.top;
+      var b = document.getElementById('pshGradBot'); if(b) b.value = p.bottom;
+      var tt = document.getElementById('ptxt_gradTop'); if(tt) tt.value = p.top;
+      var tb = document.getElementById('ptxt_gradBot'); if(tb) tb.value = p.bottom;
+      return;  // stops preserved
+    }
     delete layer.gradStops;
     // Deactivate any preset highlight since the layer no longer matches
     if(activePresetId){
-      var p = gradientPresets.find(function(pp){return pp.id===activePresetId;});
-      if(p && p.stops){ activePresetId=''; renderPresets(); }
+      var p2 = gradientPresets.find(function(pp){return pp.id===activePresetId;});
+      if(p2 && p2.stops){ activePresetId=''; renderPresets(); }
     }
   }
 }
@@ -1729,7 +1791,7 @@ function bindCanvasEvents(){
     // Because the layer may be rotated, we transform the click into layer-local coords
     // (the coord space the handles are drawn in pre-rotation).
     var selLayer=layers.find(function(l){return l.id===selectedId;});
-    if(selLayer){
+    if(selLayer && !selLayer.locked){
       var sbds=getLayerBounds(selLayer);
       var rot=(selLayer.rotation||0)*Math.PI/180;
       var ccx=sbds.x+sbds.w/2, ccy=sbds.y+sbds.h/2;
@@ -1759,6 +1821,8 @@ function bindCanvasEvents(){
     var layer=getLayerAt(cx,cy);
     if(!layer)return;
     selectLayer(layer.id);
+    // Locked layers can be selected but not dragged around
+    if(layer.locked) return;
     snapshotState();
     dragState={layerId:layer.id,startX:e.clientX,startY:e.clientY,origX:layer.x,origY:layer.y};
     e.preventDefault();
@@ -1819,6 +1883,7 @@ function bindCanvasEvents(){
 
 function getLayerAt(cx,cy){
   for(var i=layers.length-1;i>=0;i--){
+    if(layers[i].hidden) continue;  // can't click hidden layers
     var bds=getLayerBounds(layers[i]);
     if(cx>=bds.x&&cx<=bds.x+bds.w&&cy>=bds.y&&cy<=bds.y+bds.h)return layers[i];
   }return null;
@@ -1881,6 +1946,7 @@ function redraw(){
   ctx.clearRect(0,0,canvasW,canvasH);
   drawCheckerboard(ctx);
   layers.forEach(function(layer){
+    if(layer.hidden) return;  // visibility toggle
     ctx.save();ctx.globalAlpha=(layer.opacity||100)/100;
     if(layer.type==='image')drawImageLayer(ctx,layer);
     else if(layer.type==='sticker')drawStickerLayer(ctx,layer);
@@ -1891,23 +1957,29 @@ function redraw(){
   });
   // draw selection outline + resize handle (but NOT during crop mode — crop has its own overlay)
   var sel=layers.find(function(l){return l.id===selectedId;});
-  if(sel && !cropState){
+  if(sel && !cropState && !sel.hidden){
     var bds=getLayerBounds(sel);
     var rot=(sel.rotation||0)*Math.PI/180;
     var ccx=bds.x+bds.w/2, ccy=bds.y+bds.h/2; // rotation center
     ctx.save();
-    // Draw rotated dashed outline + handles
+    // Draw rotated outline — dashed when editable, solid grey when locked
     ctx.translate(ccx,ccy); ctx.rotate(rot); ctx.translate(-ccx,-ccy);
-    ctx.strokeStyle='rgba(138,184,29,0.8)';ctx.lineWidth=2;ctx.setLineDash([6,3]);
-    ctx.strokeRect(bds.x,bds.y,bds.w,bds.h);ctx.setLineDash([]);
-    // resize handle at bottom-right corner
-    ctx.fillStyle='#fff';ctx.strokeStyle='#8ab81d';ctx.lineWidth=2;
-    ctx.fillRect(bds.x+bds.w-HANDLE_SIZE/2,bds.y+bds.h-HANDLE_SIZE/2,HANDLE_SIZE,HANDLE_SIZE);
-    ctx.strokeRect(bds.x+bds.w-HANDLE_SIZE/2,bds.y+bds.h-HANDLE_SIZE/2,HANDLE_SIZE,HANDLE_SIZE);
-    // rotation handle: circle above the top-center, connected by a short line
-    var rhX=bds.x+bds.w/2, rhY=bds.y-ROTATE_HANDLE_DIST;
-    ctx.beginPath();ctx.moveTo(bds.x+bds.w/2,bds.y);ctx.lineTo(rhX,rhY);ctx.stroke();
-    ctx.beginPath();ctx.arc(rhX,rhY,HANDLE_SIZE/2+1,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.stroke();
+    if(sel.locked){
+      ctx.strokeStyle='rgba(150,150,150,0.9)';ctx.lineWidth=2;ctx.setLineDash([]);
+      ctx.strokeRect(bds.x,bds.y,bds.w,bds.h);
+      // No resize/rotate handles for locked layers
+    } else {
+      ctx.strokeStyle='rgba(138,184,29,0.8)';ctx.lineWidth=2;ctx.setLineDash([6,3]);
+      ctx.strokeRect(bds.x,bds.y,bds.w,bds.h);ctx.setLineDash([]);
+      // resize handle at bottom-right corner
+      ctx.fillStyle='#fff';ctx.strokeStyle='#8ab81d';ctx.lineWidth=2;
+      ctx.fillRect(bds.x+bds.w-HANDLE_SIZE/2,bds.y+bds.h-HANDLE_SIZE/2,HANDLE_SIZE,HANDLE_SIZE);
+      ctx.strokeRect(bds.x+bds.w-HANDLE_SIZE/2,bds.y+bds.h-HANDLE_SIZE/2,HANDLE_SIZE,HANDLE_SIZE);
+      // rotation handle: circle above the top-center, connected by a short line
+      var rhX=bds.x+bds.w/2, rhY=bds.y-ROTATE_HANDLE_DIST;
+      ctx.beginPath();ctx.moveTo(bds.x+bds.w/2,bds.y);ctx.lineTo(rhX,rhY);ctx.stroke();
+      ctx.beginPath();ctx.arc(rhX,rhY,HANDLE_SIZE/2+1,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.stroke();
+    }
     ctx.restore();
   }
   if(cropState) drawCropOverlay(ctx);
@@ -2625,6 +2697,7 @@ function doExport(){
   bctx.scale(scaleX, scaleY);
 
   layers.forEach(function(layer,i){
+    if(layer.hidden) return;
     bctx.save();bctx.globalAlpha=(layer.opacity||100)/100;
     try{
       if(layer.type==='image')drawImageLayer(bctx,layer);
