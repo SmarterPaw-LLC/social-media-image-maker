@@ -440,6 +440,7 @@ function addStickerLayer(){
     id:id,type:'sticker',name:'Sticker '+id,
     x:40,y:40,
     lines:[{text:'YOUR TEXT',size:120,offsetX:0,curve:0}],
+    textScale:100,
     align:'left',
     gradTop:preset?preset.top:'#8ab81d',
     gradBottom:preset?preset.bottom:'#3c8e14',
@@ -509,6 +510,15 @@ function COL(label,id,val){
   return '<div style="margin-bottom:5px;" class="color-row"><label>'+label+'</label><input type="color" id="'+id+'" value="'+val+'"></div>';
 }
 function escAttr(s){return String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;');}
+// Paired numeric inputs (e.g. W × H). Emits two inputs whose ids can be bound in bindPropEvents.
+function NUMPAIR(label1,id1,val1,label2,id2,val2){
+  return '<div class="col2" style="margin-bottom:5px;">'
+    +'<div><label style="font-size:10px;color:var(--muted);">'+label1+'</label>'
+    +'<input type="number" id="'+id1+'" value="'+Math.round(val1)+'" step="1"></div>'
+    +'<div><label style="font-size:10px;color:var(--muted);">'+label2+'</label>'
+    +'<input type="number" id="'+id2+'" value="'+Math.round(val2)+'" step="1"></div>'
+    +'</div>';
+}
 function moveBtns(id){
   return '<div style="display:flex;gap:5px;margin-top:5px;">'
     +'<button class="btn-sm" style="flex:1" onclick="moveLayer('+id+',-1)">↓ Down</button>'
@@ -521,6 +531,8 @@ function buildImageProps(l){
   return '<div class="prop-section">'
     +'<button class="btn-add" onclick="promptImageUpload('+l.id+')">📁 Replace Image…</button>'
     +'<input type="file" id="fi_'+l.id+'" accept="image/*" style="display:none" onchange="handleFileInput(event,'+l.id+')">'
+    +NUMPAIR('X (px)','nx',l.x,'Y (px)','ny',l.y)
+    +NUMPAIR('W (px)','nw',l.w,'H (px)','nh',l.h)
     +R('X','px',l.x,-canvasW,canvasW*2,1)+R('Y','py',l.y,-canvasH,canvasH*2,1)
     +R('Width','pw',l.w,10,canvasW*3,2)+R('Height','ph',l.h,10,canvasH*3,2)
     +SEL('Fit','pfit',[['cover','Cover'],['contain','Contain'],['fill','Stretch']],l.fit)
@@ -543,11 +555,19 @@ function buildStickerProps(l){
       +'<label style="font-size:10px;color:var(--muted);">Text</label>'
       +'<input type="text" class="sl_text" data-li="'+i+'" value="'+escAttr(line.text)+'">'
       +R('Size','sl_size_'+i,line.size,20,400,2)
-      +R('X Offset','sl_ox_'+i,line.offsetX,-400,400,4)
+      +R('X Offset','sl_ox_'+i,line.offsetX,-canvasW,canvasW,2)
       +R('Curve','sl_curve_'+i,line.curve,-100,100,2)
       +'</div>';
   }).join('');
+  var ts = l.textScale !== undefined ? l.textScale : 100;
   return '<div class="prop-section">'
+    +'<div style="background:#f0f8e8;border:1.5px solid #c5e0a0;border-radius:7px;padding:8px;margin-bottom:6px;">'
+    +'<label style="font-size:11px;font-weight:700;color:var(--green-dark);">▲ Master Text Size</label>'
+    +R('All Lines (%)','ptextScale',ts,10,300,2)
+    +'<div style="display:flex;gap:5px;margin-top:4px;">'
+    +'<button class="btn-sm" style="flex:1" onclick="bakeTextScale('+l.id+')">Bake In</button>'
+    +'<button class="btn-sm" style="flex:1" onclick="resetTextScale('+l.id+')">Reset 100%</button>'
+    +'</div></div>'
     +'<button class="btn-add" onclick="addStickerLine('+l.id+')">+ Add Line</button>'
     +linesHtml
     +SEL('Align','palign',[['left','Left'],['center','Center'],['right','Right']],l.align)
@@ -567,6 +587,9 @@ function buildStickerProps(l){
     +R('Shadow Opacity','pshadowOp',l.shadowOpacity,0,100,5)
     +R('Shadow Spread','pshadowSp',l.shadowSpread,0,20,1)
     +R('Line Gap','plineGap',l.lineGap===999?0:l.lineGap,-40,40,2)
+    +NUMPAIR('X (px)','nsx',l.x,'Y (px)','nsy',l.y)
+    +'<div style="margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Scale (%)</label>'
+    +'<input type="number" id="nscale" value="'+Math.round(l.scale*100)+'" step="1" min="10" max="300"></div>'
     +R('X','psx',l.x,-canvasW,canvasW*2,2)
     +R('Y','psy',l.y,-canvasH,canvasH*2,2)
     +R('Scale','pscale',Math.round(l.scale*100),10,300,2)
@@ -586,6 +609,8 @@ function buildShapeProps(l){
     +COL('Stroke','pshStroke',l.strokeColor==='rgba(0,0,0,0)'?'#000000':l.strokeColor)
     +R('Stroke Width','pshStrokeW',l.strokeWidth,0,40,1)
     +(l.shape==='roundrect'?R('Corner Radius','pshCorner',l.cornerRadius,0,200,4):'')
+    +NUMPAIR('X (px)','nshx',l.x,'Y (px)','nshy',l.y)
+    +NUMPAIR('W (px)','nshw',l.w,'H (px)','nshh',l.h)
     +R('X','pshx',Math.round(l.x),-canvasW,canvasW*2,2)
     +R('Y','pshy',Math.round(l.y),-canvasH,canvasH*2,2)
     +R('Width','pshw',Math.round(l.w),10,canvasW*3,2)
@@ -598,6 +623,8 @@ function buildShapeProps(l){
 function buildSvgProps(l){
   return '<div class="prop-section">'
     +'<button class="btn-add" onclick="addSvgLayer()">📁 Replace SVG…</button>'
+    +NUMPAIR('X (px)','nsvgx',l.x,'Y (px)','nsvgy',l.y)
+    +NUMPAIR('W (px)','nsvgw',l.w,'H (px)','nsvgh',l.h)
     +R('X','svgx',Math.round(l.x),-canvasW,canvasW*2,2)
     +R('Y','svgy',Math.round(l.y),-canvasH,canvasH*2,2)
     +R('Width','svgw',Math.round(l.w),10,canvasW*3,2)
@@ -618,8 +645,23 @@ function applyPresetToLayer(layerId,presetId){
 function bindPropEvents(layer){
   function on(id,evt,fn){var e=document.getElementById(id);if(e)e.addEventListener(evt,fn);}
   function rng(id,fn){var e=document.getElementById(id);if(!e)return;e.addEventListener('input',function(){document.getElementById(id+'_v').textContent=e.value;fn(+e.value);});}
+  // Numeric input bound to layer prop. Fires on input (every keystroke), and optionally keeps paired range slider in sync.
+  function num(id,fn,syncRangeId){
+    var e=document.getElementById(id);if(!e)return;
+    e.addEventListener('input',function(){
+      var v=+e.value;if(isNaN(v))return;
+      fn(v);
+      if(syncRangeId){
+        var r=document.getElementById(syncRangeId);if(r){r.value=v;var rv=document.getElementById(syncRangeId+'_v');if(rv)rv.textContent=v;}
+      }
+    });
+  }
 
   if(layer.type==='image'){
+    num('nx',function(v){layer.x=v;redraw();},'px');
+    num('ny',function(v){layer.y=v;redraw();},'py');
+    num('nw',function(v){layer.w=v;redraw();},'pw');
+    num('nh',function(v){layer.h=v;redraw();},'ph');
     rng('px',function(v){layer.x=v;redraw();});rng('py',function(v){layer.y=v;redraw();});
     rng('pw',function(v){layer.w=v;redraw();});rng('ph',function(v){layer.h=v;redraw();});
     on('pfit','change',function(e){layer.fit=e.target.value;redraw();});
@@ -646,8 +688,12 @@ function bindPropEvents(layer){
     rng('pshadowOp',function(v){layer.shadowOpacity=v;redraw();});
     rng('pshadowSp',function(v){layer.shadowSpread=v;redraw();});
     rng('plineGap',function(v){layer.lineGap=v===0?999:v;redraw();});
+    num('nsx',function(v){layer.x=v;redraw();},'psx');
+    num('nsy',function(v){layer.y=v;redraw();},'psy');
+    num('nscale',function(v){layer.scale=v/100;redraw();},'pscale');
     rng('psx',function(v){layer.x=v;redraw();});rng('psy',function(v){layer.y=v;redraw();});
     rng('pscale',function(v){layer.scale=v/100;redraw();});
+    rng('ptextScale',function(v){layer.textScale=+v;redraw();});
     rng('psrotation',function(v){layer.rotation=v;redraw();});
     rng('psopacity',function(v){layer.opacity=v;redraw();});
   } else if(layer.type==='shape'){
@@ -660,11 +706,19 @@ function bindPropEvents(layer){
     on('pshStroke','input',function(e){layer.strokeColor=e.target.value;redraw();});
     rng('pshStrokeW',function(v){layer.strokeWidth=v;redraw();});
     if(layer.shape==='roundrect')rng('pshCorner',function(v){layer.cornerRadius=v;redraw();});
+    num('nshx',function(v){layer.x=v;redraw();},'pshx');
+    num('nshy',function(v){layer.y=v;redraw();},'pshy');
+    num('nshw',function(v){layer.w=v;redraw();},'pshw');
+    num('nshh',function(v){layer.h=v;redraw();},'pshh');
     rng('pshx',function(v){layer.x=v;redraw();});rng('pshy',function(v){layer.y=v;redraw();});
     rng('pshw',function(v){layer.w=v;redraw();});rng('pshh',function(v){layer.h=v;redraw();});
     rng('pshrotation',function(v){layer.rotation=v;redraw();});
     rng('pshopacity',function(v){layer.opacity=v;redraw();});
   } else if(layer.type==='svg'){
+    num('nsvgx',function(v){layer.x=v;redraw();},'svgx');
+    num('nsvgy',function(v){layer.y=v;redraw();},'svgy');
+    num('nsvgw',function(v){layer.w=v;redraw();},'svgw');
+    num('nsvgh',function(v){layer.h=v;redraw();},'svgh');
     rng('svgx',function(v){layer.x=v;redraw();});rng('svgy',function(v){layer.y=v;redraw();});
     rng('svgw',function(v){layer.w=v;redraw();});rng('svgh',function(v){layer.h=v;redraw();});
     rng('svgrotation',function(v){layer.rotation=v;redraw();});
@@ -748,7 +802,7 @@ function bindCanvasEvents(){
     var bds=getLayerBounds(layer);
     var hx=bds.x+bds.w,hy=bds.y+bds.h;
     if(Math.abs(cx-hx)<HANDLE_SIZE/zoomLevel&&Math.abs(cy-hy)<HANDLE_SIZE/zoomLevel){
-      resizeState={layerId:layer.id,startX:e.clientX,startY:e.clientY,origW:bds.w,origH:bds.h,aspect:bds.w/bds.h};
+      resizeState={layerId:layer.id,startX:e.clientX,startY:e.clientY,origW:bds.w,origH:bds.h,aspect:bds.w/bds.h,origScale:layer.scale||1};
     } else {
       dragState={layerId:layer.id,startX:e.clientX,startY:e.clientY,origX:layer.x,origY:layer.y};
     }
@@ -765,10 +819,19 @@ function bindCanvasEvents(){
       var layer=layers.find(function(l){return l.id===resizeState.layerId;});if(!layer)return;
       var dw=(e.clientX-resizeState.startX)/zoomLevel;
       var dh=(e.clientY-resizeState.startY)/zoomLevel;
-      var nw=Math.max(10,resizeState.origW+dw);
-      var nh=e.shiftKey?nw/resizeState.aspect:Math.max(10,resizeState.origH+dh);
-      layer.w=Math.round(nw);layer.h=Math.round(nh);
-      syncPropWH(layer);redraw();
+      if(layer.type==='sticker'){
+        // map horizontal drag into scale change (origW was the rendered width = canvasW*origScale)
+        var newW=Math.max(40,resizeState.origW+dw);
+        layer.scale=Math.max(0.1,Math.min(3,newW/(canvasW)));
+        // refresh Scale slider if visible
+        var ps=document.getElementById('pscale');if(ps){ps.value=Math.round(layer.scale*100);var v=document.getElementById('pscale_v');if(v)v.textContent=ps.value;}
+      } else {
+        var nw=Math.max(10,resizeState.origW+dw);
+        var nh=e.shiftKey?nw/resizeState.aspect:Math.max(10,resizeState.origH+dh);
+        layer.w=Math.round(nw);layer.h=Math.round(nh);
+        syncPropWH(layer);
+      }
+      redraw();
     }
   });
   window.addEventListener('mouseup',function(){dragState=null;resizeState=null;});
@@ -782,9 +845,28 @@ function getLayerAt(cx,cy){
 }
 function getLayerBounds(layer){
   if(layer.type==='sticker'){
-    var maxSize=Math.max.apply(null,layer.lines.map(function(l){return l.size;}));
-    var h=layer.lines.reduce(function(s,l){return s+l.size;},0)+layer.padTop+layer.padBottom;
-    return{x:layer.x,y:layer.y,w:canvasW*0.7*(layer.scale||1),h:h*(layer.scale||1)};
+    var sc=layer.scale||1;
+    var w=canvasW*sc;
+    // Match drawStickerLayer's totalH formula so the box fits the drawn sticker
+    var lines=layer.lines.filter(function(l){return l.text&&l.text.trim();});
+    if(!lines.length)return{x:layer.x,y:layer.y,w:w,h:(layer.padTop+layer.padBottom)*sc};
+    var _ts=(layer.textScale!==undefined&&layer.textScale!==100)?(layer.textScale/100):1;
+    var sizes=lines.map(function(l){return Math.max(12,Math.round(l.size*_ts));});
+    var avgSz=sizes.reduce(function(s,x){return s+x;},0)/sizes.length;
+    var bleed=layer.bleed;
+    var outScale=(!isNaN(bleed)&&bleed>0)?(bleed/100):0.22;
+    var shadow=Math.max(2,Math.round(avgSz*0.06));
+    var sdy=Math.max(2,Math.round(avgSz*0.08));
+    var textH=sizes.reduce(function(s,x){return s+x;},0);
+    // Add inter-line gaps (approx, matches buildRows default behavior when lineGap is default)
+    var lgr=layer.lineGap===999||layer.lineGap===undefined?NaN:layer.lineGap;
+    for(var i=0;i<sizes.length-1;i++){
+      var avg2=(sizes[i]+sizes[i+1])/2;
+      var gap=!isNaN(lgr)&&lgr!==0?lgr*(avg2/60):(avg2>=80?avg2*-0.10:avg2*0.12);
+      textH+=gap;
+    }
+    var totalH=(layer.padTop||40)+textH+(layer.padBottom||40)+sdy+Math.ceil(shadow*2)+8;
+    return{x:layer.x,y:layer.y,w:w,h:totalH*sc};
   }
   return{x:layer.x,y:layer.y,w:layer.w||100,h:layer.h||100};
 }
@@ -792,11 +874,20 @@ function syncPropXY(l){
   var px=document.getElementById(l.type==='sticker'?'psx':l.type==='shape'?'pshx':l.type==='svg'?'svgx':'px');
   var py=document.getElementById(l.type==='sticker'?'psy':l.type==='shape'?'pshy':l.type==='svg'?'svgy':'py');
   if(px)px.value=l.x;if(py)py.value=l.y;
+  // also update numeric inputs
+  var nxId=l.type==='sticker'?'nsx':l.type==='shape'?'nshx':l.type==='svg'?'nsvgx':'nx';
+  var nyId=l.type==='sticker'?'nsy':l.type==='shape'?'nshy':l.type==='svg'?'nsvgy':'ny';
+  var nx=document.getElementById(nxId),ny=document.getElementById(nyId);
+  if(nx)nx.value=Math.round(l.x);if(ny)ny.value=Math.round(l.y);
 }
 function syncPropWH(l){
   var pw=document.getElementById(l.type==='shape'?'pshw':l.type==='svg'?'svgw':'pw');
   var ph=document.getElementById(l.type==='shape'?'pshh':l.type==='svg'?'svgh':'ph');
   if(pw)pw.value=l.w;if(ph)ph.value=l.h;
+  var nwId=l.type==='shape'?'nshw':l.type==='svg'?'nsvgw':'nw';
+  var nhId=l.type==='shape'?'nshh':l.type==='svg'?'nsvgh':'nh';
+  var nw=document.getElementById(nwId),nh=document.getElementById(nhId);
+  if(nw)nw.value=Math.round(l.w);if(nh)nh.value=Math.round(l.h);
 }
 
 // ── REDRAW ──
@@ -920,6 +1011,8 @@ function drawPolygon(ctx,cx,cy,sides,r){
 function drawStickerLayer(ctx,layer){
   var lines=layer.lines.filter(function(l){return l.text&&l.text.trim();});
   if(!lines.length)return;
+  var _ts=(layer.textScale!==undefined&&layer.textScale!==100)?(layer.textScale/100):1;
+  if(_ts!==1)lines=lines.map(function(l){return{text:l.text,size:Math.max(12,Math.round(l.size*_ts)),offsetX:l.offsetX,curve:l.curve};});
   var align=layer.align||'left';
   var TOP=layer.padTop||40,BOT=layer.padBottom||40;
   var gradTop=layer.gradTop||'#8ab81d',gradBot=layer.gradBottom||'#3c8e14';
@@ -1004,6 +1097,18 @@ function drawStickerLayer(ctx,layer){
   ctx.scale(sc,sc);
   ctx.drawImage(off,0,0,cw,totalH,lx/sc,ly/sc,cw,totalH);
   ctx.restore();
+}
+
+// ── TEXT SCALE HELPERS ──
+function bakeTextScale(id){
+  var layer=layers.find(function(l){return l.id===id;});if(!layer)return;
+  var ts=(layer.textScale||100)/100;
+  layer.lines=layer.lines.map(function(l){return{text:l.text,size:Math.max(12,Math.round(l.size*ts)),offsetX:l.offsetX,curve:l.curve};});
+  layer.textScale=100;renderProps();redraw();
+}
+function resetTextScale(id){
+  var layer=layers.find(function(l){return l.id===id;});if(!layer)return;
+  layer.textScale=100;renderProps();redraw();
 }
 
 // ── EXPORT MODAL ──
