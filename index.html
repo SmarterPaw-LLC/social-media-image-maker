@@ -104,7 +104,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <body>
 
 <header>
-  <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing</span></div>
+  <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v7</span></div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
     <button class="brand-opt active" data-brand="meowi" onclick="setBrand('meowi')">Meowi/Doggi</button>
@@ -1209,33 +1209,48 @@ function updateExportInfo(){
 function doExport(){
   var format=document.getElementById('exportFormat').value;
   var quality=(+document.getElementById('exportQuality').value)/100;
-  var mode=document.getElementById('exportSizeMode').value;
+  var modeEl=document.getElementById('exportSizeMode');
+  var mode=modeEl?modeEl.value:'full';
   var ew=canvasW,eh=canvasH;
   if(mode==='custom'){ew=+document.getElementById('exportW').value||canvasW;eh=+document.getElementById('exportH').value||canvasH;}
   else if(mode==='scale'){var scf=+document.getElementById('exportScale').value||1;ew=Math.round(canvasW*scf);eh=Math.round(canvasH*scf);}
 
-  // render to export canvas (no checkerboard, at export size)
-  var expCanvas=document.createElement('canvas');expCanvas.width=ew;expCanvas.height=eh;
-  var ectx=expCanvas.getContext('2d');
-  var scaleX=ew/canvasW,scaleY=eh/canvasH;
-  ectx.scale(scaleX,scaleY);
+  console.log('[export] canvasW=',canvasW,' canvasH=',canvasH,' mode=',mode,' ew=',ew,' eh=',eh,' layers=',layers.length);
 
-  layers.forEach(function(layer){
-    ectx.save();ectx.globalAlpha=(layer.opacity||100)/100;
-    if(layer.type==='image')drawImageLayer(ectx,layer);
-    else if(layer.type==='sticker')drawStickerLayer(ectx,layer);
-    else if(layer.type==='shape')drawShapeLayer(ectx,layer);
-    else if(layer.type==='svg')drawSvgLayer(ectx,layer);
-    ectx.restore();
+  // Strategy: always render at 1:1 (canvasW × canvasH) first, then resize if needed.
+  // This avoids any scaling-during-draw issues, especially with the sticker's internal off-screen canvas.
+  var baseCanvas=document.createElement('canvas');baseCanvas.width=canvasW;baseCanvas.height=canvasH;
+  var bctx=baseCanvas.getContext('2d');
+
+  layers.forEach(function(layer,i){
+    bctx.save();bctx.globalAlpha=(layer.opacity||100)/100;
+    try{
+      if(layer.type==='image')drawImageLayer(bctx,layer);
+      else if(layer.type==='sticker')drawStickerLayer(bctx,layer);
+      else if(layer.type==='shape')drawShapeLayer(bctx,layer);
+      else if(layer.type==='svg')drawSvgLayer(bctx,layer);
+    }catch(e){console.error('[export] layer',i,'type',layer.type,'error:',e);}
+    bctx.restore();
   });
 
+  // Now resize to requested output dimensions if different
+  var outCanvas;
+  if(ew===canvasW&&eh===canvasH){
+    outCanvas=baseCanvas;
+  } else {
+    outCanvas=document.createElement('canvas');outCanvas.width=ew;outCanvas.height=eh;
+    var octx=outCanvas.getContext('2d');
+    octx.imageSmoothingEnabled=true;octx.imageSmoothingQuality='high';
+    octx.drawImage(baseCanvas,0,0,canvasW,canvasH,0,0,ew,eh);
+  }
+
   var mime={'png':'image/png','jpeg':'image/jpeg','webp':'image/webp'}[format]||'image/png';
-  var dataUrl=format==='png'?expCanvas.toDataURL('image/png'):expCanvas.toDataURL(mime,quality);
+  var dataUrl=format==='png'?outCanvas.toDataURL('image/png'):outCanvas.toDataURL(mime,quality);
   var link=document.createElement('a');
-  link.download='smarterpaw-'+canvasW+'x'+canvasH+'.'+format;
+  link.download='smarterpaw-'+ew+'x'+eh+'.'+format;
   link.href=dataUrl;link.click();
   closeExportModal();
-  redraw(); // restore selection overlay
+  redraw();
 }
 </script>
 </body>
