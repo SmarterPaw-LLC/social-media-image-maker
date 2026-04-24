@@ -122,7 +122,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v45</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v46</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2343,6 +2343,39 @@ var HANDLE_SIZE=12;
 var ROTATE_HANDLE_DIST=28; // distance in canvas pixels from layer top edge to rotation handle center
 function bindCanvasEvents(){
   var wrap=document.getElementById('canvasWrap');
+  var area=document.getElementById('canvasArea');
+
+  // Helper: convert a pageX/pageY into canvas-local coords (can be negative or beyond canvas bounds).
+  function clientToCanvas(clientX, clientY){
+    var rect = wrap.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left) / zoomLevel,
+      y: (clientY - rect.top) / zoomLevel
+    };
+  }
+
+  // Second mousedown listener on the outer canvas area. Fires ONLY when the click lands outside
+  // the canvas card itself — i.e. on the surrounding gray area. Starts a marquee whose coordinates
+  // are allowed to be negative / past the canvas edges. The layer hit-test then works on layers
+  // anywhere on the canvas. This lets users start a drag from off-canvas and sweep across.
+  area.addEventListener('mousedown', function(e){
+    if(cropState) return;
+    // If the click is inside the canvas wrap, let the wrap handler deal with it
+    var wb = wrap.getBoundingClientRect();
+    if(e.clientX >= wb.left && e.clientX <= wb.right &&
+       e.clientY >= wb.top  && e.clientY <= wb.bottom) return;
+    // Ignore clicks on zoom buttons or board tabs
+    var tgt = e.target;
+    if(tgt.closest && (tgt.closest('.zoom-controls') || tgt.closest('.board-tabs'))) return;
+    var pt = clientToCanvas(e.clientX, e.clientY);
+    marqueeState = {
+      startX: pt.x, startY: pt.y, curX: pt.x, curY: pt.y,
+      shift: !!e.shiftKey,
+      origSelection: (selectedIds || []).slice()
+    };
+    e.preventDefault();
+  });
+
   wrap.addEventListener('mousedown',function(e){
     var rect=wrap.getBoundingClientRect();
     var cx=(e.clientX-rect.left)/zoomLevel,cy=(e.clientY-rect.top)/zoomLevel;
@@ -2604,6 +2637,7 @@ function segmentsIntersect(p1,p2,p3,p4){
 function getLayerAt(cx,cy){
   for(var i=layers.length-1;i>=0;i--){
     if(layers[i].hidden) continue;  // can't click hidden layers
+    if(layers[i].locked) continue;  // locked layers are "pass-through" for clicks → marquee drags work over them
     var bds=getLayerBounds(layers[i]);
     if(cx>=bds.x&&cx<=bds.x+bds.w&&cy>=bds.y&&cy<=bds.y+bds.h)return layers[i];
   }return null;
