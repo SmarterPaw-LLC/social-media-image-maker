@@ -116,13 +116,15 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Fraunces:wght@100;200;300;400;500;600;700;800;900&family=Ultra&family=Nunito:wght@200;300;400;500;600;700;800;900&family=Barlow+Condensed:wght@100;200;300;400;500;600;700;800;900&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=DM+Sans:wght@100;200;300;400;500;600;700;800;900&family=Fredoka+One&family=Chewy&family=Kalam:wght@300;400;700&display=swap" rel="stylesheet">
+<!-- gif.js: animated GIF encoder. Worker URL passed at GIF construction time. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
 </head>
 <body>
 
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v48</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v49</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -214,47 +216,86 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <!-- Export modal -->
 <div class="modal-overlay hidden" id="exportModal">
   <div class="modal">
-    <h2>⬇ Export Image</h2>
-    <div style="display:flex;flex-direction:column;gap:10px;">
+    <h2 id="exportModalTitle">⬇ Export</h2>
+    <div style="display:flex;flex-direction:column;gap:10px;" id="exportControls">
       <div>
-        <label>Format</label>
-        <select id="exportFormat">
-          <option value="png">PNG (lossless, transparent support)</option>
-          <option value="jpeg">JPG (smaller file, no transparency)</option>
-          <option value="webp">WebP (best compression)</option>
+        <label>Type</label>
+        <select id="exportType" onchange="toggleExportType()">
+          <option value="static">Static image (current frame)</option>
+          <option value="gif">Animated GIF (video clip)</option>
         </select>
       </div>
-      <div id="exportQualityWrap">
-        <label>Quality <span id="exportQualityVal">92</span>%</label>
-        <input type="range" id="exportQuality" min="10" max="100" step="2" value="92" oninput="document.getElementById('exportQualityVal').textContent=this.value">
+      <!-- Static-only controls -->
+      <div id="exportStaticControls">
+        <div>
+          <label>Format</label>
+          <select id="exportFormat">
+            <option value="png">PNG (lossless, transparent support)</option>
+            <option value="jpeg">JPG (smaller file, no transparency)</option>
+            <option value="webp">WebP (best compression)</option>
+          </select>
+        </div>
+        <div id="exportQualityWrap">
+          <label>Quality <span id="exportQualityVal">92</span>%</label>
+          <input type="range" id="exportQuality" min="10" max="100" step="2" value="92" oninput="document.getElementById('exportQualityVal').textContent=this.value">
+        </div>
+        <div>
+          <label>Export Size</label>
+          <select id="exportSizeMode" onchange="toggleExportSize()">
+            <option value="full">Full resolution (canvas size)</option>
+            <option value="custom">Custom size</option>
+            <option value="scale">Scale factor</option>
+          </select>
+        </div>
+        <div id="exportCustomSize" class="hidden col2">
+          <div><label style="font-size:11px;">Width (px)</label><input type="number" id="exportW" value="1080" min="100" max="8000"></div>
+          <div><label style="font-size:11px;">Height (px)</label><input type="number" id="exportH" value="1080" min="100" max="8000"></div>
+        </div>
+        <div id="exportScaleWrap" class="hidden">
+          <label style="font-size:11px;">Scale factor</label>
+          <select id="exportScale">
+            <option value="0.5">0.5× (half size)</option>
+            <option value="1" selected>1× (canvas size)</option>
+            <option value="2">2× (double / retina)</option>
+            <option value="3">3×</option>
+            <option value="4">4×</option>
+          </select>
+        </div>
       </div>
-      <div>
-        <label>Export Size</label>
-        <select id="exportSizeMode" onchange="toggleExportSize()">
-          <option value="full">Full resolution (canvas size)</option>
-          <option value="custom">Custom size</option>
-          <option value="scale">Scale factor</option>
-        </select>
-      </div>
-      <div id="exportCustomSize" class="hidden col2">
-        <div><label style="font-size:11px;">Width (px)</label><input type="number" id="exportW" value="1080" min="100" max="8000"></div>
-        <div><label style="font-size:11px;">Height (px)</label><input type="number" id="exportH" value="1080" min="100" max="8000"></div>
-      </div>
-      <div id="exportScaleWrap" class="hidden">
-        <label style="font-size:11px;">Scale factor</label>
-        <select id="exportScale">
-          <option value="0.5">0.5× (half size)</option>
-          <option value="1" selected>1× (canvas size)</option>
-          <option value="2">2× (double / retina)</option>
-          <option value="3">3×</option>
-          <option value="4">4×</option>
-        </select>
+      <!-- GIF-only controls -->
+      <div id="exportGifControls" class="hidden">
+        <div>
+          <label>FPS (frames per second)</label>
+          <select id="gifFps">
+            <option value="10">10 fps (smaller file)</option>
+            <option value="15" selected>15 fps (recommended)</option>
+            <option value="20">20 fps</option>
+            <option value="30">30 fps (smoothest, biggest file)</option>
+          </select>
+        </div>
+        <div>
+          <label>Output size</label>
+          <select id="gifSize">
+            <option value="480">480px (smallest, fast)</option>
+            <option value="720" selected>720px (recommended)</option>
+            <option value="1080">1080px (full quality)</option>
+          </select>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px;">Width; height scaled to canvas aspect ratio.</div>
+        </div>
+        <div id="gifClipInfo" style="font-size:11px;color:var(--muted);padding:6px 8px;background:#fafafa;border:1px solid var(--border);border-radius:5px;"></div>
       </div>
       <div id="exportInfo" style="font-size:11px;color:var(--muted);"></div>
     </div>
+    <!-- Progress UI (hidden until GIF encode starts) -->
+    <div id="gifProgress" class="hidden" style="margin-top:10px;">
+      <div style="font-size:12px;font-weight:600;margin-bottom:6px;" id="gifProgressLabel">Capturing frames…</div>
+      <div style="height:10px;background:#eee;border-radius:5px;overflow:hidden;">
+        <div id="gifProgressBar" style="height:100%;background:linear-gradient(90deg,var(--green),var(--green-dark));width:0%;transition:width 0.2s;"></div>
+      </div>
+    </div>
     <div class="modal-btns">
-      <button class="btn-cancel" onclick="closeExportModal()">Cancel</button>
-      <button class="btn-primary" onclick="doExport()">Export PNG</button>
+      <button class="btn-cancel" id="exportCancelBtn" onclick="closeExportModal()">Cancel</button>
+      <button class="btn-primary" id="exportConfirmBtn" onclick="doExport()">Export</button>
     </div>
   </div>
 </div>
@@ -817,8 +858,10 @@ function pasteClipboard(){
       v.src = copy.videoSrc;
       v.addEventListener('loadedmetadata', function(){
         try { v.currentTime = copy.trimStart || 0; } catch(e){}
-        redraw();
       });
+      // Redraw once the actual frame pixels arrive so the layer isn't blank until Play
+      v.addEventListener('loadeddata', function(){ redraw(); });
+      v.addEventListener('seeked',     function(){ redraw(); });
       copy._video = v;
       copy._playing = false;
     }
@@ -902,8 +945,11 @@ function deserializeLayers(json){
       v.addEventListener('loadedmetadata', function(){
         // Seek to trim start so the first frame is visible
         try { v.currentTime = o.trimStart || 0; } catch(e){}
-        redraw();
       });
+      // Redraw once actual pixel data is available (metadata-only isn't enough — browsers need
+      // to decode at least one frame before drawImage(video) produces visible pixels)
+      v.addEventListener('loadeddata', function(){ redraw(); });
+      v.addEventListener('seeked',     function(){ redraw(); });
       o._video = v;
       o._playing = false;
     }
@@ -1749,10 +1795,13 @@ function loadVideoIntoNewLayer(dataUrl, filename){
       w: Math.round(fitW), h: Math.round(fitH),
       opacity: 100, rotation: 0, flipH: false, flipV: false
     });
-    // seek to trim start so first frame is shown
-    try { v.currentTime = 0; } catch(e){}
     selectLayer(id); renderLayerList(); redraw();
   });
+  // When the first frame is actually decoded, redraw so it's visible without needing to hit Play.
+  // `loadeddata` fires when readyState becomes HAVE_CURRENT_DATA (we have at least current frame).
+  // `seeked` fires after a programmatic seek completes.
+  v.addEventListener('loadeddata', function(){ redraw(); });
+  v.addEventListener('seeked',     function(){ redraw(); });
   v.addEventListener('error', function(e){
     alert('Could not decode video. Make sure it is an MP4/WebM/MOV the browser supports.');
   });
@@ -3734,10 +3783,64 @@ function resetTextScale(id){
 function openExportModal(){
   document.getElementById('exportW').value=canvasW;
   document.getElementById('exportH').value=canvasH;
-  toggleExportSize();updateExportInfo();
+  toggleExportSize();
+  toggleExportType();   // sets initial visibility based on whether a video layer exists
+  updateExportInfo();
   document.getElementById('exportModal').classList.remove('hidden');
 }
-function closeExportModal(){document.getElementById('exportModal').classList.add('hidden');}
+function closeExportModal(){
+  document.getElementById('exportModal').classList.add('hidden');
+  // Reset progress UI in case GIF was running
+  document.getElementById('gifProgress').classList.add('hidden');
+  document.getElementById('gifProgressBar').style.width='0%';
+  document.getElementById('exportConfirmBtn').disabled = false;
+  document.getElementById('exportCancelBtn').disabled = false;
+}
+
+// Toggle between static and GIF export modes. Auto-switches to GIF when a video layer exists
+// (only on the very first time the modal opens; user can switch back).
+function toggleExportType(){
+  var typeSel = document.getElementById('exportType');
+  var hasVideo = layers.some(function(l){return l.type==='video' && !l.hidden;});
+  // If there's a video and the user hasn't manually changed the type, default to GIF
+  if(hasVideo && !typeSel.dataset.touched){ typeSel.value = 'gif'; }
+  if(!hasVideo) typeSel.value = 'static';
+  var isGif = typeSel.value === 'gif';
+  document.getElementById('exportStaticControls').classList.toggle('hidden', isGif);
+  document.getElementById('exportGifControls').classList.toggle('hidden', !isGif);
+  document.getElementById('exportModalTitle').textContent = isGif ? '⬇ Export GIF' : '⬇ Export Image';
+  document.getElementById('exportConfirmBtn').textContent = isGif ? 'Export GIF' : 'Export';
+  if(isGif) updateGifClipInfo();
+}
+// Mark the dropdown as user-touched so we don't auto-switch back
+document.addEventListener('DOMContentLoaded', function(){
+  var t = document.getElementById('exportType');
+  if(t) t.addEventListener('change', function(){ this.dataset.touched = '1'; toggleExportType(); });
+});
+
+function updateGifClipInfo(){
+  var info = document.getElementById('gifClipInfo');
+  if(!info) return;
+  var v = layers.find(function(l){return l.type==='video' && !l.hidden;});
+  if(!v){
+    info.innerHTML = '<b style="color:#c60;">⚠ No video layer.</b> Add a video layer first, then come back here.';
+    document.getElementById('exportConfirmBtn').disabled = true;
+    return;
+  }
+  document.getElementById('exportConfirmBtn').disabled = false;
+  var clipLen = Math.max(0, (v.trimEnd || 0) - (v.trimStart || 0));
+  var capped = Math.min(clipLen, 10);
+  var fps = +document.getElementById('gifFps').value;
+  var size = +document.getElementById('gifSize').value;
+  var frameCount = Math.round(capped * fps);
+  var aspect = canvasH / canvasW;
+  var outH = Math.round(size * aspect);
+  var noteCap = clipLen > 10 ? '<br>Trim is ' + clipLen.toFixed(1) + 's; output capped at 10s.' : '';
+  info.innerHTML = 'Output: <b>' + size + ' × ' + outH + 'px</b> · <b>' + frameCount + ' frames</b> · <b>' + capped.toFixed(1) + 's</b>'
+    + noteCap
+    + '<br>Encoding may take ' + Math.round(frameCount * 0.5) + '–' + Math.round(frameCount * 1.2) + ' seconds.';
+}
+
 function toggleExportSize(){
   var mode=document.getElementById('exportSizeMode').value;
   document.getElementById('exportCustomSize').classList.toggle('hidden',mode!=='custom');
@@ -3750,8 +3853,6 @@ document.addEventListener('DOMContentLoaded',function(){
   document.getElementById('exportFormat').addEventListener('change',function(){
     var isPng=this.value==='png';
     document.getElementById('exportQualityWrap').classList.toggle('hidden',isPng);
-    // update export btn label
-    document.querySelector('.btn-primary').textContent='Export '+this.value.toUpperCase();
     updateExportInfo();
   });
   // Keep output dimensions display in sync when user changes scale/custom inputs
@@ -3761,6 +3862,11 @@ document.addEventListener('DOMContentLoaded',function(){
   var ehIn=document.getElementById('exportH');
   if(ewIn) ewIn.addEventListener('input',updateExportInfo);
   if(ehIn) ehIn.addEventListener('input',updateExportInfo);
+  // GIF controls update the clip info preview
+  var fpsSel = document.getElementById('gifFps');
+  var sizeSel = document.getElementById('gifSize');
+  if(fpsSel) fpsSel.addEventListener('change', updateGifClipInfo);
+  if(sizeSel) sizeSel.addEventListener('change', updateGifClipInfo);
 });
 function updateExportInfo(){
   var info=document.getElementById('exportInfo');if(!info)return;
@@ -3771,7 +3877,14 @@ function updateExportInfo(){
   if(info)info.textContent='Output: '+ew+' × '+eh+' px';
 }
 
+// Dispatch: static or GIF
 function doExport(){
+  var type = document.getElementById('exportType').value;
+  if(type === 'gif') doGifExport();
+  else               doStaticExport();
+}
+
+function doStaticExport(){
   var format=document.getElementById('exportFormat').value;
   var quality=(+document.getElementById('exportQuality').value)/100;
   var modeEl=document.getElementById('exportSizeMode');
@@ -3780,19 +3893,12 @@ function doExport(){
   if(mode==='custom'){ew=+document.getElementById('exportW').value||canvasW;eh=+document.getElementById('exportH').value||canvasH;}
   else if(mode==='scale'){var scf=+document.getElementById('exportScale').value||1;ew=Math.round(canvasW*scf);eh=Math.round(canvasH*scf);}
 
-  console.log('[export] canvasW=',canvasW,' canvasH=',canvasH,' mode=',mode,' ew=',ew,' eh=',eh,' layers=',layers.length);
-
-  // Strategy: render at the TARGET resolution natively using ctx.scale(). This gives sharp
-  // output at 2x/3x/4x (text, shapes, gradients are all resolution-independent). For raster
-  // images, the source pixels are still the limiting factor — but at least everything else
-  // stays crisp.
   var outCanvas=document.createElement('canvas');
   outCanvas.width=ew;
   outCanvas.height=eh;
   var bctx=outCanvas.getContext('2d');
   bctx.imageSmoothingEnabled=true;
   bctx.imageSmoothingQuality='high';
-  // Apply the scale uniformly in both axes (handles non-uniform custom sizes too)
   var scaleX = ew / canvasW;
   var scaleY = eh / canvasH;
   bctx.scale(scaleX, scaleY);
@@ -3818,6 +3924,160 @@ function doExport(){
   link.href=dataUrl;link.click();
   closeExportModal();
   redraw();
+}
+
+// ── GIF EXPORT ──
+// Records frames by stepping the video element from trimStart to trimEnd at the chosen fps.
+// Each frame: seek video → wait for `seeked` event → composite all visible layers onto an offscreen
+// canvas → hand the canvas to gif.js. After all frames collected, gif.js (Web Worker) encodes the GIF.
+
+function doGifExport(){
+  if(typeof GIF === 'undefined'){
+    alert('GIF encoder failed to load. Check your network connection and reload the page.');
+    return;
+  }
+  var v = layers.find(function(l){return l.type==='video' && !l.hidden;});
+  if(!v || !v._video){
+    alert('Add a video layer first to export as GIF.');
+    return;
+  }
+  // Pause the video — we'll be seeking it programmatically
+  if(v._playing){ v._video.pause(); v._playing = false; }
+
+  var fps = +document.getElementById('gifFps').value;
+  var outW = +document.getElementById('gifSize').value;
+  var aspect = canvasH / canvasW;
+  var outH = Math.round(outW * aspect);
+  var trimStart = v.trimStart || 0;
+  var trimEnd = v.trimEnd != null ? v.trimEnd : (v._video.duration || 10);
+  var clipLen = Math.min(10, Math.max(0.1, trimEnd - trimStart));
+  var totalFrames = Math.round(clipLen * fps);
+  if(totalFrames < 1) totalFrames = 1;
+  var frameDelay = Math.round(1000 / fps);   // gif.js expects ms per frame
+
+  // Disable buttons during encode
+  document.getElementById('exportConfirmBtn').disabled = true;
+  document.getElementById('exportCancelBtn').disabled = true;
+  var progEl = document.getElementById('gifProgress');
+  var barEl = document.getElementById('gifProgressBar');
+  var labelEl = document.getElementById('gifProgressLabel');
+  progEl.classList.remove('hidden');
+  barEl.style.width = '0%';
+  labelEl.textContent = 'Capturing frames (0/' + totalFrames + ')…';
+
+  // Set up GIF encoder. Workers from CDN.
+  var gif = new GIF({
+    workers: 2,
+    quality: 10,        // 1-30; lower = better quality, slower
+    width: outW,
+    height: outH,
+    workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',
+    transparent: null
+  });
+
+  // Offscreen canvas at output resolution. We composite each frame here, then add to gif.
+  var off = document.createElement('canvas');
+  off.width = outW; off.height = outH;
+  var octx = off.getContext('2d');
+  octx.imageSmoothingEnabled = true;
+  octx.imageSmoothingQuality = 'high';
+  var sx = outW / canvasW, sy = outH / canvasH;
+
+  function compositeFrame(){
+    octx.save();
+    octx.clearRect(0, 0, outW, outH);
+    octx.scale(sx, sy);
+    layers.forEach(function(layer){
+      if(layer.hidden) return;
+      octx.save(); octx.globalAlpha = (layer.opacity || 100) / 100;
+      try {
+        if(layer.type === 'image')   drawImageLayer(octx, layer);
+        else if(layer.type === 'video') drawVideoLayer(octx, layer);
+        else if(layer.type === 'sticker') drawStickerLayer(octx, layer);
+        else if(layer.type === 'shape')   drawShapeLayer(octx, layer);
+        else if(layer.type === 'svg')     drawSvgLayer(octx, layer);
+        else if(layer.type === 'text')    drawTextLayer(octx, layer);
+      } catch(e){ console.error('[gif] layer error:', e); }
+      octx.restore();
+    });
+    octx.restore();
+  }
+
+  // Seek to a specific time and wait for the `seeked` event before resolving.
+  // Some browsers fire `seeked` synchronously if already at that time; resolve in a microtask either way.
+  function seekTo(time){
+    return new Promise(function(resolve, reject){
+      var vid = v._video;
+      function onSeeked(){
+        vid.removeEventListener('seeked', onSeeked);
+        // Give browser one more rAF to ensure the new frame is decoded into the video element
+        requestAnimationFrame(function(){ requestAnimationFrame(resolve); });
+      }
+      vid.addEventListener('seeked', onSeeked);
+      try {
+        vid.currentTime = time;
+      } catch(e){
+        vid.removeEventListener('seeked', onSeeked);
+        reject(e);
+      }
+      // Safety timeout
+      setTimeout(function(){
+        vid.removeEventListener('seeked', onSeeked);
+        resolve();
+      }, 2000);
+    });
+  }
+
+  // Capture frames sequentially
+  var frameIdx = 0;
+  function captureNext(){
+    if(frameIdx >= totalFrames){
+      // All frames captured — start encoding
+      labelEl.textContent = 'Encoding GIF…';
+      gif.on('progress', function(p){
+        barEl.style.width = Math.round(p * 100) + '%';
+      });
+      gif.on('finished', function(blob){
+        labelEl.textContent = 'Done!';
+        barEl.style.width = '100%';
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'smarterpaw-' + outW + 'x' + outH + '-' + fps + 'fps.gif';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+        // Re-enable UI
+        setTimeout(function(){
+          document.getElementById('exportConfirmBtn').disabled = false;
+          document.getElementById('exportCancelBtn').disabled = false;
+          progEl.classList.add('hidden');
+          closeExportModal();
+        }, 600);
+      });
+      gif.render();
+      return;
+    }
+    var t = trimStart + (frameIdx / fps);
+    seekTo(t).then(function(){
+      compositeFrame();
+      gif.addFrame(off, {delay: frameDelay, copy: true});
+      frameIdx++;
+      var pct = Math.round((frameIdx / totalFrames) * 100);
+      barEl.style.width = (pct * 0.5) + '%';   // capture is first 50% of progress; encode is second 50%
+      labelEl.textContent = 'Capturing frames (' + frameIdx + '/' + totalFrames + ')…';
+      // Yield so the browser can update the UI
+      setTimeout(captureNext, 0);
+    }).catch(function(e){
+      console.error('[gif] seek failed:', e);
+      alert('GIF capture failed: ' + e.message);
+      document.getElementById('exportConfirmBtn').disabled = false;
+      document.getElementById('exportCancelBtn').disabled = false;
+      progEl.classList.add('hidden');
+    });
+  }
+
+  // Kick off
+  seekTo(trimStart).then(captureNext);
 }
 </script>
 </body>
