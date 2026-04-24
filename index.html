@@ -58,7 +58,18 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .btn-sm{padding:5px 10px;border:1.5px solid var(--border);border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;background:#fafafa;transition:all 0.15s;}
 .btn-sm:hover{border-color:var(--green);color:var(--green);}
 .btn-sm.danger:hover{border-color:#e53;color:#e53;}
-.canvas-area{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto;background:#e8e8e0;position:relative;padding:32px;}
+.canvas-area{flex:1;display:flex;align-items:center;justify-content:flex-start;overflow:auto;background:#e8e8e0;position:relative;padding:32px;flex-direction:column;}
+/* Board tabs strip: sits above the canvas card */
+.board-tabs{display:flex;gap:4px;margin-bottom:0;flex-wrap:wrap;max-width:100%;align-self:flex-start;padding-left:4px;}
+.board-tab{display:flex;align-items:center;gap:6px;padding:6px 12px;background:#d5d5cd;color:#5a5a50;border:1.5px solid transparent;border-bottom:none;border-radius:7px 7px 0 0;font-size:12px;font-weight:600;cursor:pointer;transition:background 0.15s;user-select:none;max-width:200px;}
+.board-tab:hover{background:#c8c8c0;}
+.board-tab.active{background:#fff;color:#333;border-color:rgba(0,0,0,0.08);box-shadow:0 -2px 6px rgba(0,0,0,0.06);}
+.board-tab .board-name{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.board-tab .board-close{opacity:0.55;font-size:14px;line-height:1;margin-left:2px;padding:0 3px;border-radius:3px;}
+.board-tab .board-close:hover{opacity:1;background:rgba(0,0,0,0.1);}
+.board-tab.new-board{background:#f0f0e8;color:var(--green-dark);font-weight:700;padding:6px 14px;}
+.board-tab.new-board:hover{background:#e4e4d8;}
+.canvas-stage{flex:1;display:flex;align-items:center;justify-content:center;width:100%;}
 .canvas-wrap{position:relative;box-shadow:0 8px 48px rgba(0,0,0,0.2);border-radius:4px;overflow:hidden;cursor:default;background:#fff;user-select:none;}
 #mainCanvas{display:block;}
 .drop-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;transition:opacity 0.2s;background:rgba(138,184,29,0.08);border:3px dashed var(--green);border-radius:4px;font-size:15px;font-weight:700;color:var(--green);}
@@ -111,7 +122,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v42</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v43</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -184,9 +195,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 
 <!-- Canvas area -->
 <div class="canvas-area" id="canvasArea">
-  <div class="canvas-wrap" id="canvasWrap">
-    <canvas id="mainCanvas"></canvas>
-    <div class="drop-hint">Drop image here</div>
+  <div class="board-tabs" id="boardTabs"><!-- populated by renderBoardTabs() --></div>
+  <div class="canvas-stage">
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="mainCanvas"></canvas>
+      <div class="drop-hint">Drop image here</div>
+    </div>
   </div>
   <div class="zoom-controls">
     <button class="zoom-btn" onclick="zoom(-0.1)">−</button>
@@ -586,12 +600,54 @@ function resetLogo(key){
 }
 
 // ── STATE ──
-var canvasW=1080,canvasH=1080,zoomLevel=0.5;
-var layers=[],selectedId=null,dragState=null,resizeState=null,nextId=1;
-// Crop-mode state. When active, normal drag/resize are suspended and crop handles are shown.
-var cropState=null; // {layerId, cropX, cropY, cropW, cropH, dragHandle, dragStart, origCrop}
-// Rotation state. Active while dragging the rotation handle above a selected layer.
-var rotateState=null; // {layerId, cx, cy, startAngle, origRotation}
+// Multi-board app: the app has one or more "boards", each with its own layers, canvas size,
+// selection, and undo history. All the original top-level identifiers (layers, canvasW, canvasH,
+// selectedId, undoStack, redoStack) are preserved as window-level getters/setters so the rest of
+// the codebase works unchanged — they transparently operate on the current board.
+var boards = [];          // array of {id, name, layers, canvasW, canvasH, selectedId, selectedIds, undoStack, redoStack, activePresetId}
+var currentBoardId = 1;   // id of the currently active board
+var nextBoardId = 1;      // next board id to assign
+var zoomLevel = 0.5;
+var nextId = 1;           // global layer id counter — unique across ALL boards so paste is safe
+var dragState = null, resizeState = null, cropState = null, rotateState = null;
+// Internal clipboard for copy/paste. Array of serialized layer objects.
+var clipboard = [];
+
+// Helper: create a new empty board with sensible defaults
+function makeBoard(name, w, h){
+  var id = nextBoardId++;
+  return {
+    id: id,
+    name: name || ('Board ' + id),
+    layers: [],
+    canvasW: w || 1080,
+    canvasH: h || 1080,
+    selectedId: null,
+    selectedIds: [],        // multi-select (layer list shift-click)
+    undoStack: [],
+    redoStack: [],
+    activePresetId: ''
+  };
+}
+// Seed with one board on startup
+boards.push(makeBoard(null, 1080, 1080));
+
+function getBoard(){
+  return boards.find(function(b){return b.id === currentBoardId;}) || boards[0];
+}
+
+// Expose per-board fields as top-level identifiers via window getters/setters.
+// This lets the entire rest of the codebase keep using `layers`, `canvasW`, etc. unchanged.
+(function defineBoardAccessors(){
+  var fields = ['layers','canvasW','canvasH','selectedId','selectedIds','undoStack','redoStack','activePresetId'];
+  fields.forEach(function(f){
+    Object.defineProperty(window, f, {
+      configurable: true,
+      get: function(){ return getBoard()[f]; },
+      set: function(v){ getBoard()[f] = v; }
+    });
+  });
+})();
 
 var SIZES=[
   {label:'Square',sub:'1:1',w:1080,h:1080,icon:'⬛'},
@@ -618,7 +674,150 @@ var SHAPES=[
 
 // Gradient presets — populated by setBrand() based on currentBrand
 var gradientPresets=[];
-var activePresetId='';
+// activePresetId is now per-board (see boards[] getter/setter above)
+
+// ── BOARDS ──
+// Multi-board workspace. Each board has its own layers, canvas size, selection, and undo history.
+// The current board is switched by clicking a tab.
+
+function renderBoardTabs(){
+  var el = document.getElementById('boardTabs');
+  if(!el) return;
+  el.innerHTML = '';
+  boards.forEach(function(b){
+    var tab = document.createElement('div');
+    tab.className = 'board-tab' + (b.id === currentBoardId ? ' active' : '');
+    tab.title = b.name + ' · ' + b.canvasW + '×' + b.canvasH;
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'board-name';
+    nameSpan.textContent = b.name;
+    tab.appendChild(nameSpan);
+    // Only show close when >1 board so the last board can't be deleted
+    if(boards.length > 1){
+      var close = document.createElement('span');
+      close.className = 'board-close';
+      close.textContent = '×';
+      close.title = 'Close board';
+      close.onclick = function(e){ e.stopPropagation(); closeBoard(b.id); };
+      tab.appendChild(close);
+    }
+    tab.onclick = function(e){
+      if(e.target.classList.contains('board-close')) return;
+      switchBoard(b.id);
+    };
+    // Double-click to rename
+    tab.ondblclick = function(e){
+      if(e.target.classList.contains('board-close')) return;
+      var newName = prompt('Rename board:', b.name);
+      if(newName && newName.trim()){ b.name = newName.trim(); renderBoardTabs(); }
+    };
+    el.appendChild(tab);
+  });
+  // "+ New Board" tab
+  var addTab = document.createElement('div');
+  addTab.className = 'board-tab new-board';
+  addTab.title = 'Create new board';
+  addTab.textContent = '+ New Board';
+  addTab.onclick = createNewBoard;
+  el.appendChild(addTab);
+}
+
+function switchBoard(id){
+  if(id === currentBoardId) return;
+  if(!boards.some(function(b){return b.id===id;})) return;
+  currentBoardId = id;
+  // Update all UI that depends on current board
+  var b = getBoard();
+  var c = document.getElementById('mainCanvas');
+  c.width = b.canvasW; c.height = b.canvasH;
+  if(document.getElementById('customW')) document.getElementById('customW').value = b.canvasW;
+  if(document.getElementById('customH')) document.getElementById('customH').value = b.canvasH;
+  cropState = null; rotateState = null; dragState = null; resizeState = null;
+  renderBoardTabs(); renderLayerList(); renderProps(); renderPresets();
+  applyZoom(); redraw(); updateExportInfo();
+}
+
+function createNewBoard(){
+  // Default to same size and brand as the currently active board
+  var cur = getBoard();
+  var b = makeBoard(null, cur.canvasW, cur.canvasH);
+  boards.push(b);
+  switchBoard(b.id);
+}
+
+function closeBoard(id){
+  if(boards.length <= 1) return; // always keep one
+  var board = boards.find(function(x){return x.id===id;});
+  if(!board) return;
+  if(board.layers.length > 0){
+    if(!confirm('Close "' + board.name + '"? Any unsaved changes will be lost.')) return;
+  }
+  var idx = boards.findIndex(function(x){return x.id===id;});
+  boards.splice(idx, 1);
+  // If we closed the active board, switch to the next one (or previous if it was last)
+  if(id === currentBoardId){
+    currentBoardId = boards[Math.min(idx, boards.length-1)].id;
+  }
+  var b = getBoard();
+  var c = document.getElementById('mainCanvas');
+  c.width = b.canvasW; c.height = b.canvasH;
+  renderBoardTabs(); renderLayerList(); renderProps(); renderPresets();
+  applyZoom(); redraw(); updateExportInfo();
+}
+
+// ── COPY / PASTE / DUPLICATE ──
+// Internal clipboard stores serialized layer(s). Paste offsets them and assigns fresh ids so
+// pastes work both within a board and across boards.
+function copySelected(){
+  // Multi-select support: copy all selectedIds, falling back to the single selectedId
+  var ids = (selectedIds && selectedIds.length) ? selectedIds.slice() : (selectedId != null ? [selectedId] : []);
+  if(!ids.length) return;
+  // Snapshot each layer using the same serializer as undo (strips HTMLImageElement, keeps _imgSrc)
+  clipboard = ids.map(function(id){
+    var l = layers.find(function(x){return x.id===id;});
+    if(!l) return null;
+    var out = {};
+    for(var k in l){ if(k==='img') continue; out[k] = l[k]; }
+    if(l.img) out._imgSrc = l.src || l.img.src || null;
+    return out;
+  }).filter(Boolean);
+  // Visual confirmation could go here; keep silent for now
+}
+
+function pasteClipboard(){
+  if(!clipboard.length) return;
+  snapshotState();
+  // Rehydrate each clipboard entry as a new layer on the current board.
+  // Assign fresh ids (nextId is global) and offset position by 20px so pastes don't overlap exactly.
+  var newIds = [];
+  clipboard.forEach(function(entry){
+    var copy = JSON.parse(JSON.stringify(entry));  // deep clone so subsequent pastes don't mutate clipboard
+    copy.id = nextId++;
+    copy.name = (copy.name || 'Layer') + ' copy';
+    if(typeof copy.x === 'number') copy.x += 20;
+    if(typeof copy.y === 'number') copy.y += 20;
+    // If the copy had an image src, rehydrate asynchronously
+    if(copy._imgSrc){
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function(){ redraw(); };
+      img.src = copy._imgSrc;
+      copy.img = img;
+      delete copy._imgSrc;
+    }
+    layers.push(copy);
+    newIds.push(copy.id);
+  });
+  // Select the pasted layers (last one is primary for handles)
+  selectedIds = newIds.slice();
+  selectedId = newIds[newIds.length - 1];
+  renderLayerList(); renderProps(); redraw();
+}
+
+function duplicateSelected(){
+  copySelected();
+  pasteClipboard();
+}
 
 // ── INIT ──
 window.addEventListener('DOMContentLoaded',function(){
@@ -628,13 +827,13 @@ window.addEventListener('DOMContentLoaded',function(){
   setBrand(currentBrand);   // initializes gradientPresets, renders logo buttons, etc.
   updateExportInfo();
   bindKeyboardShortcuts();
+  renderBoardTabs();
 });
 
 // ── UNDO HISTORY ──
-// Stack of serialized layer states. We snapshot BEFORE each user-initiated change.
+// Stack of serialized layer states, per-board. Snapshots happen BEFORE each user-initiated change.
 // History is capped so memory doesn't grow unbounded.
-var undoStack = [];
-var redoStack = [];
+// undoStack/redoStack are per-board and exposed via window getters (see STATE block).
 var UNDO_LIMIT = 50;
 var _undoSuppressed = false; // used to prevent snapshots during programmatic re-applies
 
@@ -757,14 +956,18 @@ function restoreDesignState(state){
     }
     // Restore layers (reuses deserializer which rehydrates Image objects)
     layers = deserializeLayers(JSON.stringify(state.layers));
-    // Next layer id must be higher than the max existing id to avoid collisions
-    nextId = layers.reduce(function(m,l){return Math.max(m, (l.id||0)+1);}, 1);
+    // Global nextId: ensure > max id in the restored layers AND above whatever we had
+    var maxId = layers.reduce(function(m,l){return Math.max(m, (l.id||0)+1);}, 1);
+    if(maxId > nextId) nextId = maxId;
     selectedId = null;
+    selectedIds = [];
     activePresetId = state.activePresetId || '';
-    // Reset undo/redo history — loading is a fresh start
+    // Reset undo/redo history on THIS board — loading is a fresh start for this board
     undoStack = [];
     redoStack = [];
-    renderLayerList(); renderProps(); renderPresets(); redraw();
+    // If the design had a name, adopt it as the board's name
+    if(state.name){ getBoard().name = state.name; }
+    renderBoardTabs(); renderLayerList(); renderProps(); renderPresets(); redraw();
     return true;
   } catch(e){
     console.error('[restore] failed:', e);
@@ -1007,14 +1210,31 @@ function bindKeyboardShortcuts(){
       e.preventDefault(); redo(); return;
     }
 
-    // Delete / Backspace on selected layer
-    if((e.key === 'Delete' || e.key === 'Backspace') && selectedId != null){
+    // Copy / Paste / Duplicate
+    if(isMeta && e.key.toLowerCase() === 'c'){
+      e.preventDefault(); copySelected(); return;
+    }
+    if(isMeta && e.key.toLowerCase() === 'v'){
+      e.preventDefault(); pasteClipboard(); return;
+    }
+    if(isMeta && e.key.toLowerCase() === 'd'){
+      e.preventDefault(); duplicateSelected(); return;
+    }
+
+    // Delete / Backspace on selected layer(s)
+    if((e.key === 'Delete' || e.key === 'Backspace') && (selectedId != null || (selectedIds && selectedIds.length))){
       if(cropState) return; // don't delete while cropping
-      var sel=layers.find(function(l){return l.id===selectedId;});
-      if(sel && sel.locked) return; // don't delete locked layers
+      // Build list of layers to delete (multi-select aware)
+      var ids = (selectedIds && selectedIds.length) ? selectedIds.slice() : [selectedId];
+      var anyLocked = ids.some(function(id){
+        var l = layers.find(function(x){return x.id===id;});
+        return l && l.locked;
+      });
+      if(anyLocked) return; // don't delete if any selected layer is locked
       e.preventDefault();
       snapshotState();
-      deleteLayer(selectedId);
+      ids.forEach(function(id){ deleteLayer(id); });
+      selectedIds = [];
     }
   });
 }
@@ -1407,10 +1627,32 @@ function addTextLayer(){
 }
 
 // ── SELECT / DELETE / MOVE ──
-function selectLayer(id){selectedId=id;renderLayerList();renderProps();}
+// selectLayer(id): replaces selection (primary=id, selectedIds=[id]).
+// Pass {shift:true} to toggle id in/out of selectedIds without replacing (multi-select).
+function selectLayer(id, opts){
+  opts = opts || {};
+  if(opts.shift){
+    if(!selectedIds) selectedIds = [];
+    var idx = selectedIds.indexOf(id);
+    if(idx >= 0){
+      // Toggle off
+      selectedIds.splice(idx, 1);
+      // Primary = last remaining selection (or null)
+      selectedId = selectedIds.length ? selectedIds[selectedIds.length-1] : null;
+    } else {
+      selectedIds.push(id);
+      selectedId = id;
+    }
+  } else {
+    selectedId = id;
+    selectedIds = id != null ? [id] : [];
+  }
+  renderLayerList(); renderProps();
+}
 function deleteLayer(id){
   layers=layers.filter(function(l){return l.id!==id;});
   if(selectedId===id)selectedId=layers.length?layers[layers.length-1].id:null;
+  if(selectedIds) selectedIds = selectedIds.filter(function(x){return x!==id;});
   renderLayerList();renderProps();redraw();
 }
 function moveLayer(id,dir){
@@ -1425,7 +1667,8 @@ function renderLayerList(){
   for(var i=layers.length-1;i>=0;i--){
     (function(layer,layerIdx){
       var item=document.createElement('div');
-      item.className='layer-item'+(layer.id===selectedId?' active':'');
+      var isSelected = layer.id === selectedId || (selectedIds && selectedIds.indexOf(layer.id) >= 0);
+      item.className='layer-item'+(isSelected?' active':'');
       if(layer.hidden) item.style.opacity='0.5';
       item.draggable = !layer.locked;  // locked layers can't be dragged either
       item.dataset.layerId=layer.id;
@@ -1446,7 +1689,8 @@ function renderLayerList(){
         if(e.target.classList.contains('layer-del')){ if(layer.locked){alert('Unlock the layer first to delete it.');return;} deleteLayer(layer.id);return;}
         if(e.target.classList.contains('layer-vis')){ layer.hidden=!layer.hidden; renderLayerList(); redraw(); return; }
         if(e.target.classList.contains('layer-lock')){ layer.locked=!layer.locked; renderLayerList(); renderProps(); return; }
-        selectLayer(layer.id);
+        // Shift-click toggles selection (multi-select). Plain click replaces selection.
+        selectLayer(layer.id, {shift: e.shiftKey});
       };
       item.addEventListener('dragstart',function(e){
         e.dataTransfer.effectAllowed='move';
