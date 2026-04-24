@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v51</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v53</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1487,9 +1487,15 @@ function openPresetEditor(presetId){
       + '<input id="peLabel" type="text" style="width:100%;box-sizing:border-box;padding:8px 10px;margin:4px 0 12px 0;border:1px solid #ccc;border-radius:5px;font-size:13px;background:#fff;">'
       + '<div style="display:flex;gap:12px;margin-bottom:12px;">'
       +   '<div style="flex:1;"><label style="font-size:11px;font-weight:600;color:#555;">Color 1 (Top)</label>'
-      +     '<input id="peTop" type="color" style="width:100%;height:36px;padding:2px;border:1px solid #ccc;border-radius:5px;margin-top:4px;cursor:pointer;"></div>'
+      +     '<div style="display:flex;gap:6px;align-items:center;margin-top:4px;">'
+      +       '<input id="peTop" type="color" style="width:42px;height:36px;padding:2px;border:1px solid #ccc;border-radius:5px;cursor:pointer;flex-shrink:0;">'
+      +       '<input id="peTopHex" type="text" maxlength="7" spellcheck="false" style="flex:1;min-width:0;padding:7px 9px;border:1px solid #ccc;border-radius:5px;font-size:12px;font-family:monospace;text-transform:uppercase;">'
+      +     '</div></div>'
       +   '<div style="flex:1;"><label style="font-size:11px;font-weight:600;color:#555;">Color 2 (Bottom)</label>'
-      +     '<input id="peBot" type="color" style="width:100%;height:36px;padding:2px;border:1px solid #ccc;border-radius:5px;margin-top:4px;cursor:pointer;"></div>'
+      +     '<div style="display:flex;gap:6px;align-items:center;margin-top:4px;">'
+      +       '<input id="peBot" type="color" style="width:42px;height:36px;padding:2px;border:1px solid #ccc;border-radius:5px;cursor:pointer;flex-shrink:0;">'
+      +       '<input id="peBotHex" type="text" maxlength="7" spellcheck="false" style="flex:1;min-width:0;padding:7px 9px;border:1px solid #ccc;border-radius:5px;font-size:12px;font-family:monospace;text-transform:uppercase;">'
+      +     '</div></div>'
       + '</div>'
       + '<label style="font-size:11px;font-weight:600;color:#555;">Gradient Type</label>'
       + '<select id="peType" style="width:100%;box-sizing:border-box;padding:7px 9px;margin:4px 0 12px 0;border:1px solid #ccc;border-radius:5px;font-size:13px;background:#fff;">'
@@ -1513,7 +1519,9 @@ function openPresetEditor(presetId){
   document.getElementById('presetEditorTitle').textContent = presetId ? 'Edit Preset' : 'New Preset';
   document.getElementById('peLabel').value = initial.label;
   document.getElementById('peTop').value = initial.top;
+  document.getElementById('peTopHex').value = (initial.top||'').toUpperCase();
   document.getElementById('peBot').value = initial.bottom;
+  document.getElementById('peBotHex').value = (initial.bottom||'').toUpperCase();
   document.getElementById('peType').value = initial.gradType || 'linear';
   document.getElementById('peAngle').value = initial.gradAngle==null ? 135 : initial.gradAngle;
   document.getElementById('peAngleVal').textContent = initial.gradAngle==null ? 135 : initial.gradAngle;
@@ -1535,7 +1543,54 @@ function openPresetEditor(presetId){
     else if(type==='conic') pv.style.background = 'conic-gradient(from '+ang+'deg, '+top+', '+bot+', '+top+')';
     else                    pv.style.background = 'linear-gradient('+ang+'deg, '+top+', '+bot+')';
   }
-  ['peTop','peBot','peType','peAngle'].forEach(function(id){
+  // Normalize + validate hex input. Accepts #RGB, #RRGGBB, with or without leading #.
+  // Returns a valid #RRGGBB string or null.
+  function normalizeHex(str){
+    if(typeof str !== 'string') return null;
+    var s = str.trim().replace(/^#/,'').toUpperCase();
+    if(/^[0-9A-F]{3}$/.test(s)){
+      s = s.split('').map(function(c){return c+c;}).join('');
+    }
+    if(!/^[0-9A-F]{6}$/.test(s)) return null;
+    return '#' + s;
+  }
+  // Picker → text: whenever the color input changes, reflect the value in the hex field
+  document.getElementById('peTop').oninput = function(){
+    document.getElementById('peTopHex').value = this.value.toUpperCase();
+    updatePreview();
+  };
+  document.getElementById('peBot').oninput = function(){
+    document.getElementById('peBotHex').value = this.value.toUpperCase();
+    updatePreview();
+  };
+  // Text → picker: when a valid hex is typed, push it to the color input and preview
+  function bindHexInput(textId, pickerId){
+    var tx = document.getElementById(textId);
+    tx.addEventListener('input', function(){
+      var hex = normalizeHex(tx.value);
+      if(hex){
+        tx.style.borderColor = '#ccc';
+        document.getElementById(pickerId).value = hex;
+        updatePreview();
+      } else {
+        tx.style.borderColor = '#e53';   // invalid: red border
+      }
+    });
+    tx.addEventListener('blur', function(){
+      // On blur, auto-normalize and restore a valid value
+      var hex = normalizeHex(tx.value);
+      if(hex){ tx.value = hex; tx.style.borderColor = '#ccc'; }
+      else {
+        // Reset to the picker's current value
+        tx.value = document.getElementById(pickerId).value.toUpperCase();
+        tx.style.borderColor = '#ccc';
+      }
+    });
+  }
+  bindHexInput('peTopHex', 'peTop');
+  bindHexInput('peBotHex', 'peBot');
+  // Other controls trigger preview only
+  ['peType','peAngle'].forEach(function(id){
     document.getElementById(id).oninput = updatePreview;
     document.getElementById(id).onchange = updatePreview;
   });
@@ -3924,6 +3979,23 @@ function doStaticExport(){
 // Each frame: seek video → wait for `seeked` event → composite all visible layers onto an offscreen
 // canvas → hand the canvas to gif.js. After all frames collected, gif.js (Web Worker) encodes the GIF.
 
+// Cache the worker blob URL across export calls. Created once, reused.
+var _gifWorkerUrl = null;
+function ensureGifWorkerUrl(){
+  if(_gifWorkerUrl) return Promise.resolve(_gifWorkerUrl);
+  var src = 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js';
+  // Fetch the worker source as text, wrap in a same-origin blob URL. This avoids the cross-origin
+  // worker problem where the browser refuses to start a worker from a different domain.
+  return fetch(src).then(function(r){
+    if(!r.ok) throw new Error('Failed to load worker (HTTP ' + r.status + ')');
+    return r.text();
+  }).then(function(code){
+    var blob = new Blob([code], {type: 'application/javascript'});
+    _gifWorkerUrl = URL.createObjectURL(blob);
+    return _gifWorkerUrl;
+  });
+}
+
 function doGifExport(){
   if(typeof GIF === 'undefined'){
     alert('GIF encoder failed to load. Check your network connection and reload the page.');
@@ -3956,121 +4028,163 @@ function doGifExport(){
   var labelEl = document.getElementById('gifProgressLabel');
   progEl.classList.remove('hidden');
   barEl.style.width = '0%';
-  labelEl.textContent = 'Capturing frames (0/' + totalFrames + ')…';
+  labelEl.textContent = 'Loading encoder…';
 
-  // Set up GIF encoder. Workers from CDN.
-  var gif = new GIF({
-    workers: 2,
-    quality: 10,        // 1-30; lower = better quality, slower
-    width: outW,
-    height: outH,
-    workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js',
-    transparent: null
-  });
+  // Watchdog: if nothing happens for 60s, abort with a clear error
+  var watchdogTimer = null;
+  function resetWatchdog(reason){
+    if(watchdogTimer) clearTimeout(watchdogTimer);
+    watchdogTimer = setTimeout(function(){
+      cleanup();
+      alert('GIF export stuck (no progress in 60s).\n\nLast step: ' + reason + '\n\nTry a shorter clip, lower FPS, or smaller output size. If the problem persists, check the browser console for errors.');
+    }, 60000);
+  }
+  function cleanup(){
+    if(watchdogTimer) clearTimeout(watchdogTimer);
+    document.getElementById('exportConfirmBtn').disabled = false;
+    document.getElementById('exportCancelBtn').disabled = false;
+    progEl.classList.add('hidden');
+  }
+  resetWatchdog('initializing');
 
-  // Offscreen canvas at output resolution. We composite each frame here, then add to gif.
-  var off = document.createElement('canvas');
-  off.width = outW; off.height = outH;
-  var octx = off.getContext('2d');
-  octx.imageSmoothingEnabled = true;
-  octx.imageSmoothingQuality = 'high';
-  var sx = outW / canvasW, sy = outH / canvasH;
+  // Get the worker blob URL (fetched once, reused after).
+  ensureGifWorkerUrl().then(function(workerUrl){
+    labelEl.textContent = 'Capturing frames (0/' + totalFrames + ')…';
+    resetWatchdog('capturing first frame');
 
-  function compositeFrame(){
-    octx.save();
-    octx.clearRect(0, 0, outW, outH);
-    octx.scale(sx, sy);
-    layers.forEach(function(layer){
-      if(layer.hidden) return;
-      octx.save(); octx.globalAlpha = (layer.opacity || 100) / 100;
-      try {
-        if(layer.type === 'image')   drawImageLayer(octx, layer);
-        else if(layer.type === 'video') drawVideoLayer(octx, layer);
-        else if(layer.type === 'sticker') drawStickerLayer(octx, layer);
-        else if(layer.type === 'shape')   drawShapeLayer(octx, layer);
-        else if(layer.type === 'svg')     drawSvgLayer(octx, layer);
-        else if(layer.type === 'text')    drawTextLayer(octx, layer);
-      } catch(e){ console.error('[gif] layer error:', e); }
+    var gif = new GIF({
+      workers: 2,
+      quality: 10,        // 1-30; lower = better quality, slower
+      width: outW,
+      height: outH,
+      workerScript: workerUrl,
+      transparent: null
+    });
+    gif.on('progress', function(p){
+      // gif.js progress: 0 → 1 during encoding only (after all frames added)
+      var pct = 50 + Math.round(p * 50);
+      barEl.style.width = pct + '%';
+      labelEl.textContent = 'Encoding GIF (' + Math.round(p * 100) + '%)…';
+      resetWatchdog('encoding ' + Math.round(p * 100) + '%');
+    });
+    gif.on('finished', function(blob){
+      labelEl.textContent = 'Done!';
+      barEl.style.width = '100%';
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'smarterpaw-' + outW + 'x' + outH + '-' + fps + 'fps.gif';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+      setTimeout(function(){ cleanup(); closeExportModal(); }, 600);
+    });
+    gif.on('abort', function(){
+      cleanup();
+      alert('GIF encoding was aborted.');
+    });
+
+    // Offscreen canvas at output resolution. We composite each frame here, then add to gif.
+    var off = document.createElement('canvas');
+    off.width = outW; off.height = outH;
+    var octx = off.getContext('2d');
+    octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = 'high';
+    var sx = outW / canvasW, sy = outH / canvasH;
+
+    function compositeFrame(){
+      octx.save();
+      octx.clearRect(0, 0, outW, outH);
+      octx.scale(sx, sy);
+      layers.forEach(function(layer){
+        if(layer.hidden) return;
+        octx.save(); octx.globalAlpha = (layer.opacity || 100) / 100;
+        try {
+          if(layer.type === 'image')   drawImageLayer(octx, layer);
+          else if(layer.type === 'video') drawVideoLayer(octx, layer);
+          else if(layer.type === 'sticker') drawStickerLayer(octx, layer);
+          else if(layer.type === 'shape')   drawShapeLayer(octx, layer);
+          else if(layer.type === 'svg')     drawSvgLayer(octx, layer);
+          else if(layer.type === 'text')    drawTextLayer(octx, layer);
+        } catch(e){ console.error('[gif] layer error:', e); }
+        octx.restore();
+      });
       octx.restore();
-    });
-    octx.restore();
-  }
-
-  // Seek to a specific time and wait for the `seeked` event before resolving.
-  // Some browsers fire `seeked` synchronously if already at that time; resolve in a microtask either way.
-  function seekTo(time){
-    return new Promise(function(resolve, reject){
-      var vid = v._video;
-      function onSeeked(){
-        vid.removeEventListener('seeked', onSeeked);
-        // Give browser one more rAF to ensure the new frame is decoded into the video element
-        requestAnimationFrame(function(){ requestAnimationFrame(resolve); });
-      }
-      vid.addEventListener('seeked', onSeeked);
-      try {
-        vid.currentTime = time;
-      } catch(e){
-        vid.removeEventListener('seeked', onSeeked);
-        reject(e);
-      }
-      // Safety timeout
-      setTimeout(function(){
-        vid.removeEventListener('seeked', onSeeked);
-        resolve();
-      }, 2000);
-    });
-  }
-
-  // Capture frames sequentially
-  var frameIdx = 0;
-  function captureNext(){
-    if(frameIdx >= totalFrames){
-      // All frames captured — start encoding
-      labelEl.textContent = 'Encoding GIF…';
-      gif.on('progress', function(p){
-        barEl.style.width = Math.round(p * 100) + '%';
-      });
-      gif.on('finished', function(blob){
-        labelEl.textContent = 'Done!';
-        barEl.style.width = '100%';
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = 'smarterpaw-' + outW + 'x' + outH + '-' + fps + 'fps.gif';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
-        // Re-enable UI
-        setTimeout(function(){
-          document.getElementById('exportConfirmBtn').disabled = false;
-          document.getElementById('exportCancelBtn').disabled = false;
-          progEl.classList.add('hidden');
-          closeExportModal();
-        }, 600);
-      });
-      gif.render();
-      return;
     }
-    var t = trimStart + (frameIdx / fps);
-    seekTo(t).then(function(){
-      compositeFrame();
-      gif.addFrame(off, {delay: frameDelay, copy: true});
-      frameIdx++;
-      var pct = Math.round((frameIdx / totalFrames) * 100);
-      barEl.style.width = (pct * 0.5) + '%';   // capture is first 50% of progress; encode is second 50%
-      labelEl.textContent = 'Capturing frames (' + frameIdx + '/' + totalFrames + ')…';
-      // Yield so the browser can update the UI
-      setTimeout(captureNext, 0);
-    }).catch(function(e){
-      console.error('[gif] seek failed:', e);
-      alert('GIF capture failed: ' + e.message);
-      document.getElementById('exportConfirmBtn').disabled = false;
-      document.getElementById('exportCancelBtn').disabled = false;
-      progEl.classList.add('hidden');
-    });
-  }
 
-  // Kick off
-  seekTo(trimStart).then(captureNext);
+    // Seek to a specific time and wait for the `seeked` event before resolving.
+    // EDGE CASE: if the video is already at exactly that time, the browser will NOT fire `seeked`.
+    // We detect this by comparing currentTime before assignment and resolving via a microtask if unchanged.
+    function seekTo(time){
+      return new Promise(function(resolve, reject){
+        var vid = v._video;
+        var alreadyThere = Math.abs(vid.currentTime - time) < 0.001;
+        if(alreadyThere){
+          requestAnimationFrame(function(){ requestAnimationFrame(resolve); });
+          return;
+        }
+        var settled = false;
+        function onSeeked(){
+          if(settled) return; settled = true;
+          vid.removeEventListener('seeked', onSeeked);
+          requestAnimationFrame(function(){ requestAnimationFrame(resolve); });
+        }
+        vid.addEventListener('seeked', onSeeked);
+        try {
+          vid.currentTime = time;
+        } catch(e){
+          if(settled) return; settled = true;
+          vid.removeEventListener('seeked', onSeeked);
+          reject(e);
+          return;
+        }
+        // Safety timeout — if `seeked` doesn't fire within 3s, give up on this frame and continue
+        setTimeout(function(){
+          if(settled) return; settled = true;
+          vid.removeEventListener('seeked', onSeeked);
+          console.warn('[gif] seek timeout at t=' + time);
+          resolve();   // resolve anyway so encode doesn't get stuck
+        }, 3000);
+      });
+    }
+
+    // Capture frames sequentially
+    var frameIdx = 0;
+    function captureNext(){
+      if(frameIdx >= totalFrames){
+        // All frames captured — start encoding
+        labelEl.textContent = 'Encoding GIF (0%)…';
+        resetWatchdog('encoding starting');
+        try {
+          gif.render();
+        } catch(e){
+          cleanup();
+          alert('GIF encoder failed to start: ' + e.message);
+        }
+        return;
+      }
+      var t = trimStart + (frameIdx / fps);
+      resetWatchdog('seeking to frame ' + (frameIdx+1) + '/' + totalFrames);
+      seekTo(t).then(function(){
+        compositeFrame();
+        gif.addFrame(off, {delay: frameDelay, copy: true});
+        frameIdx++;
+        var pct = Math.round((frameIdx / totalFrames) * 50);  // capture = first half
+        barEl.style.width = pct + '%';
+        labelEl.textContent = 'Capturing frames (' + frameIdx + '/' + totalFrames + ')…';
+        // Yield so the browser can update the UI
+        setTimeout(captureNext, 0);
+      }).catch(function(e){
+        console.error('[gif] seek failed:', e);
+        cleanup();
+        alert('GIF capture failed: ' + e.message);
+      });
+    }
+    captureNext();
+  }).catch(function(e){
+    cleanup();
+    console.error('[gif] worker setup failed:', e);
+    alert('GIF encoder setup failed: ' + e.message + '\n\nThis usually means the gif.worker.js file could not be loaded from the CDN. Check your network connection.');
+  });
 }
 </script>
 </body>
