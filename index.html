@@ -122,7 +122,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v47</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v48</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -844,6 +844,13 @@ window.addEventListener('DOMContentLoaded',function(){
   updateExportInfo();
   bindKeyboardShortcuts();
   renderBoardTabs();
+  // Request persistent storage — on supported browsers this lifts the IndexedDB quota significantly,
+  // which matters once you start saving designs with embedded video (tens of MB per design).
+  if(navigator.storage && navigator.storage.persist){
+    navigator.storage.persist().then(function(granted){
+      console.log('[storage] persist granted:', granted);
+    }).catch(function(e){});
+  }
 });
 
 // ── UNDO HISTORY ──
@@ -1108,12 +1115,26 @@ function idbSaveDesign(id, state){
         var r = store.put(payload);
         r.onsuccess = function(){ resolve(id); }; r.onerror = function(e){ reject(e.target.error); };
       } else {
-        // New record — let IndexedDB auto-assign. Autoincrement picks the next id above the highest existing,
-        // so with AUTOSAVE_ID=999999999 a fresh record lands at id=1 and works up.
+        // New record — pick an id ourselves so autoincrement doesn't leapfrog past AUTOSAVE_ID.
+        // Scan all records to find the highest existing non-autosave id; new record gets max+1.
         delete payload.id; delete payload.isAutosave;
-        var r3 = store.add(payload);
-        r3.onsuccess = function(e){ resolve(e.target.result); };
-        r3.onerror = function(e){ reject(e.target.error); };
+        var maxNormal = 0;
+        var scan = store.openCursor();
+        scan.onsuccess = function(ev){
+          var c = ev.target.result;
+          if(c){
+            if(c.value && !c.value.isAutosave && typeof c.value.id === 'number'){
+              if(c.value.id > maxNormal) maxNormal = c.value.id;
+            }
+            c.continue();
+          } else {
+            payload.id = maxNormal + 1;
+            var r3 = store.add(payload);
+            r3.onsuccess = function(evt){ resolve(evt.target.result); };
+            r3.onerror = function(evt){ reject(evt.target.error); };
+          }
+        };
+        scan.onerror = function(ev){ reject(ev.target.error); };
       }
     });
   });
@@ -1159,10 +1180,34 @@ function scheduleAutosave(){
   _autosaveTimer = setTimeout(function(){
     var state = gatherDesignState();
     state.name = '(Autosave)';
-    idbSaveDesign(AUTOSAVE_ID, state).catch(function(e){
+    idbSaveDesign(AUTOSAVE_ID, state).then(function(){
+      // clear any previous warning banner
+      hideAutosaveWarning();
+    }).catch(function(e){
       console.warn('[autosave] failed:', e);
+      // Surface the failure so the user knows autosave isn't working (common cause: IDB quota exceeded with large videos)
+      showAutosaveWarning(e);
     });
   }, AUTOSAVE_DEBOUNCE_MS);
+}
+
+// Shown in the top-left when autosave fails. Visible until the next successful autosave.
+function showAutosaveWarning(err){
+  var el = document.getElementById('autosaveWarn');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'autosaveWarn';
+    el.style.cssText = 'position:fixed;top:60px;right:16px;z-index:9999;background:#c60;color:#fff;padding:10px 14px;border-radius:7px;font-size:12px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.25);max-width:320px;';
+    document.body.appendChild(el);
+  }
+  var reason = err && err.name === 'QuotaExceededError'
+    ? 'Browser storage is full. Autosave disabled. Save to a .spdesign.json file instead.'
+    : 'Error: ' + (err && err.message || err);
+  el.innerHTML = '⚠ Autosave failed<div style="font-weight:400;font-size:11px;margin-top:3px;">' + reason + '</div>';
+}
+function hideAutosaveWarning(){
+  var el = document.getElementById('autosaveWarn');
+  if(el) el.remove();
 }
 
 // ── My Designs modal ──
