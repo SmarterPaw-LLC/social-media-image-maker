@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v49</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v50</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3801,10 +3801,6 @@ function closeExportModal(){
 // (only on the very first time the modal opens; user can switch back).
 function toggleExportType(){
   var typeSel = document.getElementById('exportType');
-  var hasVideo = layers.some(function(l){return l.type==='video' && !l.hidden;});
-  // If there's a video and the user hasn't manually changed the type, default to GIF
-  if(hasVideo && !typeSel.dataset.touched){ typeSel.value = 'gif'; }
-  if(!hasVideo) typeSel.value = 'static';
   var isGif = typeSel.value === 'gif';
   document.getElementById('exportStaticControls').classList.toggle('hidden', isGif);
   document.getElementById('exportGifControls').classList.toggle('hidden', !isGif);
@@ -3812,10 +3808,10 @@ function toggleExportType(){
   document.getElementById('exportConfirmBtn').textContent = isGif ? 'Export GIF' : 'Export';
   if(isGif) updateGifClipInfo();
 }
-// Mark the dropdown as user-touched so we don't auto-switch back
+// React to user changing the type dropdown
 document.addEventListener('DOMContentLoaded', function(){
   var t = document.getElementById('exportType');
-  if(t) t.addEventListener('change', function(){ this.dataset.touched = '1'; toggleExportType(); });
+  if(t) t.addEventListener('change', toggleExportType);
 });
 
 function updateGifClipInfo(){
@@ -3885,6 +3881,14 @@ function doExport(){
 }
 
 function doStaticExport(){
+  // Pause any playing video so the exported frame matches exactly what the user sees on canvas.
+  // (Otherwise the video advances during the few ms of export, capturing a slightly later frame.)
+  layers.forEach(function(l){
+    if(l.type==='video' && l._playing && l._video){
+      l._video.pause();
+      l._playing = false;
+    }
+  });
   var format=document.getElementById('exportFormat').value;
   var quality=(+document.getElementById('exportQuality').value)/100;
   var modeEl=document.getElementById('exportSizeMode');
