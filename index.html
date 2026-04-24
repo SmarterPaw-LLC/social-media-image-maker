@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v50</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v51</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -219,26 +219,20 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <h2 id="exportModalTitle">⬇ Export</h2>
     <div style="display:flex;flex-direction:column;gap:10px;" id="exportControls">
       <div>
-        <label>Type</label>
-        <select id="exportType" onchange="toggleExportType()">
-          <option value="static">Static image (current frame)</option>
-          <option value="gif">Animated GIF (video clip)</option>
+        <label>Format</label>
+        <select id="exportFormat">
+          <option value="png" selected>PNG (lossless, transparent support)</option>
+          <option value="jpeg">JPG (smaller file, no transparency)</option>
+          <option value="webp">WebP (best compression)</option>
+          <option value="gif">GIF (animated, video clip)</option>
         </select>
       </div>
-      <!-- Static-only controls -->
-      <div id="exportStaticControls">
-        <div>
-          <label>Format</label>
-          <select id="exportFormat">
-            <option value="png">PNG (lossless, transparent support)</option>
-            <option value="jpeg">JPG (smaller file, no transparency)</option>
-            <option value="webp">WebP (best compression)</option>
-          </select>
-        </div>
-        <div id="exportQualityWrap">
-          <label>Quality <span id="exportQualityVal">92</span>%</label>
-          <input type="range" id="exportQuality" min="10" max="100" step="2" value="92" oninput="document.getElementById('exportQualityVal').textContent=this.value">
-        </div>
+      <div id="exportQualityWrap">
+        <label>Quality <span id="exportQualityVal">92</span>%</label>
+        <input type="range" id="exportQuality" min="10" max="100" step="2" value="92" oninput="document.getElementById('exportQualityVal').textContent=this.value">
+      </div>
+      <!-- Static-only: export-size controls -->
+      <div id="exportStaticSizeBlock">
         <div>
           <label>Export Size</label>
           <select id="exportSizeMode" onchange="toggleExportSize()">
@@ -3784,7 +3778,7 @@ function openExportModal(){
   document.getElementById('exportW').value=canvasW;
   document.getElementById('exportH').value=canvasH;
   toggleExportSize();
-  toggleExportType();   // sets initial visibility based on whether a video layer exists
+  toggleExportFormat();   // sets initial visibility based on selected format
   updateExportInfo();
   document.getElementById('exportModal').classList.remove('hidden');
 }
@@ -3797,22 +3791,21 @@ function closeExportModal(){
   document.getElementById('exportCancelBtn').disabled = false;
 }
 
-// Toggle between static and GIF export modes. Auto-switches to GIF when a video layer exists
-// (only on the very first time the modal opens; user can switch back).
-function toggleExportType(){
-  var typeSel = document.getElementById('exportType');
-  var isGif = typeSel.value === 'gif';
-  document.getElementById('exportStaticControls').classList.toggle('hidden', isGif);
+// Update modal UI based on the selected Format. PNG/JPG/WebP show the static-image controls;
+// GIF shows FPS + size + clip info instead. Quality slider shows for JPG/WebP only.
+function toggleExportFormat(){
+  var fmt = document.getElementById('exportFormat').value;
+  var isGif = fmt === 'gif';
+  var isPng = fmt === 'png';
+  document.getElementById('exportStaticSizeBlock').classList.toggle('hidden', isGif);
   document.getElementById('exportGifControls').classList.toggle('hidden', !isGif);
+  // Quality only matters for lossy formats (JPG / WebP). Hide for PNG and GIF.
+  document.getElementById('exportQualityWrap').classList.toggle('hidden', isPng || isGif);
   document.getElementById('exportModalTitle').textContent = isGif ? '⬇ Export GIF' : '⬇ Export Image';
-  document.getElementById('exportConfirmBtn').textContent = isGif ? 'Export GIF' : 'Export';
+  document.getElementById('exportConfirmBtn').textContent = isGif ? 'Export GIF' : ('Export ' + fmt.toUpperCase());
   if(isGif) updateGifClipInfo();
+  else      updateExportInfo();
 }
-// React to user changing the type dropdown
-document.addEventListener('DOMContentLoaded', function(){
-  var t = document.getElementById('exportType');
-  if(t) t.addEventListener('change', toggleExportType);
-});
 
 function updateGifClipInfo(){
   var info = document.getElementById('gifClipInfo');
@@ -3841,16 +3834,12 @@ function toggleExportSize(){
   var mode=document.getElementById('exportSizeMode').value;
   document.getElementById('exportCustomSize').classList.toggle('hidden',mode!=='custom');
   document.getElementById('exportScaleWrap').classList.toggle('hidden',mode!=='scale');
-  document.getElementById('exportQualityWrap').classList.toggle('hidden',
-    document.getElementById('exportFormat').value==='png');
   updateExportInfo();
 }
 document.addEventListener('DOMContentLoaded',function(){
-  document.getElementById('exportFormat').addEventListener('change',function(){
-    var isPng=this.value==='png';
-    document.getElementById('exportQualityWrap').classList.toggle('hidden',isPng);
-    updateExportInfo();
-  });
+  // Format dropdown drives the rest of the modal
+  var fmtSel = document.getElementById('exportFormat');
+  if(fmtSel) fmtSel.addEventListener('change', toggleExportFormat);
   // Keep output dimensions display in sync when user changes scale/custom inputs
   var scaleSel=document.getElementById('exportScale');
   if(scaleSel) scaleSel.addEventListener('change',updateExportInfo);
@@ -3873,11 +3862,11 @@ function updateExportInfo(){
   if(info)info.textContent='Output: '+ew+' × '+eh+' px';
 }
 
-// Dispatch: static or GIF
+// Dispatch: GIF format → GIF encoder; everything else → static image export
 function doExport(){
-  var type = document.getElementById('exportType').value;
-  if(type === 'gif') doGifExport();
-  else               doStaticExport();
+  var fmt = document.getElementById('exportFormat').value;
+  if(fmt === 'gif') doGifExport();
+  else              doStaticExport();
 }
 
 function doStaticExport(){
