@@ -122,7 +122,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v46</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v47</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -173,7 +173,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="col2">
       <button class="btn-add" onclick="addSvgLayer()">+ SVG</button>
-      <span></span>
+      <button class="btn-add" onclick="addVideoLayer()">+ Video</button>
     </div>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
     <!-- Shape picker (hidden by default) -->
@@ -772,31 +772,33 @@ function copySelected(){
   // Multi-select support: copy all selectedIds, falling back to the single selectedId
   var ids = (selectedIds && selectedIds.length) ? selectedIds.slice() : (selectedId != null ? [selectedId] : []);
   if(!ids.length) return;
-  // Snapshot each layer using the same serializer as undo (strips HTMLImageElement, keeps _imgSrc)
   clipboard = ids.map(function(id){
     var l = layers.find(function(x){return x.id===id;});
     if(!l) return null;
     var out = {};
-    for(var k in l){ if(k==='img') continue; out[k] = l[k]; }
+    for(var k in l){
+      if(k==='img') continue;
+      if(k==='_video') continue;
+      if(k==='_playing') continue;
+      out[k] = l[k];
+    }
     if(l.img) out._imgSrc = l.src || l.img.src || null;
+    // video: videoSrc is already a normal field, survives the clone
     return out;
   }).filter(Boolean);
-  // Visual confirmation could go here; keep silent for now
 }
 
 function pasteClipboard(){
   if(!clipboard.length) return;
   snapshotState();
-  // Rehydrate each clipboard entry as a new layer on the current board.
-  // Assign fresh ids (nextId is global) and offset position by 20px so pastes don't overlap exactly.
   var newIds = [];
   clipboard.forEach(function(entry){
-    var copy = JSON.parse(JSON.stringify(entry));  // deep clone so subsequent pastes don't mutate clipboard
+    var copy = JSON.parse(JSON.stringify(entry));
     copy.id = nextId++;
     copy.name = (copy.name || 'Layer') + ' copy';
     if(typeof copy.x === 'number') copy.x += 20;
     if(typeof copy.y === 'number') copy.y += 20;
-    // If the copy had an image src, rehydrate asynchronously
+    // Image rehydration
     if(copy._imgSrc){
       var img = new Image();
       img.crossOrigin = 'anonymous';
@@ -805,10 +807,24 @@ function pasteClipboard(){
       copy.img = img;
       delete copy._imgSrc;
     }
+    // Video rehydration
+    if(copy.type === 'video' && copy.videoSrc){
+      var v = document.createElement('video');
+      v.crossOrigin = 'anonymous';
+      v.muted = true;
+      v.playsInline = true;
+      v.preload = 'auto';
+      v.src = copy.videoSrc;
+      v.addEventListener('loadedmetadata', function(){
+        try { v.currentTime = copy.trimStart || 0; } catch(e){}
+        redraw();
+      });
+      copy._video = v;
+      copy._playing = false;
+    }
     layers.push(copy);
     newIds.push(copy.id);
   });
-  // Select the pasted layers (last one is primary for handles)
   selectedIds = newIds.slice();
   selectedId = newIds[newIds.length - 1];
   renderLayerList(); renderProps(); redraw();
@@ -838,11 +854,16 @@ var UNDO_LIMIT = 50;
 var _undoSuppressed = false; // used to prevent snapshots during programmatic re-applies
 
 function serializeLayers(){
-  // Deep-clone layers but strip non-JSON-safe parts (HTMLImageElement).
-  // Store the image src so we can rehydrate by creating a new Image() on undo.
+  // Deep-clone layers but strip non-JSON-safe parts (HTMLImageElement, HTMLVideoElement, transient flags).
+  // Video: `videoSrc` (data URL) is already a normal serializable field; just skip `_video` / `_playing`.
   return JSON.stringify(layers.map(function(l){
     var out = {};
-    for(var k in l){ if(k==='img') continue; out[k] = l[k]; }
+    for(var k in l){
+      if(k==='img') continue;
+      if(k==='_video') continue;
+      if(k==='_playing') continue;
+      out[k] = l[k];
+    }
     if(l.img){
       // prefer the stored src (for remote logos), else the img's own src
       out._imgSrc = l.src || l.img.src || null;
@@ -862,6 +883,22 @@ function deserializeLayers(json){
       img.src = o._imgSrc;
       o.img = img;
       delete o._imgSrc;
+    }
+    // Video: rehydrate the HTMLVideoElement from videoSrc. Runtime `_video` was stripped during serialization.
+    if(o.type === 'video' && o.videoSrc){
+      var v = document.createElement('video');
+      v.crossOrigin = 'anonymous';
+      v.muted = true;
+      v.playsInline = true;
+      v.preload = 'auto';
+      v.src = o.videoSrc;
+      v.addEventListener('loadedmetadata', function(){
+        // Seek to trim start so the first frame is visible
+        try { v.currentTime = o.trimStart || 0; } catch(e){}
+        redraw();
+      });
+      o._video = v;
+      o._playing = false;
     }
     restored.push(o);
   });
@@ -1576,6 +1613,208 @@ function addImageLayer(imgEl,filename){
   if(!imgEl)promptImageUpload(id);
 }
 
+// ── VIDEO LAYER ──
+// Video as a layer: uploaded by the user, plays inside the canvas. Properties: trim start/end,
+// current playback time, play/pause. Serialization: the video data URL is stored so designs
+// are self-contained (at a file-size cost — flagged to the user).
+//
+// Runtime state NOT serialized: `_video` (HTMLVideoElement), `_playing` (transient flag).
+// An animation loop calls redraw() while any video layer is playing.
+
+var _videoAnimLoopActive = false;
+function ensureVideoAnimLoop(){
+  if(_videoAnimLoopActive) return;
+  _videoAnimLoopActive = true;
+  function tick(){
+    var anyPlaying = layers.some(function(l){return l.type==='video' && l._playing;});
+    // Also include videos on OTHER boards? No — only the currently-rendered board matters.
+    if(!anyPlaying){ _videoAnimLoopActive = false; return; }
+    // Auto-pause when any video crosses its trimEnd
+    layers.forEach(function(l){
+      if(l.type==='video' && l._playing && l._video){
+        var end = l.trimEnd != null ? l.trimEnd : l._video.duration;
+        if(l._video.currentTime >= end){
+          l._video.pause();
+          l._video.currentTime = end;
+          l._playing = false;
+          if(l.id === selectedId) renderProps();
+        }
+      }
+    });
+    redraw();
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function addVideoLayer(){
+  // Open file picker first — we only add the layer after a file is chosen
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'video/*';
+  input.onchange = function(e){
+    var file = e.target.files && e.target.files[0];
+    if(!file) return;
+    if(file.size > 200 * 1024 * 1024){
+      if(!confirm('This video is ' + Math.round(file.size/1024/1024) + ' MB. Very large videos may be slow to encode and may exceed save-file limits. Proceed?')) return;
+    }
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var dataUrl = ev.target.result;
+      loadVideoIntoNewLayer(dataUrl, file.name);
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+// Create the video layer once we have the data URL and the metadata has loaded
+function loadVideoIntoNewLayer(dataUrl, filename){
+  var v = document.createElement('video');
+  v.crossOrigin = 'anonymous';
+  v.muted = true;       // browsers require this to allow programmatic play(); user can unmute later if we add that
+  v.playsInline = true;
+  v.preload = 'auto';
+  v.src = dataUrl;
+  v.addEventListener('loadedmetadata', function(){
+    snapshotState();
+    var id = nextId++;
+    // Fit the video to the canvas like an image: cover-fit using video's natural size
+    var vw = v.videoWidth || 1280, vh = v.videoHeight || 720;
+    var fitW, fitH, fitX, fitY;
+    var canvasAspect = canvasW / canvasH, vAspect = vw / vh;
+    if(vAspect > canvasAspect){
+      fitH = canvasH; fitW = canvasH * vAspect;
+      fitX = (canvasW - fitW)/2; fitY = 0;
+    } else {
+      fitW = canvasW; fitH = canvasW / vAspect;
+      fitX = 0; fitY = (canvasH - fitH)/2;
+    }
+    layers.push({
+      id: id, type: 'video',
+      name: (filename || 'Video').replace(/\.[^.]+$/, ''),
+      _video: v,
+      _playing: false,
+      videoSrc: dataUrl,     // serialized; rehydrated by deserializeLayers
+      natW: vw, natH: vh,
+      duration: v.duration,
+      trimStart: 0,
+      trimEnd: Math.min(10, v.duration),   // default trim to first 10s (our GIF cap)
+      x: Math.round(fitX), y: Math.round(fitY),
+      w: Math.round(fitW), h: Math.round(fitH),
+      opacity: 100, rotation: 0, flipH: false, flipV: false
+    });
+    // seek to trim start so first frame is shown
+    try { v.currentTime = 0; } catch(e){}
+    selectLayer(id); renderLayerList(); redraw();
+  });
+  v.addEventListener('error', function(e){
+    alert('Could not decode video. Make sure it is an MP4/WebM/MOV the browser supports.');
+  });
+}
+
+function drawVideoLayer(ctx, layer){
+  if(!layer._video) return;
+  withRotation(ctx, layer, function(){
+    ctx.save();
+    // Clip to the layer bounds so rendered frames don't leak outside the intended rect
+    ctx.beginPath();
+    ctx.rect(layer.x, layer.y, layer.w, layer.h);
+    ctx.clip();
+    // Apply flips
+    var fh = layer.flipH, fv = layer.flipV;
+    if(fh || fv){
+      ctx.translate(fh?layer.x+layer.w:0, fv?layer.y+layer.h:0);
+      ctx.scale(fh?-1:1, fv?-1:1);
+    }
+    try {
+      ctx.drawImage(layer._video,
+        fh ? -layer.x - layer.w : layer.x,
+        fv ? -layer.y - layer.h : layer.y,
+        layer.w, layer.h);
+    } catch(e){
+      // Video not ready yet — draw a placeholder
+      ctx.fillStyle = '#eee';
+      ctx.fillRect(layer.x, layer.y, layer.w, layer.h);
+      ctx.fillStyle = '#999';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('Loading video…', layer.x + layer.w/2, layer.y + layer.h/2);
+    }
+    ctx.restore();
+  });
+}
+
+function togglePlayVideoLayer(layerId){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l || l.type !== 'video' || !l._video) return;
+  if(l._playing){
+    l._video.pause();
+    l._playing = false;
+  } else {
+    // If at/past trim end, rewind to trim start so play does something visible
+    var end = l.trimEnd != null ? l.trimEnd : l._video.duration;
+    var start = l.trimStart || 0;
+    if(l._video.currentTime >= end - 0.05) l._video.currentTime = start;
+    var p = l._video.play();
+    if(p && p.catch) p.catch(function(e){ console.warn('[video] play blocked:', e); });
+    l._playing = true;
+    ensureVideoAnimLoop();
+  }
+  renderProps();
+}
+
+function seekVideoLayer(layerId, time){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l || !l._video) return;
+  var t = Math.max(0, Math.min(l._video.duration || 0, time));
+  try { l._video.currentTime = t; } catch(e){}
+  redraw();
+}
+
+function buildVideoProps(l){
+  var v = l._video;
+  var dur = (v && v.duration) || l.duration || 0;
+  var cur = (v && v.currentTime) || 0;
+  var trimStart = l.trimStart || 0;
+  var trimEnd = l.trimEnd != null ? l.trimEnd : Math.min(10, dur);
+  var trimLen = Math.max(0, trimEnd - trimStart);
+  var trimWarn = trimLen > 10 ? '<div style="font-size:10px;color:#c60;margin-top:2px;">⚠ GIF export will cap at 10s from trim start.</div>' : '';
+  return '<div class="prop-section">'
+    +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">'
+      +'<button class="btn-sm" style="flex:1;" onclick="togglePlayVideoLayer('+l.id+')">'+(l._playing?'⏸ Pause':'▶ Play')+'</button>'
+      +'<div style="font-size:11px;color:var(--muted);white-space:nowrap;">'+cur.toFixed(2)+' / '+dur.toFixed(2)+'s</div>'
+    +'</div>'
+    +'<label style="font-size:10px;color:var(--muted);">Playhead (s)</label>'
+    +'<input type="range" id="pvid_seek" min="0" max="'+dur.toFixed(3)+'" step="0.01" value="'+cur.toFixed(2)+'" oninput="seekVideoLayer('+l.id+',+this.value)">'
+    +R('Trim Start (s)','pvid_trimStart', trimStart, 0, dur, 0.05)
+    +R('Trim End (s)','pvid_trimEnd',   trimEnd,   0, dur, 0.05)
+    +'<div style="font-size:10px;color:var(--muted);">Clip length: '+trimLen.toFixed(2)+'s</div>'
+    +trimWarn
+    +'<div style="display:flex;gap:6px;margin-top:8px;">'
+      +'<button class="btn-sm" style="flex:1;" onclick="flipVideoLayer('+l.id+',\'h\')">⇆ Flip H</button>'
+      +'<button class="btn-sm" style="flex:1;" onclick="flipVideoLayer('+l.id+',\'v\')">⇅ Flip V</button>'
+    +'</div>'
+    +NUMPAIR('X (px)','nvidx',l.x,'Y (px)','nvidy',l.y)
+    +NUMPAIR('W (px)','nvidw',l.w,'H (px)','nvidh',l.h)
+    +R('X','pvid_x',Math.round(l.x),-canvasW,canvasW*2,2)
+    +R('Y','pvid_y',Math.round(l.y),-canvasH,canvasH*2,2)
+    +R('Width','pvid_w',Math.round(l.w),10,canvasW*3,2)
+    +R('Height','pvid_h',Math.round(l.h),10,canvasH*3,2)
+    +R('Rotation','pvid_rot',l.rotation||0,-180,180,1)
+    +R('Opacity','pvid_opacity',l.opacity,0,100,1)
+    +moveBtns(l.id)+'</div>';
+}
+
+function flipVideoLayer(id, axis){
+  var l = layers.find(function(x){return x.id===id;});
+  if(!l) return;
+  snapshotState();
+  if(axis === 'h') l.flipH = !l.flipH;
+  if(axis === 'v') l.flipV = !l.flipV;
+  renderProps(); redraw();
+}
+
 // ── STICKER LAYER ──
 function addStickerLayer(){
   snapshotState();
@@ -1742,6 +1981,7 @@ function renderProps(){
     : '';
   var innerHtml = '';
   if(layer.type==='image')       innerHtml=buildImageProps(layer);
+  else if(layer.type==='video')   innerHtml=buildVideoProps(layer);
   else if(layer.type==='sticker') innerHtml=buildStickerProps(layer);
   else if(layer.type==='shape')   innerHtml=buildShapeProps(layer);
   else if(layer.type==='svg')     innerHtml=buildSvgProps(layer);
@@ -2193,6 +2433,32 @@ function bindPropEvents(layer){
     rng('svgw',function(v){layer.w=v;redraw();});rng('svgh',function(v){layer.h=v;redraw();});
     rng('svgrotation',function(v){layer.rotation=v;redraw();});
     rng('svgopacity',function(v){layer.opacity=v;redraw();});
+  } else if(layer.type==='video'){
+    // Trim sliders: clamp so start <= end
+    rng('pvid_trimStart', function(v){
+      layer.trimStart = +v;
+      if(layer.trimEnd != null && layer.trimStart > layer.trimEnd) layer.trimEnd = layer.trimStart;
+      // If current playhead is before trim start, move it to trim start
+      if(layer._video && layer._video.currentTime < layer.trimStart){
+        try { layer._video.currentTime = layer.trimStart; } catch(e){}
+      }
+      redraw();
+    });
+    rng('pvid_trimEnd', function(v){
+      layer.trimEnd = +v;
+      if(layer.trimStart != null && layer.trimEnd < layer.trimStart) layer.trimStart = layer.trimEnd;
+      redraw();
+    });
+    num('nvidx', function(v){layer.x=v;redraw();}, 'pvid_x');
+    num('nvidy', function(v){layer.y=v;redraw();}, 'pvid_y');
+    num('nvidw', function(v){layer.w=v;redraw();}, 'pvid_w');
+    num('nvidh', function(v){layer.h=v;redraw();}, 'pvid_h');
+    rng('pvid_x',  function(v){layer.x=v;redraw();});
+    rng('pvid_y',  function(v){layer.y=v;redraw();});
+    rng('pvid_w',  function(v){layer.w=v;redraw();});
+    rng('pvid_h',  function(v){layer.h=v;redraw();});
+    rng('pvid_rot', function(v){layer.rotation=v;redraw();});
+    rng('pvid_opacity', function(v){layer.opacity=v;redraw();});
   } else if(layer.type==='text'){
     on('ptxt_text','input',function(e){layer.text=e.target.value;redraw();});
     on('ptxt_family','change',function(e){
@@ -2703,6 +2969,7 @@ function redraw(){
     if(layer.hidden) return;  // visibility toggle
     ctx.save();ctx.globalAlpha=(layer.opacity||100)/100;
     if(layer.type==='image')drawImageLayer(ctx,layer);
+    else if(layer.type==='video')drawVideoLayer(ctx,layer);
     else if(layer.type==='sticker')drawStickerLayer(ctx,layer);
     else if(layer.type==='shape')drawShapeLayer(ctx,layer);
     else if(layer.type==='svg')drawSvgLayer(ctx,layer);
@@ -3490,6 +3757,7 @@ function doExport(){
     bctx.save();bctx.globalAlpha=(layer.opacity||100)/100;
     try{
       if(layer.type==='image')drawImageLayer(bctx,layer);
+      else if(layer.type==='video')drawVideoLayer(bctx,layer);
       else if(layer.type==='sticker')drawStickerLayer(bctx,layer);
       else if(layer.type==='shape')drawShapeLayer(bctx,layer);
       else if(layer.type==='svg')drawSvgLayer(bctx,layer);
