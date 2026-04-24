@@ -111,7 +111,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v41</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v42</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -119,6 +119,8 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <button class="brand-opt" data-brand="kkz" onclick="setBrand('kkz')">Kitty Ka-Zoom</button>
   </div>
   <div class="header-btns">
+    <button class="btn-hdr" onclick="openMyDesignsModal()" title="Load a saved design">📂 My Designs</button>
+    <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
   </div>
 </header>
@@ -239,6 +241,43 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeExportModal()">Cancel</button>
       <button class="btn-primary" onclick="doExport()">Export PNG</button>
+    </div>
+  </div>
+</div>
+
+<!-- Save dialog -->
+<div class="modal-overlay hidden" id="saveModal">
+  <div class="modal">
+    <h2>💾 Save Design</h2>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label>Design name</label>
+        <input type="text" id="saveDesignName" placeholder="e.g. Fall launch hero" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+      </div>
+      <div style="font-size:11px;color:var(--muted);">
+        Saved to this browser (accessible from My Designs) AND downloaded as a <code>.spdesign.json</code> file you can load on any device or share with teammates.
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeSaveModal()">Cancel</button>
+      <button class="btn-primary" onclick="confirmSaveDesign()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- My Designs modal -->
+<div class="modal-overlay hidden" id="myDesignsModal">
+  <div class="modal" style="max-width:580px;">
+    <h2>📂 My Designs</h2>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <input type="file" id="loadFileInput" accept=".json,application/json" style="display:none;" onchange="loadFromFileInput(event)">
+      <button class="btn-hdr" onclick="document.getElementById('loadFileInput').click()" style="flex:1;">📁 Load from file…</button>
+    </div>
+    <div id="myDesignsList" style="display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto;">
+      <!-- populated by renderMyDesigns() -->
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeMyDesignsModal()">Close</button>
     </div>
   </div>
 </div>
@@ -638,6 +677,7 @@ function snapshotState(){
   undoStack.push(snap);
   if(undoStack.length > UNDO_LIMIT) undoStack.shift();
   redoStack = []; // new action invalidates redo
+  if(typeof scheduleAutosave === 'function') scheduleAutosave();
 }
 
 function undo(){
@@ -667,6 +707,287 @@ function redo(){
   hideCropToolbar();
   renderLayerList(); renderProps(); redraw();
   _undoSuppressed = false;
+}
+
+// ── SAVE / LOAD DESIGNS ──
+// A "design" is the full editable state: layers, canvas size, brand.
+// Designs can be saved to:
+//   1. A downloaded .spdesign.json file (portable, shareable)
+//   2. IndexedDB (local, auto-loads in "My Designs")
+// Both happen when the user clicks Save. Loading accepts either a file or a My Designs entry.
+//
+// Schema version is included so older saves remain loadable if the state shape evolves.
+
+var DESIGN_SCHEMA_VERSION = 1;
+// Autosave uses a reserved fixed id far from the auto-assigned range (which starts at 1)
+var AUTOSAVE_ID = 999999999;
+var AUTOSAVE_DEBOUNCE_MS = 1200;
+var _autosaveTimer = null;
+
+// Capture the full current design state as a plain JS object (JSON-safe).
+function gatherDesignState(){
+  return {
+    schema: DESIGN_SCHEMA_VERSION,
+    appVersion: 'v42',
+    savedAt: new Date().toISOString(),
+    canvasW: canvasW,
+    canvasH: canvasH,
+    currentBrand: currentBrand,
+    activePresetId: activePresetId,
+    // Reuse the same layer serialization as undo — strips HTMLImageElement, keeps _imgSrc
+    layers: JSON.parse(serializeLayers())
+  };
+}
+
+// Apply a design state object to the app. Replaces all current layers, canvas, and brand.
+function restoreDesignState(state){
+  if(!state || !state.layers){ alert('Invalid design file.'); return false; }
+  if(state.schema && state.schema > DESIGN_SCHEMA_VERSION){
+    alert('This design was saved by a newer version of the tool. Some features may not restore correctly.');
+  }
+  _undoSuppressed = true;
+  try {
+    // Switch brand first (changes font lists, gradient presets)
+    if(state.currentBrand && state.currentBrand !== currentBrand){
+      setBrand(state.currentBrand);
+    }
+    // Apply canvas size
+    if(state.canvasW && state.canvasH){
+      setCanvasSize(state.canvasW, state.canvasH);
+    }
+    // Restore layers (reuses deserializer which rehydrates Image objects)
+    layers = deserializeLayers(JSON.stringify(state.layers));
+    // Next layer id must be higher than the max existing id to avoid collisions
+    nextId = layers.reduce(function(m,l){return Math.max(m, (l.id||0)+1);}, 1);
+    selectedId = null;
+    activePresetId = state.activePresetId || '';
+    // Reset undo/redo history — loading is a fresh start
+    undoStack = [];
+    redoStack = [];
+    renderLayerList(); renderProps(); renderPresets(); redraw();
+    return true;
+  } catch(e){
+    console.error('[restore] failed:', e);
+    alert('Failed to restore design: ' + e.message);
+    return false;
+  } finally {
+    _undoSuppressed = false;
+  }
+}
+
+// ── Save dialog flow ──
+function promptSaveDesign(){
+  document.getElementById('saveDesignName').value = _lastDesignName || ('Design ' + new Date().toLocaleDateString());
+  document.getElementById('saveModal').classList.remove('hidden');
+  setTimeout(function(){ document.getElementById('saveDesignName').focus(); document.getElementById('saveDesignName').select(); }, 50);
+}
+function closeSaveModal(){ document.getElementById('saveModal').classList.add('hidden'); }
+var _lastDesignName = '';
+function confirmSaveDesign(){
+  var name = document.getElementById('saveDesignName').value.trim();
+  if(!name){ alert('Please enter a name.'); return; }
+  _lastDesignName = name;
+  var state = gatherDesignState();
+  state.name = name;
+  // 1. Download as file
+  downloadDesignFile(state, name);
+  // 2. Save to IndexedDB so it shows in My Designs
+  idbSaveDesign(null, state).then(function(){
+    closeSaveModal();
+  }).catch(function(e){
+    console.error('[save] IDB error:', e);
+    // File download still succeeded — just warn about the local save
+    alert('Downloaded file saved, but couldn\'t save to My Designs: ' + e.message);
+    closeSaveModal();
+  });
+}
+
+// Serialize state → JSON file → trigger download
+function downloadDesignFile(state, name){
+  var json = JSON.stringify(state, null, 2);
+  var blob = new Blob([json], {type:'application/json'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  // Safe filename: remove non-word chars, truncate
+  var safe = (name||'design').replace(/[^\w\-]+/g,'_').slice(0,80);
+  a.download = safe + '.spdesign.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+}
+
+// ── File input → Load ──
+function loadFromFileInput(event){
+  var f = event.target.files && event.target.files[0];
+  if(!f) return;
+  var reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      var state = JSON.parse(e.target.result);
+      if(restoreDesignState(state)){
+        _lastDesignName = state.name || '';
+        closeMyDesignsModal();
+      }
+    } catch(err){
+      alert('Could not parse design file: ' + err.message);
+    }
+    // clear input so the same file can be reloaded
+    event.target.value = '';
+  };
+  reader.readAsText(f);
+}
+
+// ── IndexedDB wrapper ──
+// Simple key-value store. Each design gets an auto-assigned id, plus the special autosave key.
+var _db = null;
+function idbOpen(){
+  return new Promise(function(resolve, reject){
+    if(_db) { resolve(_db); return; }
+    var req = indexedDB.open('smarterpaw_designs', 1);
+    req.onupgradeneeded = function(e){
+      var db = e.target.result;
+      if(!db.objectStoreNames.contains('designs')){
+        db.createObjectStore('designs', {keyPath:'id', autoIncrement:true});
+      }
+    };
+    req.onsuccess = function(e){ _db = e.target.result; resolve(_db); };
+    req.onerror = function(e){ reject(e.target.error); };
+  });
+}
+function idbTxn(mode){
+  return idbOpen().then(function(db){ return db.transaction('designs', mode).objectStore('designs'); });
+}
+// id=null → new autoincrement record; id=number → update that record (including AUTOSAVE_ID)
+function idbSaveDesign(id, state){
+  return idbTxn('readwrite').then(function(store){
+    return new Promise(function(resolve, reject){
+      var payload = Object.assign({}, state);
+      if(id != null){
+        payload.id = id;
+        if(id === AUTOSAVE_ID) payload.isAutosave = true;
+        var r = store.put(payload);
+        r.onsuccess = function(){ resolve(id); }; r.onerror = function(e){ reject(e.target.error); };
+      } else {
+        // New record — let IndexedDB auto-assign. Autoincrement picks the next id above the highest existing,
+        // so with AUTOSAVE_ID=999999999 a fresh record lands at id=1 and works up.
+        delete payload.id; delete payload.isAutosave;
+        var r3 = store.add(payload);
+        r3.onsuccess = function(e){ resolve(e.target.result); };
+        r3.onerror = function(e){ reject(e.target.error); };
+      }
+    });
+  });
+}
+function idbListDesigns(){
+  return idbTxn('readonly').then(function(store){
+    return new Promise(function(resolve, reject){
+      var out = [];
+      var req = store.openCursor();
+      req.onsuccess = function(e){
+        var cur = e.target.result;
+        if(cur){ out.push(cur.value); cur.continue(); }
+        else resolve(out);
+      };
+      req.onerror = function(e){ reject(e.target.error); };
+    });
+  });
+}
+function idbDeleteDesign(id){
+  return idbTxn('readwrite').then(function(store){
+    return new Promise(function(resolve, reject){
+      var r = store.delete(id);
+      r.onsuccess = function(){ resolve(); }; r.onerror = function(e){ reject(e.target.error); };
+    });
+  });
+}
+function idbGetDesign(id){
+  return idbTxn('readonly').then(function(store){
+    return new Promise(function(resolve, reject){
+      var r = store.get(id);
+      r.onsuccess = function(e){ resolve(e.target.result); }; r.onerror = function(e){ reject(e.target.error); };
+    });
+  });
+}
+
+// ── Autosave ──
+// Fire on any change that matters: call scheduleAutosave() from key mutation sites.
+// For v1, hook into snapshotState() which is already called on every meaningful mutation.
+function scheduleAutosave(){
+  if(_undoSuppressed) return; // don't autosave during restore
+  if(!layers.length) return;  // empty canvas — don't save
+  clearTimeout(_autosaveTimer);
+  _autosaveTimer = setTimeout(function(){
+    var state = gatherDesignState();
+    state.name = '(Autosave)';
+    idbSaveDesign(AUTOSAVE_ID, state).catch(function(e){
+      console.warn('[autosave] failed:', e);
+    });
+  }, AUTOSAVE_DEBOUNCE_MS);
+}
+
+// ── My Designs modal ──
+function openMyDesignsModal(){
+  document.getElementById('myDesignsModal').classList.remove('hidden');
+  renderMyDesigns();
+}
+function closeMyDesignsModal(){
+  document.getElementById('myDesignsModal').classList.add('hidden');
+}
+function renderMyDesigns(){
+  var container = document.getElementById('myDesignsList');
+  container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px;">Loading…</div>';
+  idbListDesigns().then(function(designs){
+    if(!designs.length){
+      container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px;">No saved designs yet. Save one to see it here.</div>';
+      return;
+    }
+    // Sort: autosave first, then newest → oldest by savedAt
+    designs.sort(function(a,b){
+      if(a.isAutosave && !b.isAutosave) return -1;
+      if(!a.isAutosave && b.isAutosave) return 1;
+      return (b.savedAt||'').localeCompare(a.savedAt||'');
+    });
+    container.innerHTML = '';
+    designs.forEach(function(d){
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:7px;background:#fafafa;';
+      var when = d.savedAt ? new Date(d.savedAt).toLocaleString() : '—';
+      var layerCount = (d.layers||[]).length;
+      var icon = d.isAutosave ? '⟳' : '📄';
+      var nameHtml = d.isAutosave
+        ? '<b style="color:var(--muted);">' + icon + ' Autosave</b>'
+        : '<b>' + icon + ' ' + escAttr(d.name||'Untitled') + '</b>';
+      row.innerHTML =
+        '<div style="flex:1;min-width:0;overflow:hidden;">'
+          + nameHtml
+          + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">'
+            + layerCount + ' layer' + (layerCount===1?'':'s') + ' · ' + (d.canvasW||'?') + '×' + (d.canvasH||'?') + ' · ' + when
+          + '</div>'
+        + '</div>'
+        + '<button class="btn-sm" data-action="load" title="Load this design">Load</button>'
+        + '<button class="btn-sm" data-action="download" title="Download as .json file">⬇</button>'
+        + (d.isAutosave ? '' : '<button class="btn-sm danger" data-action="delete" title="Delete">✕</button>');
+      row.querySelector('[data-action="load"]').onclick = function(){
+        if(restoreDesignState(d)){
+          _lastDesignName = d.name || '';
+          closeMyDesignsModal();
+        }
+      };
+      row.querySelector('[data-action="download"]').onclick = function(){
+        downloadDesignFile(d, d.name || 'design');
+      };
+      var delBtn = row.querySelector('[data-action="delete"]');
+      if(delBtn){
+        delBtn.onclick = function(){
+          if(!confirm('Delete "' + (d.name||'Untitled') + '"? This cannot be undone.')) return;
+          idbDeleteDesign(d.id).then(renderMyDesigns);
+        };
+      }
+      container.appendChild(row);
+    });
+  }).catch(function(e){
+    container.innerHTML = '<div style="color:#a00;font-size:12px;">Error: ' + e.message + '</div>';
+  });
 }
 
 // ── KEYBOARD SHORTCUTS ──
