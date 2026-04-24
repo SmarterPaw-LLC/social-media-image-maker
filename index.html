@@ -122,7 +122,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v44</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v45</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2394,11 +2394,34 @@ function bindCanvasEvents(){
       e.preventDefault();
       return;
     }
-    selectLayer(layer.id);
+    // If the clicked layer is part of the current multi-selection, keep the whole group selected
+    // and start a GROUP drag. Otherwise replace selection with just this layer.
+    var inSelection = selectedIds && selectedIds.length > 1 && selectedIds.indexOf(layer.id) >= 0;
+    if(!inSelection){
+      selectLayer(layer.id);
+    }
     // Locked layers can be selected but not dragged around
     if(layer.locked) return;
     snapshotState();
-    dragState={layerId:layer.id,startX:e.clientX,startY:e.clientY,origX:layer.x,origY:layer.y};
+    // Build the drag state. For group drag, capture each participating layer's original x/y so we can
+    // translate them together. Locked layers in the group stay put (skipped during drag).
+    var groupIds = inSelection ? selectedIds.slice() : [layer.id];
+    var origPositions = {};
+    groupIds.forEach(function(id){
+      var l = layers.find(function(x){return x.id===id;});
+      if(l && !l.locked && typeof l.x === 'number' && typeof l.y === 'number'){
+        origPositions[id] = {x: l.x, y: l.y};
+      }
+    });
+    dragState = {
+      layerId: layer.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: layer.x,
+      origY: layer.y,
+      groupIds: groupIds,
+      origPositions: origPositions
+    };
     e.preventDefault();
   });
   window.addEventListener('mousemove',function(e){
@@ -2434,10 +2457,20 @@ function bindCanvasEvents(){
       return;
     }
     if(dragState){
-      var layer=layers.find(function(l){return l.id===dragState.layerId;});if(!layer)return;
-      layer.x=Math.round(dragState.origX+(e.clientX-dragState.startX)/zoomLevel);
-      layer.y=Math.round(dragState.origY+(e.clientY-dragState.startY)/zoomLevel);
-      syncPropXY(layer);redraw();
+      var dx = (e.clientX - dragState.startX) / zoomLevel;
+      var dy = (e.clientY - dragState.startY) / zoomLevel;
+      // Translate every captured layer by the same delta. Locked layers weren't captured, so they stay put.
+      var primary = null;
+      Object.keys(dragState.origPositions).forEach(function(id){
+        var l = layers.find(function(x){return x.id === +id;});
+        if(!l) return;
+        var orig = dragState.origPositions[id];
+        l.x = Math.round(orig.x + dx);
+        l.y = Math.round(orig.y + dy);
+        if(+id === dragState.layerId) primary = l;
+      });
+      if(primary) syncPropXY(primary);
+      redraw();
     }
     if(resizeState){
       var layer=layers.find(function(l){return l.id===resizeState.layerId;});if(!layer)return;
