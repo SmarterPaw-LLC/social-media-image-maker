@@ -122,7 +122,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v43</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v44</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -609,7 +609,7 @@ var currentBoardId = 1;   // id of the currently active board
 var nextBoardId = 1;      // next board id to assign
 var zoomLevel = 0.5;
 var nextId = 1;           // global layer id counter — unique across ALL boards so paste is safe
-var dragState = null, resizeState = null, cropState = null, rotateState = null;
+var dragState = null, resizeState = null, cropState = null, rotateState = null, marqueeState = null;
 // Internal clipboard for copy/paste. Array of serialized layer objects.
 var clipboard = [];
 
@@ -2387,7 +2387,13 @@ function bindCanvasEvents(){
       }
     }
     var layer=getLayerAt(cx,cy);
-    if(!layer)return;
+    if(!layer){
+      // Empty-canvas click → start marquee selection
+      marqueeState={startX:cx, startY:cy, curX:cx, curY:cy, shift:!!e.shiftKey, origSelection: (selectedIds||[]).slice()};
+      // Don't clear selection yet — wait for mouseup. Empty marquee (just a click) clears.
+      e.preventDefault();
+      return;
+    }
     selectLayer(layer.id);
     // Locked layers can be selected but not dragged around
     if(layer.locked) return;
@@ -2400,6 +2406,13 @@ function bindCanvasEvents(){
       var rect=wrap.getBoundingClientRect();
       var cx=(e.clientX-rect.left)/zoomLevel, cy=(e.clientY-rect.top)/zoomLevel;
       updateCropHandle(cropState.dragHandle, cx, cy);
+      return;
+    }
+    if(marqueeState){
+      var rect=wrap.getBoundingClientRect();
+      marqueeState.curX=(e.clientX-rect.left)/zoomLevel;
+      marqueeState.curY=(e.clientY-rect.top)/zoomLevel;
+      redraw();
       return;
     }
     if(rotateState){
@@ -2446,7 +2459,113 @@ function bindCanvasEvents(){
   window.addEventListener('mouseup',function(){
     dragState=null;resizeState=null;rotateState=null;
     if(cropState) cropState.dragHandle=null;
+    if(marqueeState){
+      finalizeMarqueeSelection();
+      marqueeState=null;
+      redraw();
+    }
   });
+}
+
+// Finalize the marquee: walk all non-locked, non-hidden layers and select any whose
+// (rotation-aware) bounding box intersects the marquee rect.
+function finalizeMarqueeSelection(){
+  if(!marqueeState) return;
+  var mx1=Math.min(marqueeState.startX, marqueeState.curX);
+  var my1=Math.min(marqueeState.startY, marqueeState.curY);
+  var mx2=Math.max(marqueeState.startX, marqueeState.curX);
+  var my2=Math.max(marqueeState.startY, marqueeState.curY);
+  var dragged = (mx2-mx1 > 2 || my2-my1 > 2); // treat tiny movement as a plain click
+  if(!dragged){
+    // Plain click on empty canvas clears selection (unless shift held)
+    if(!marqueeState.shift){
+      selectedId=null; selectedIds=[]; renderLayerList(); renderProps();
+    }
+    return;
+  }
+  var hits = layers.filter(function(l){
+    if(l.locked || l.hidden) return false;
+    return layerIntersectsRect(l, mx1, my1, mx2, my2);
+  });
+  var newIds = hits.map(function(l){return l.id;});
+  if(marqueeState.shift){
+    // Add to existing selection (toggle semantics: if already selected, keep it)
+    var combined = marqueeState.origSelection.slice();
+    newIds.forEach(function(id){ if(combined.indexOf(id) === -1) combined.push(id); });
+    selectedIds = combined;
+  } else {
+    selectedIds = newIds;
+  }
+  // Primary = topmost hit layer (highest in layers array), for canvas handles
+  if(selectedIds.length){
+    var topmost = null;
+    for(var i=layers.length-1;i>=0;i--){
+      if(selectedIds.indexOf(layers[i].id) >= 0){ topmost = layers[i].id; break; }
+    }
+    selectedId = topmost;
+  } else {
+    selectedId = null;
+  }
+  renderLayerList(); renderProps();
+}
+
+// AABB intersection test that respects rotation. Takes a layer and a rect {mx1,my1,mx2,my2}.
+// For rotated layers, we check whether any of the rotated layer's 4 corners is inside the marquee
+// OR whether any marquee corner is inside the rotated polygon. For unrotated layers, simple AABB.
+function layerIntersectsRect(layer, mx1, my1, mx2, my2){
+  var bds = getLayerBounds(layer);
+  var rot = layer.rotation || 0;
+  if(Math.abs(rot) < 0.01){
+    // Plain AABB overlap
+    return !(bds.x + bds.w < mx1 || bds.x > mx2 || bds.y + bds.h < my1 || bds.y > my2);
+  }
+  // Rotated: build the 4 corners of the rotated layer rect in world space
+  var cx = bds.x + bds.w/2, cy = bds.y + bds.h/2;
+  var r = rot * Math.PI/180;
+  var cs = Math.cos(r), sn = Math.sin(r);
+  function rotatePt(px, py){ var dx=px-cx, dy=py-cy; return {x:cx+dx*cs-dy*sn, y:cy+dx*sn+dy*cs}; }
+  var p1=rotatePt(bds.x, bds.y);
+  var p2=rotatePt(bds.x+bds.w, bds.y);
+  var p3=rotatePt(bds.x+bds.w, bds.y+bds.h);
+  var p4=rotatePt(bds.x, bds.y+bds.h);
+  var layerCorners = [p1,p2,p3,p4];
+  var mCorners = [{x:mx1,y:my1},{x:mx2,y:my1},{x:mx2,y:my2},{x:mx1,y:my2}];
+  // Any layer corner inside marquee?
+  for(var i=0;i<4;i++){
+    var p=layerCorners[i];
+    if(p.x>=mx1 && p.x<=mx2 && p.y>=my1 && p.y<=my2) return true;
+  }
+  // Any marquee corner inside the rotated polygon?
+  for(var j=0;j<4;j++){
+    if(pointInQuad(mCorners[j], layerCorners)) return true;
+  }
+  // Edge-edge intersection — reasonably rare case, but worth catching for long thin rotated rects
+  for(var a=0;a<4;a++){
+    for(var b=0;b<4;b++){
+      if(segmentsIntersect(
+        layerCorners[a], layerCorners[(a+1)%4],
+        mCorners[b], mCorners[(b+1)%4])) return true;
+    }
+  }
+  return false;
+}
+// Point-in-convex-quadrilateral using the cross-product sign test
+function pointInQuad(p, quad){
+  var sign = 0;
+  for(var i=0;i<4;i++){
+    var a=quad[i], b=quad[(i+1)%4];
+    var cross=(b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x);
+    if(cross !== 0){
+      if(sign === 0) sign = cross > 0 ? 1 : -1;
+      else if((cross > 0 ? 1 : -1) !== sign) return false;
+    }
+  }
+  return true;
+}
+// Standard 2D segment-segment intersection
+function segmentsIntersect(p1,p2,p3,p4){
+  function ccw(a,b,c){return (c.y-a.y)*(b.x-a.x) > (b.y-a.y)*(c.x-a.x);}
+  return ccw(p1,p3,p4) !== ccw(p2,p3,p4) && ccw(p1,p2,p3) !== ccw(p1,p2,p4);
 }
 
 function getLayerAt(cx,cy){
@@ -2548,6 +2667,41 @@ function redraw(){
       ctx.beginPath();ctx.moveTo(bds.x+bds.w/2,bds.y);ctx.lineTo(rhX,rhY);ctx.stroke();
       ctx.beginPath();ctx.arc(rhX,rhY,HANDLE_SIZE/2+1,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.stroke();
     }
+    ctx.restore();
+  }
+  // Secondary-selection outlines: thin dashed boxes around all selectedIds that aren't the primary
+  if(selectedIds && selectedIds.length > 1){
+    ctx.save();
+    ctx.strokeStyle='rgba(138,184,29,0.55)';
+    ctx.lineWidth=1.5;
+    ctx.setLineDash([4,3]);
+    selectedIds.forEach(function(id){
+      if(id === selectedId) return; // primary drawn above
+      var l=layers.find(function(x){return x.id===id;});
+      if(!l || l.hidden) return;
+      var b=getLayerBounds(l);
+      var rot=(l.rotation||0)*Math.PI/180;
+      var ccx=b.x+b.w/2, ccy=b.y+b.h/2;
+      ctx.save();
+      ctx.translate(ccx,ccy); ctx.rotate(rot); ctx.translate(-ccx,-ccy);
+      ctx.strokeRect(b.x, b.y, b.w, b.h);
+      ctx.restore();
+    });
+    ctx.restore();
+  }
+  // Marquee rectangle while dragging
+  if(marqueeState){
+    var mx1=Math.min(marqueeState.startX, marqueeState.curX);
+    var my1=Math.min(marqueeState.startY, marqueeState.curY);
+    var mw=Math.abs(marqueeState.curX-marqueeState.startX);
+    var mh=Math.abs(marqueeState.curY-marqueeState.startY);
+    ctx.save();
+    ctx.fillStyle='rgba(138,184,29,0.10)';
+    ctx.strokeStyle='rgba(138,184,29,0.75)';
+    ctx.lineWidth=1;
+    ctx.setLineDash([4,3]);
+    ctx.fillRect(mx1,my1,mw,mh);
+    ctx.strokeRect(mx1,my1,mw,mh);
     ctx.restore();
   }
   if(cropState) drawCropOverlay(ctx);
