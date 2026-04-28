@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v70</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v72</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -174,12 +174,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button class="btn-add" onclick="openShapeMenu()">+ Shape</button>
     </div>
     <div class="col2">
+      <button class="btn-add" onclick="addSprinkleLayer()" title="Scatter catnip or an uploaded image inside a resizable box">+ Sprinkle 🌿</button>
       <button class="btn-add" onclick="addSvgLayer()">+ SVG</button>
-      <button class="btn-add" onclick="addVideoLayer()">+ Video</button>
     </div>
     <div class="col2">
+      <button class="btn-add" onclick="addVideoLayer()">+ Video</button>
       <button class="btn-add" onclick="addFramedImageLayer()" title="Image clipped inside a shape mask">+ Framed Image</button>
-      <span></span>
     </div>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
     <!-- Shape picker (hidden by default) -->
@@ -1793,6 +1793,43 @@ function addShapeLayer(shapeId){
   selectLayer(id);renderLayerList();redraw();
 }
 
+// ── SPRINKLE LAYER ──
+// A standalone box that scatters catnip pieces (or an uploaded image) across its bounds.
+// Position/size/rotation/opacity work like any other layer. Pieces are drawn deterministically
+// from the seed so the layout stays stable while editing. Resizing the box just rescales the
+// piece distribution to fill the new area.
+function addSprinkleLayer(){
+  snapshotState();
+  var id = nextId++;
+  layers.push({
+    id: id, type: 'sprinkle', name: 'Sprinkle '+id,
+    x: canvasW * 0.2, y: canvasH * 0.4,
+    w: canvasW * 0.6, h: canvasH * 0.2,
+    rotation: 0, opacity: 100,
+    // Source: built-in catnip pieces or a user-uploaded image
+    source: 'builtin',           // 'builtin' | 'upload'
+    uploadSrc: null,             // data URL of uploaded image (when source='upload')
+    bgRemove: 'none',            // 'none' | 'black' | 'white'
+    bgTolerance: 35,
+    // Distribution
+    count: 30,                   // number of pieces in the box
+    size: 25,                    // % of box's shorter dimension
+    seed: Math.floor(Math.random() * 9999) + 1,
+    // Tint
+    tint: 0,
+    tintColor: '#ffd24a',
+    // Shadow (uses the standard shadow fields like other layers)
+    shadowBlur: 0,
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
+    shadowColor: '#000000',
+    shadowOpacity: 50
+  });
+  selectLayer(id);
+  renderLayerList();
+  redraw();
+}
+
 // ── SVG LAYER ──
 // Ensure SVG text has width/height attributes so the browser reports a non-zero
 // naturalWidth/naturalHeight when used as <img src>. Adobe Illustrator exports
@@ -2568,7 +2605,7 @@ function renderLayerList(){
       if(layer.hidden) item.style.opacity='0.5';
       item.draggable = !layer.locked;  // locked layers can't be dragged either
       item.dataset.layerId=layer.id;
-      var icons={image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷'};
+      var icons={image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿'};
       var eyeIcon = layer.hidden ? '⊘' : '●';   // filled circle = visible, crossed circle = hidden
       var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
       var lockIcon = layer.locked ? '🔒' : '🔓';
@@ -2642,6 +2679,7 @@ function renderProps(){
   else if(layer.type==='video')   innerHtml=buildVideoProps(layer);
   else if(layer.type==='sticker') innerHtml=buildStickerProps(layer);
   else if(layer.type==='shape')   innerHtml=buildShapeProps(layer);
+  else if(layer.type==='sprinkle') innerHtml=buildSprinkleProps(layer);
   else if(layer.type==='svg')     innerHtml=buildSvgProps(layer);
   else if(layer.type==='text')    innerHtml=buildTextProps(layer);
   // If locked, wrap the controls with pointer-events:none and dim them
@@ -2829,55 +2867,6 @@ function textEffectsUI(l){
             +'</div>'
         )
       +'</div>'
-      : '')
-
-    // ── CATNIP SPRINKLE ──
-    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer;">'
-      +'<input type="checkbox" id="ptxt_fxCatnipSprinkle"'+(l.effectCatnipSprinkle?' checked':'')+'>'
-      +'<span>🌿 Catnip sprinkle (around text)</span>'
-    +'</label>'
-    +(l.effectCatnipSprinkle
-      ? (function(){
-          var tintCol = rgbaToHex(l.effectCatnipSprinkleTintColor || '#ffd24a');
-          var src = l.effectCatnipSprinkleSource || 'builtin';
-          var hasUpload = !!l.effectCatnipSprinkleUploadSrc;
-          return '<div style="margin:0 0 8px 22px;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
-            // Source picker — built-in catnip vs uploaded image
-            +SEL('Source','ptxt_fxCatnipSprinkleSource',[['builtin','Catnip (built-in)'],['upload','Upload image']], src)
-            +(src === 'upload'
-              ? '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
-                  +'<button class="btn-add" style="flex:1;" onclick="promptCatnipSprinkleUpload('+l.id+')">📁 '+(hasUpload?'Replace image…':'Upload image…')+'</button>'
-                  +(hasUpload?'<button class="btn-sm danger" onclick="clearCatnipSprinkleUpload('+l.id+')" title="Remove uploaded image">✕</button>':'')
-                +'</div>'
-                +(hasUpload
-                  ? '<div style="margin-bottom:6px;border:1px solid var(--border);border-radius:4px;overflow:hidden;background:repeating-conic-gradient(#e8e8e0 0deg 90deg,#d8d8d0 90deg 180deg) 0 0/14px 14px;">'
-                    +'<img src="'+(l._effectCatnipSprinkleUploadKeyedSrc || l.effectCatnipSprinkleUploadSrc)+'" style="display:block;width:100%;max-height:90px;object-fit:contain;">'
-                  +'</div>'
-                  +SEL('Background removal','ptxt_fxCatnipSprinkleBgRemove',[['none','None'],['black','Drop near-black'],['white','Drop near-white']], l.effectCatnipSprinkleBgRemove||'none')
-                  +(l.effectCatnipSprinkleBgRemove && l.effectCatnipSprinkleBgRemove !== 'none'
-                    ? R('Tolerance','ptxt_fxCatnipSprinkleBgTolerance', l.effectCatnipSprinkleBgTolerance||35, 5, 120, 1)
-                    : '')
-                  : '<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Upload an image to scatter around the text. Works best with a small object on a transparent or solid-color background.</div>'
-                )
-              : '')
-            +R('Count','ptxt_fxCatnipSprinkleCount',  l.effectCatnipSprinkleCount||20, 1, 80, 1)
-            +R('Size (% of text)','ptxt_fxCatnipSprinkleSize', l.effectCatnipSprinkleSize||35, 5, 150, 1)
-            +R('Spread (% of text)','ptxt_fxCatnipSprinkleSpread', l.effectCatnipSprinkleSpread||25, 0, 150, 1)
-            +R('Cluster tightness (%)','ptxt_fxCatnipSprinkleCluster', (l.effectCatnipSprinkleCluster==null?70:l.effectCatnipSprinkleCluster), 0, 100, 1)
-            +'<div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:5px;">'
-              +'<div style="flex:1;margin-bottom:0;">'+R('Seed','ptxt_fxCatnipSprinkleSeed', l.effectCatnipSprinkleSeed||1, 1, 9999, 1)+'</div>'
-              +'<button class="btn-sm" style="height:32px;white-space:nowrap;" onclick="rerollCatnipSprinkle('+l.id+')" title="Re-randomize the layout">🎲</button>'
-            +'</div>'
-            +R('Tint mix (%)','ptxt_fxCatnipSprinkleTint', l.effectCatnipSprinkleTint||0, 0, 100, 1)
-            +(l.effectCatnipSprinkleTint > 0
-              ? '<label style="font-size:11px;">Tint color</label>'
-                +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">'
-                  +'<input type="color" id="ptxt_fxCatnipSprinkleTintColor" value="'+tintCol+'" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
-                  +'<input type="text" id="ptxt_fxCatnipSprinkleTintColorHex" value="'+tintCol.toUpperCase()+'" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
-                +'</div>'
-              : '')
-          +'</div>';
-        })()
       : '');
   return html;
 }
@@ -2911,12 +2900,6 @@ function bindTextEffectsEvents(layer){
   on('ptxt_fxGlow',    'change', function(e){ layer.effectGlow    = e.target.checked; renderProps(); redraw(); });
   on('ptxt_fxOutline', 'change', function(e){ layer.effectOutline = e.target.checked; renderProps(); redraw(); });
   on('ptxt_fxOutlineMode','change',function(e){ layer.effectOutlineMode = e.target.value; renderProps(); redraw(); });
-  on('ptxt_fxCatnipSprinkle','change', function(e){
-    layer.effectCatnipSprinkle = e.target.checked;
-    // Initialize defaults the first time the user enables the effect
-    if(layer.effectCatnipSprinkle && !layer.effectCatnipSprinkleSeed) layer.effectCatnipSprinkleSeed = Math.floor(Math.random() * 9999) + 1;
-    renderProps(); redraw();
-  });
   // Image fill controls
   on('ptxt_fxImageFillFit','change', function(e){ layer.effectImageFillFit = e.target.value; redraw(); });
   rng('ptxt_fxImageFillScale',   function(v){ layer.effectImageFillScale = v; redraw(); });
@@ -2940,102 +2923,6 @@ function bindTextEffectsEvents(layer){
   colorPair('ptxt_fxOutlineColor',  'ptxt_fxOutlineColorHex',  function(c){ layer.effectOutlineColor = c; });
   on('ptxt_fxStrokeGradTop','input', function(e){ layer.effectStrokeGradTop = e.target.value; redraw(); });
   on('ptxt_fxStrokeGradBot','input', function(e){ layer.effectStrokeGradBot = e.target.value; redraw(); });
-  // Catnip sprinkle controls
-  on('ptxt_fxCatnipSprinkleSource','change', function(e){
-    layer.effectCatnipSprinkleSource = e.target.value;
-    renderProps(); redraw();
-  });
-  on('ptxt_fxCatnipSprinkleBgRemove','change', function(e){
-    layer.effectCatnipSprinkleBgRemove = e.target.value;
-    rekeySprinkleUpload(layer);
-    renderProps();
-  });
-  rng('ptxt_fxCatnipSprinkleBgTolerance', function(v){
-    layer.effectCatnipSprinkleBgTolerance = v;
-    rekeySprinkleUpload(layer);
-  });
-  rng('ptxt_fxCatnipSprinkleCount',  function(v){ layer.effectCatnipSprinkleCount  = v; redraw(); });
-  rng('ptxt_fxCatnipSprinkleSize',   function(v){ layer.effectCatnipSprinkleSize   = v; redraw(); });
-  rng('ptxt_fxCatnipSprinkleSpread', function(v){ layer.effectCatnipSprinkleSpread = v; redraw(); });
-  rng('ptxt_fxCatnipSprinkleCluster',function(v){ layer.effectCatnipSprinkleCluster= v; redraw(); });
-  rng('ptxt_fxCatnipSprinkleSeed',   function(v){ layer.effectCatnipSprinkleSeed   = v; redraw(); });
-  rng('ptxt_fxCatnipSprinkleTint',   function(v){
-    layer.effectCatnipSprinkleTint = v;
-    // Re-render so the tint color picker shows/hides depending on whether tint is non-zero
-    renderProps();
-  });
-  colorPair('ptxt_fxCatnipSprinkleTintColor', 'ptxt_fxCatnipSprinkleTintColorHex', function(c){ layer.effectCatnipSprinkleTintColor = c; });
-}
-
-// Re-randomize the sprinkle layout by picking a new seed. Triggered from the dice button.
-function rerollCatnipSprinkle(layerId){
-  var layer = layers.find(function(l){return l.id===layerId;});
-  if(!layer) return;
-  layer.effectCatnipSprinkleSeed = Math.floor(Math.random() * 9999) + 1;
-  renderProps(); redraw();
-}
-
-// Upload an image to use as the catnip sprinkle source. Stores the data URL on the layer so
-// designs remain self-contained on save/load. Downsamples to a smaller max-side than the
-// image-fill upload (sprinkles are small on screen, so we don't need 1200px source images).
-function promptCatnipSprinkleUpload(layerId){
-  var layer = layers.find(function(l){return l.id===layerId;});
-  if(!layer) return;
-  var input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.onchange = function(e){
-    var file = e.target.files && e.target.files[0];
-    if(!file) return;
-    var reader = new FileReader();
-    reader.onload = function(ev){
-      var raw = new Image();
-      raw.onload = function(){
-        // Sprinkle source images can be smaller than fill images — 400px max side is plenty
-        // for pieces that get rendered at 30-50% of text height. Keeps design file size down.
-        var MAXSIDE = 400;
-        var iw = raw.naturalWidth, ih = raw.naturalHeight;
-        var dataUrl;
-        var isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg';
-        if(iw > MAXSIDE || ih > MAXSIDE){
-          var s = Math.min(MAXSIDE / iw, MAXSIDE / ih);
-          var c = document.createElement('canvas');
-          c.width = Math.round(iw * s); c.height = Math.round(ih * s);
-          c.getContext('2d').drawImage(raw, 0, 0, c.width, c.height);
-          dataUrl = isJpeg ? c.toDataURL('image/jpeg', 0.88) : c.toDataURL('image/png');
-        } else {
-          dataUrl = ev.target.result;
-        }
-        snapshotState();
-        layer.effectCatnipSprinkleUploadSrc = dataUrl;
-        // Bust the in-memory image cache so the new image loads on next redraw
-        delete _sprinkleImageCache[dataUrl];
-        layer._effectCatnipSprinkleUploadKeyedSrc = null;
-        // If a background-removal mode was already set on the layer, re-key the new image
-        if(layer.effectCatnipSprinkleBgRemove && layer.effectCatnipSprinkleBgRemove !== 'none'){
-          rekeySprinkleUpload(layer);
-        }
-        renderProps();
-        redraw();
-      };
-      raw.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
-  };
-  input.click();
-}
-
-// Remove the uploaded sprinkle image. The Source dropdown is left at 'upload' — the effect
-// falls back to the built-in catnip pieces in paintCatnipSprinkles when the upload is missing.
-function clearCatnipSprinkleUpload(layerId){
-  var layer = layers.find(function(l){return l.id===layerId;});
-  if(!layer) return;
-  snapshotState();
-  if(layer.effectCatnipSprinkleUploadSrc) delete _sprinkleImageCache[layer.effectCatnipSprinkleUploadSrc];
-  if(layer._effectCatnipSprinkleUploadKeyedSrc) delete _sprinkleImageCache[layer._effectCatnipSprinkleUploadKeyedSrc];
-  layer.effectCatnipSprinkleUploadSrc = null;
-  layer._effectCatnipSprinkleUploadKeyedSrc = null;
-  renderProps(); redraw();
 }
 
 // Prompt the user to upload an image to use as the text fill. Stores it on the layer as a
@@ -3249,6 +3136,55 @@ function buildShapeProps(l){
     +R('Opacity','pshopacity',l.opacity,0,100,1)
     +shadowUI('psh_', l)
     +moveBtns(l.id)+'</div>';
+}
+
+// ── SPRINKLE LAYER PROPS ──
+// Standalone sprinkle layer panel: source picker, optional upload + bg removal, distribution
+// controls (count, size, seed reroll), tint, and the standard rotation/opacity/shadow.
+function buildSprinkleProps(l){
+  var hasUpload = !!l.uploadSrc;
+  var src = l.source || 'builtin';
+  var tintCol = rgbaToHex(l.tintColor || '#ffd24a');
+  return '<div class="prop-section">'
+    + NUMPAIR('X','nsprx',Math.round(l.x),'Y','nspry',Math.round(l.y))
+    + NUMPAIR('W','nsprw',Math.round(l.w),'H','nsprh',Math.round(l.h))
+    + SEL('Source','psprSource',[['builtin','Catnip (built-in)'],['upload','Uploaded image']], src)
+    // ── Upload section ── always visible so users can upload regardless of Source dropdown.
+    // First upload auto-switches Source to 'upload' so the new image is used immediately.
+    + '<div style="margin:6px 0 6px 0;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
+      + '<div style="font-size:10px;color:var(--muted);font-weight:700;margin-bottom:5px;">YOUR IMAGE</div>'
+      + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
+          + '<button class="btn-add" style="flex:1;" onclick="promptSprinkleLayerUpload('+l.id+')">📁 '+(hasUpload?'Replace image…':'Upload image…')+'</button>'
+          + (hasUpload?'<button class="btn-sm danger" onclick="clearSprinkleLayerUpload('+l.id+')" title="Remove uploaded image">✕</button>':'')
+      + '</div>'
+      + (hasUpload
+        ? '<div style="margin-bottom:6px;border:1px solid var(--border);border-radius:4px;overflow:hidden;background:repeating-conic-gradient(#e8e8e0 0deg 90deg,#d8d8d0 90deg 180deg) 0 0/14px 14px;">'
+          +'<img src="'+(l._uploadKeyedSrc || l.uploadSrc)+'" style="display:block;width:100%;max-height:90px;object-fit:contain;">'
+          +'</div>'
+          + SEL('Background removal','psprBgRemove',[['none','None'],['black','Drop near-black'],['white','Drop near-white']], l.bgRemove||'none')
+          + (l.bgRemove && l.bgRemove !== 'none'
+              ? R('Tolerance','psprBgTolerance', l.bgTolerance||35, 5, 120, 1)
+              : '')
+        : '<div style="font-size:11px;color:var(--muted);">Upload an image to scatter inside the box. Works best with a small object on a transparent or solid-color background.</div>')
+    + '</div>'
+    + R('Count','psprCount', l.count==null?30:l.count, 1, 200, 1)
+    + R('Size (% of box)','psprSize', l.size==null?25:l.size, 2, 150, 1)
+    + '<div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:5px;">'
+      +'<div style="flex:1;margin-bottom:0;">'+R('Seed','psprSeed', l.seed||1, 1, 9999, 1)+'</div>'
+      +'<button class="btn-sm" style="height:32px;white-space:nowrap;" onclick="rerollSprinkleLayer('+l.id+')" title="Re-randomize the layout">🎲</button>'
+    + '</div>'
+    + R('Tint mix (%)','psprTint', l.tint||0, 0, 100, 1)
+    + (l.tint > 0
+      ? '<label style="font-size:11px;">Tint color</label>'
+        +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">'
+          +'<input type="color" id="psprTintColor" value="'+tintCol+'" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
+          +'<input type="text" id="psprTintColorHex" value="'+tintCol.toUpperCase()+'" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
+        +'</div>'
+      : '')
+    + R('Rotation','psprRot', l.rotation||0, -180, 180, 1)
+    + R('Opacity','psprOpacity', l.opacity==null?100:l.opacity, 0, 100, 1)
+    + shadowUI('pspr_', l)
+    + moveBtns(l.id) + '</div>';
 }
 
 function buildSvgProps(l){
@@ -3562,6 +3498,44 @@ function bindPropEvents(layer){
     rng('pshrotation',function(v){layer.rotation=v;redraw();});
     rng('pshopacity',function(v){layer.opacity=v;redraw();});
     bindShadowEvents('psh_', layer);
+  } else if(layer.type==='sprinkle'){
+    // Position / size — number inputs only (no sliders). Users drag on-canvas for visual positioning.
+    num('nsprx', function(v){ layer.x = v; redraw(); });
+    num('nspry', function(v){ layer.y = v; redraw(); });
+    num('nsprw', function(v){ layer.w = v; redraw(); });
+    num('nsprh', function(v){ layer.h = v; redraw(); });
+    // Source picker
+    on('psprSource','change',function(e){ layer.source = e.target.value; renderProps(); redraw(); });
+    // Background-removal mode + tolerance
+    on('psprBgRemove','change',function(e){ layer.bgRemove = e.target.value; rekeySprinkleLayer(layer); renderProps(); });
+    rng('psprBgTolerance',function(v){ layer.bgTolerance = v; rekeySprinkleLayer(layer); });
+    // Distribution
+    rng('psprCount',function(v){ layer.count = v; redraw(); });
+    rng('psprSize', function(v){ layer.size  = v; redraw(); });
+    rng('psprSeed', function(v){ layer.seed  = v; redraw(); });
+    // Tint
+    rng('psprTint', function(v){ layer.tint  = v; renderProps(); });
+    on('psprTintColor','input', function(e){
+      layer.tintColor = e.target.value;
+      var hex = document.getElementById('psprTintColorHex'); if(hex) hex.value = e.target.value.toUpperCase();
+      redraw();
+    });
+    on('psprTintColorHex','input', function(e){
+      var s = e.target.value.trim();
+      if(/^#?[0-9a-fA-F]{6}$/.test(s)){
+        if(s[0] !== '#') s = '#' + s;
+        layer.tintColor = s;
+        var pk = document.getElementById('psprTintColor'); if(pk) pk.value = s;
+        e.target.style.borderColor = '';
+        redraw();
+      } else {
+        e.target.style.borderColor = '#e53';
+      }
+    });
+    // Standard rotation/opacity + shadow
+    rng('psprRot',     function(v){ layer.rotation = v; redraw(); });
+    rng('psprOpacity', function(v){ layer.opacity  = v; redraw(); });
+    bindShadowEvents('pspr_', layer);
   } else if(layer.type==='svg'){
     num('nsvgx',function(v){layer.x=v;redraw();},'svgx');
     num('nsvgy',function(v){layer.y=v;redraw();},'svgy');
@@ -3984,7 +3958,7 @@ function bindCanvasEvents(){
       newRot=((newRot+540)%360)-180;
       layer.rotation=newRot;
       // sync slider if present
-      var slider=document.getElementById(layer.type==='shape'?'pshrotation':layer.type==='svg'?'svgrotation':layer.type==='sticker'?'prot':'protation');
+      var slider=document.getElementById(layer.type==='shape'?'pshrotation':layer.type==='svg'?'svgrotation':layer.type==='sticker'?'prot':layer.type==='sprinkle'?'psprRot':'protation');
       if(slider){slider.value=Math.round(newRot); var v=document.getElementById(slider.id+'_v'); if(v) v.textContent=Math.round(newRot);}
       redraw();
       return;
@@ -4178,8 +4152,8 @@ function syncPropXY(l){
   var px=document.getElementById(l.type==='sticker'?'psx':l.type==='shape'?'pshx':l.type==='svg'?'svgx':l.type==='text'?'ptxt_x':'px');
   var py=document.getElementById(l.type==='sticker'?'psy':l.type==='shape'?'pshy':l.type==='svg'?'svgy':l.type==='text'?'ptxt_y':'py');
   if(px)px.value=l.x;if(py)py.value=l.y;
-  var nxId=l.type==='sticker'?'nsx':l.type==='shape'?'nshx':l.type==='svg'?'nsvgx':l.type==='text'?'ntxtx':'nx';
-  var nyId=l.type==='sticker'?'nsy':l.type==='shape'?'nshy':l.type==='svg'?'nsvgy':l.type==='text'?'ntxty':'ny';
+  var nxId=l.type==='sticker'?'nsx':l.type==='shape'?'nshx':l.type==='svg'?'nsvgx':l.type==='text'?'ntxtx':l.type==='sprinkle'?'nsprx':'nx';
+  var nyId=l.type==='sticker'?'nsy':l.type==='shape'?'nshy':l.type==='svg'?'nsvgy':l.type==='text'?'ntxty':l.type==='sprinkle'?'nspry':'ny';
   var nx=document.getElementById(nxId),ny=document.getElementById(nyId);
   if(nx)nx.value=Math.round(l.x);if(ny)ny.value=Math.round(l.y);
 }
@@ -4187,8 +4161,8 @@ function syncPropWH(l){
   var pw=document.getElementById(l.type==='shape'?'pshw':l.type==='svg'?'svgw':l.type==='text'?'ptxt_w':'pw');
   var ph=document.getElementById(l.type==='shape'?'pshh':l.type==='svg'?'svgh':'ph');
   if(pw)pw.value=l.w;if(ph)ph.value=l.h;
-  var nwId=l.type==='shape'?'nshw':l.type==='svg'?'nsvgw':l.type==='text'?'ntxtw':'nw';
-  var nhId=l.type==='shape'?'nshh':l.type==='svg'?'nsvgh':l.type==='text'?'ntxth':'nh';
+  var nwId=l.type==='shape'?'nshw':l.type==='svg'?'nsvgw':l.type==='text'?'ntxtw':l.type==='sprinkle'?'nsprw':'nw';
+  var nhId=l.type==='shape'?'nshh':l.type==='svg'?'nsvgh':l.type==='text'?'ntxth':l.type==='sprinkle'?'nsprh':'nh';
   var nw=document.getElementById(nwId),nh=document.getElementById(nhId);
   if(nw)nw.value=Math.round(l.w);if(nh)nh.value=Math.round(l.h);
   // For image layers: also keep the Scale (%) slider in sync when the user resizes via the
@@ -4218,6 +4192,7 @@ function redraw(){
     else if(layer.type==='video')drawVideoLayer(ctx,layer);
     else if(layer.type==='sticker')drawStickerLayer(ctx,layer);
     else if(layer.type==='shape')drawShapeLayer(ctx,layer);
+    else if(layer.type==='sprinkle')drawSprinkleLayer(ctx,layer);
     else if(layer.type==='svg')drawSvgLayer(ctx,layer);
     else if(layer.type==='text')drawTextLayer(ctx,layer);
     ctx.restore();
@@ -4558,42 +4533,6 @@ function rekeyFillImage(layer){
   img.src = layer.effectImageFillSrc;
 }
 
-// ── SPRINKLE UPLOAD HELPERS ──
-// Parallel to the image-fill helpers above but for the catnip sprinkle effect's optional
-// "upload your own image" source. Kept as separate functions / cache so the two upload features
-// don't interfere with each other (different layer fields, different bg-removal state).
-var _sprinkleImageCache = {};
-function getSprinkleUploadImage(layer){
-  var src = layer.effectCatnipSprinkleUploadSrc;
-  if(!src) return null;
-  var keyed = layer._effectCatnipSprinkleUploadKeyedSrc;
-  var useSrc = keyed || src;
-  if(_sprinkleImageCache[useSrc]) return _sprinkleImageCache[useSrc];
-  var img = new Image();
-  img.onload = function(){ redraw(); };
-  img.src = useSrc;
-  _sprinkleImageCache[useSrc] = img;
-  return img;
-}
-
-// Re-key the sprinkle upload image with the configured background-removal mode.
-function rekeySprinkleUpload(layer){
-  layer._effectCatnipSprinkleUploadKeyedSrc = null;
-  if(!layer.effectCatnipSprinkleUploadSrc) return;
-  var mode = layer.effectCatnipSprinkleBgRemove;
-  if(!mode || mode === 'none') { redraw(); return; }
-  var img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.onload = function(){
-    var keyed = keyOutBackground(img, mode, layer.effectCatnipSprinkleBgTolerance || 35);
-    if(keyed) layer._effectCatnipSprinkleUploadKeyedSrc = keyed;
-    delete _sprinkleImageCache[layer.effectCatnipSprinkleUploadSrc];
-    if(keyed) delete _sprinkleImageCache[keyed];
-    redraw();
-  };
-  img.src = layer.effectCatnipSprinkleUploadSrc;
-}
-
 // Render the text layer with image-fill mode active. We draw text glyphs onto an offscreen
 // canvas, switch to source-in compositing so subsequent draws only land where text was, then
 // drawImage the fill image to fill the glyph silhouettes. Finally blit the offscreen onto
@@ -4731,21 +4670,6 @@ function drawTextLayer(ctx, layer){
       ctx.strokeText(line, dx, dy);
     }
 
-    // ── PASS 0: CATNIP SPRINKLE (drawn behind text) ──
-    // Sprinkles should look like catnip scattered on a surface that the text sits on top of,
-    // so we draw them FIRST — before glow, fill, and outline. Each later pass paints on top
-    // and hides any sprinkle pixels under the glyphs / outline.
-    // We pass the wrapped lines and metrics so the sprinkle code can rasterize a glyph mask
-    // for tight per-letter clustering.
-    if(layer.effectCatnipSprinkle && CATNIP_PIECE_IMAGES.length > 0){
-      var sprMetrics = {
-        x: x, y: y, w: w, totalH: totalH, lineH: lineH,
-        align: align, font: weight+' '+size+'px '+family+', sans-serif',
-        useManualKerning: useManualKerning, letterSpacing: letterSpacing
-      };
-      paintCatnipSprinkles(ctx, layer, lines, sprMetrics);
-    }
-
     // ── PASS 1: GLOW ──
     // Soft halo around glyphs. Done with ctx.shadow* set to a glow color and large blur,
     // then drawing the text in a transparent fill so only the shadow remains visible.
@@ -4850,207 +4774,6 @@ function drawTextLayer(ctx, layer){
   });
 }
 
-// Render scattered catnip pieces around the text bounding box. Position, rotation, scale, and
-// piece selection are deterministic from the seed so the layout stays stable across redraws.
-// Pieces that haven't finished decoding yet are skipped — onload triggers redraw().
-//
-// Distribution strategy: rasterize the text glyphs to an offscreen alpha mask, then for each
-// piece pick a random position and accept it based on the mask value at that point. This lets
-// us cluster pieces tightly around the actual glyph silhouettes (not just the bounding box),
-// so pieces appear ON the letters rather than in the inter-letter gaps.
-//
-// The `cluster` slider controls the falloff: at cluster=100 pieces only land on glyph pixels,
-// at cluster=0 they're equally likely to land anywhere in the spread region. In between, we
-// blur the mask by `spread` pixels and use that as the acceptance probability — so pieces are
-// likely to land directly on glyphs and increasingly less likely as they move away.
-//
-// Mask is cached on the layer keyed by (text, font, lineH, spread, align, letterSpacing) so
-// dragging the layer doesn't rebuild the mask every frame.
-var _sprinkleMaskCache = {};   // global cache so it survives layer re-renders
-function paintCatnipSprinkles(ctx, layer, lines, metrics){
-  var count   = Math.max(0, Math.min(80, layer.effectCatnipSprinkleCount || 20));
-  if(count === 0) return;
-  var size    = Math.max(5, Math.min(150, layer.effectCatnipSprinkleSize || 35));   // % of text height
-  var spread  = Math.max(0, Math.min(150, layer.effectCatnipSprinkleSpread || 25)); // % of text height — halo radius
-  var cluster = Math.max(0, Math.min(100, layer.effectCatnipSprinkleCluster == null ? 70 : layer.effectCatnipSprinkleCluster));
-  var seed    = (layer.effectCatnipSprinkleSeed || 1) >>> 0;
-  var tintMix = Math.max(0, Math.min(100, layer.effectCatnipSprinkleTint || 0));
-  var tint    = layer.effectCatnipSprinkleTintColor || '#ffd24a';
-
-  // Choose the piece pool
-  var source = layer.effectCatnipSprinkleSource || 'builtin';
-  var pieces;
-  if(source === 'upload'){
-    var up = getSprinkleUploadImage(layer);
-    if(up && up.complete && up.naturalWidth) pieces = [up];
-    else pieces = CATNIP_PIECE_IMAGES;
-  } else {
-    pieces = CATNIP_PIECE_IMAGES;
-  }
-  if(!pieces || pieces.length === 0) return;
-
-  var x = metrics.x, y = metrics.y, w = metrics.w, lineH = metrics.lineH, align = metrics.align, totalH = metrics.totalH;
-
-  // ── Build glyph mask ──
-  // Rasterize the text into an offscreen 1-channel alpha mask. The mask region extends
-  // `haloPx` pixels beyond the text rect on every side so we can sample positions in the halo
-  // zone too. We then BLUR the mask by `haloPx` (using stacked drawImage with offsets — cheap
-  // and good enough for sampling probability). The final mask values represent "how close are
-  // we to a glyph": 255 = on a glyph, 0 = far away (>haloPx).
-  var haloPx = Math.max(1, totalH * (spread / 100));
-  var pad = Math.ceil(haloPx) + 4;
-  var mw = Math.max(1, Math.ceil(w + pad*2));
-  var mh = Math.max(1, Math.ceil(totalH + pad*2));
-
-  // Cache key: anything that affects the mask shape. Position (x,y) does NOT affect the mask
-  // (the mask is in local coords 0..mw, 0..mh) so dragging is fast.
-  var cacheKey = layer.id + '|' + (layer.text || '') + '|' + metrics.font + '|' + lineH + '|' + spread + '|' + totalH + '|' + w + '|' + align + '|' + metrics.letterSpacing + '|' + (metrics.useManualKerning?1:0);
-  var maskData;
-  if(_sprinkleMaskCache[cacheKey] && _sprinkleMaskCache[cacheKey].mw === mw && _sprinkleMaskCache[cacheKey].mh === mh){
-    maskData = _sprinkleMaskCache[cacheKey].data;
-  } else {
-    var mask = document.createElement('canvas');
-    mask.width = mw; mask.height = mh;
-    var mctx = mask.getContext('2d', { willReadFrequently: true });
-    mctx.font = metrics.font;
-    mctx.textBaseline = 'top';
-    mctx.textAlign = align === 'center' ? 'center' : align === 'right' ? 'right' : 'left';
-    mctx.fillStyle = '#fff';
-    for(var li = 0; li < lines.length; li++){
-      var line = lines[li];
-      if(!line) continue;
-      var dx;
-      if(align === 'center') dx = pad + w/2;
-      else if(align === 'right') dx = pad + w;
-      else dx = pad;
-      var dy = pad + li * lineH;
-      if(metrics.useManualKerning){
-        drawTextWithLetterSpacing(mctx, line, dx, dy, metrics.letterSpacing, align, w);
-      } else {
-        mctx.fillText(line, dx, dy);
-      }
-    }
-    // Blur: redraw the mask onto itself at offset positions to spread the alpha outward.
-    if(haloPx > 1){
-      var blurSteps = Math.min(8, Math.ceil(haloPx / 4));
-      var stepPx = haloPx / blurSteps;
-      mctx.globalCompositeOperation = 'lighter';
-      for(var bs = 1; bs <= blurSteps; bs++){
-        var off = bs * stepPx;
-        var alphaStep = (1 - bs / (blurSteps + 1)) * 0.45;
-        mctx.globalAlpha = alphaStep;
-        mctx.drawImage(mask,  off, 0); mctx.drawImage(mask, -off, 0);
-        mctx.drawImage(mask, 0,  off); mctx.drawImage(mask, 0, -off);
-        var diag = off * 0.707;
-        mctx.drawImage(mask,  diag,  diag); mctx.drawImage(mask, -diag,  diag);
-        mctx.drawImage(mask,  diag, -diag); mctx.drawImage(mask, -diag, -diag);
-      }
-      mctx.globalAlpha = 1;
-      mctx.globalCompositeOperation = 'source-over';
-    }
-    try {
-      maskData = mctx.getImageData(0, 0, mw, mh);
-      _sprinkleMaskCache[cacheKey] = { data: maskData, mw: mw, mh: mh };
-      // Cap cache size — keep last ~10 layers' masks
-      var keys = Object.keys(_sprinkleMaskCache);
-      if(keys.length > 10){
-        delete _sprinkleMaskCache[keys[0]];
-      }
-    } catch(e){ return; }
-  }
-  var maskPx = maskData.data;
-
-  // Helper: sample mask alpha at a logical (canvas) position, returning 0..1
-  function maskAlphaAt(px, py){
-    var lx = Math.floor(px - x + pad);
-    var ly = Math.floor(py - y + pad);
-    if(lx < 0 || ly < 0 || lx >= mw || ly >= mh) return 0;
-    return maskPx[(ly * mw + lx) * 4 + 3] / 255;
-  }
-
-  // ── Acceptance threshold from cluster slider ──
-  // cluster=100 → only pixels with alpha >= 0.95 accepted (basically: must be on a glyph)
-  // cluster=70  → alpha >= 0.30 (on glyph or in inner halo)
-  // cluster=0   → alpha > 0 (anywhere within halo)
-  // Higher cluster = pieces hug glyphs harder.
-  var minAlpha = Math.pow(cluster / 100, 1.5) * 0.97 + 0.03;
-
-  // Each piece: avg dimension equals `size` percent of text height
-  var avgPx = totalH * (size / 100);
-
-  // Seeded RNG (Mulberry32)
-  var s = seed === 0 ? 1 : seed;
-  function rnd(){
-    s = (s + 0x6D2B79F5) >>> 0;
-    var t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  }
-
-  // Sampling region: text rect plus halo on every side. We pick uniformly within this region
-  // and accept based on mask value; rejected samples retry up to MAX_TRIES times before giving
-  // up (this only happens if the user has very tight cluster + tiny text, in which case the
-  // remaining pieces are placed on best-effort).
-  var sx = x - haloPx, sy = y - haloPx;
-  var sw = w + 2*haloPx, sh = totalH + 2*haloPx;
-  var MAX_TRIES = 30;
-
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0)';
-  ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-  for(var i = 0; i < count; i++){
-    var imgIdx = Math.floor(rnd() * pieces.length) % pieces.length;
-    var img = pieces[imgIdx];
-    if(!img || !img.complete || !img.naturalWidth) continue;
-
-    var px = 0, py = 0, accepted = false;
-    for(var t = 0; t < MAX_TRIES; t++){
-      var cand_x = sx + rnd() * sw;
-      var cand_y = sy + rnd() * sh;
-      var alpha = maskAlphaAt(cand_x, cand_y);
-      if(alpha >= minAlpha){
-        // Accept with probability `alpha` so glyph-edge regions fade off naturally
-        if(rnd() < alpha){
-          px = cand_x; py = cand_y; accepted = true; break;
-        }
-      }
-    }
-    if(!accepted){
-      // Best-effort: place at last candidate even if rejected
-      px = cand_x; py = cand_y;
-    }
-
-    var rot = (rnd() - 0.5) * Math.PI * 2;
-    var sz = avgPx * (0.6 + rnd() * 0.8);
-    var aspect = img.naturalHeight / img.naturalWidth;
-    var dw = sz, dh = sz * aspect;
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(rot);
-    if(tintMix > 0){
-      // Build a tinted version on an offscreen canvas, then blit that. We can't tint directly
-      // on the main ctx with source-atop because that would also tint anything else underneath
-      // the piece (other layers, background, etc). On the offscreen the only "destination"
-      // is the catnip silhouette, so source-atop correctly clips the tint to just the catnip
-      // pixels — no rectangular green box.
-      var off = document.createElement('canvas');
-      off.width = Math.max(1, Math.ceil(dw));
-      off.height = Math.max(1, Math.ceil(dh));
-      var octx = off.getContext('2d');
-      octx.drawImage(img, 0, 0, off.width, off.height);
-      octx.globalCompositeOperation = 'source-atop';
-      octx.globalAlpha = tintMix / 100;
-      octx.fillStyle = tint;
-      octx.fillRect(0, 0, off.width, off.height);
-      ctx.drawImage(off, -dw/2, -dh/2, dw, dh);
-    } else {
-      ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
-    }
-    ctx.restore();
-  }
-  ctx.restore();
-}
 
 // Measures text width including per-character letter spacing
 function measureTextWithSpacing(ctx, text, letterSpacing){
@@ -5319,6 +5042,223 @@ function drawPolygon(ctx,cx,cy,sides,r){
   ctx.moveTo(cx+r*Math.cos(-Math.PI/2),cy+r*Math.sin(-Math.PI/2));
   for(var i=1;i<=sides;i++){var a=(2*Math.PI/sides)*i-Math.PI/2;ctx.lineTo(cx+r*Math.cos(a),cy+r*Math.sin(a));}
   ctx.closePath();
+}
+
+// ── SPRINKLE LAYER ──
+// Standalone box that scatters catnip pieces (or one user-uploaded image) across its bounds.
+// Pieces are placed deterministically from the seed so dragging/resizing the layer doesn't
+// cause the layout to re-shuffle.
+
+// Image cache for uploaded sprinkle sources (per-data-URL HTMLImageElements).
+var _sprinkleLayerImageCache = {};
+
+// Get the HTMLImageElement for a sprinkle layer's uploaded source. Prefers the keyed (bg-removed)
+// version when available; falls back to the raw source. Returns null when source='builtin' or
+// no image has been uploaded.
+function getSprinkleLayerImage(layer){
+  var src = layer.uploadSrc;
+  if(!src) return null;
+  var keyed = layer._uploadKeyedSrc;
+  var useSrc = keyed || src;
+  if(_sprinkleLayerImageCache[useSrc]) return _sprinkleLayerImageCache[useSrc];
+  var img = new Image();
+  img.onload = function(){ redraw(); };
+  img.src = useSrc;
+  _sprinkleLayerImageCache[useSrc] = img;
+  return img;
+}
+
+// Re-key the layer's uploaded image with the configured background-removal mode. Mirrors the
+// rekeyFillImage helper used by the text image-fill effect but operates on the sprinkle-layer
+// field names.
+function rekeySprinkleLayer(layer){
+  layer._uploadKeyedSrc = null;
+  if(!layer.uploadSrc) return;
+  var mode = layer.bgRemove;
+  if(!mode || mode === 'none'){ redraw(); return; }
+  var img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = function(){
+    var keyed = keyOutBackground(img, mode, layer.bgTolerance || 35);
+    if(keyed) layer._uploadKeyedSrc = keyed;
+    delete _sprinkleLayerImageCache[layer.uploadSrc];
+    if(keyed) delete _sprinkleLayerImageCache[keyed];
+    redraw();
+  };
+  img.src = layer.uploadSrc;
+}
+
+// Prompt the user to upload an image file to use as the sprinkle layer's source. Stores the
+// data URL on the layer so designs are self-contained on save/load. Downsamples large images
+// to keep file size sane (sprinkle pieces render small, no need for full-resolution photos).
+function promptSprinkleLayerUpload(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer){ console.warn('[sprinkle] upload: layer not found, id=', layerId); return; }
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.style.display = 'none';
+  // Attach to DOM — required by some browsers/webviews for click() to actually open the picker.
+  document.body.appendChild(input);
+  input.onchange = function(e){
+    var file = e.target.files && e.target.files[0];
+    if(!file){ try{ document.body.removeChild(input); }catch(_){} return; }
+    var reader = new FileReader();
+    reader.onerror = function(){
+      console.warn('[sprinkle] FileReader error');
+      try{ document.body.removeChild(input); }catch(_){}
+    };
+    reader.onload = function(ev){
+      var raw = new Image();
+      raw.onerror = function(){
+        console.warn('[sprinkle] image decode failed for uploaded file');
+        try{ document.body.removeChild(input); }catch(_){}
+      };
+      raw.onload = function(){
+        try {
+          var MAXSIDE = 400;     // sprinkles render small — 400px source is plenty
+          var iw = raw.naturalWidth, ih = raw.naturalHeight;
+          var dataUrl;
+          var isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg';
+          if(iw > MAXSIDE || ih > MAXSIDE){
+            var s = Math.min(MAXSIDE / iw, MAXSIDE / ih);
+            var c = document.createElement('canvas');
+            c.width = Math.round(iw * s); c.height = Math.round(ih * s);
+            c.getContext('2d').drawImage(raw, 0, 0, c.width, c.height);
+            dataUrl = isJpeg ? c.toDataURL('image/jpeg', 0.88) : c.toDataURL('image/png');
+          } else {
+            dataUrl = ev.target.result;
+          }
+          snapshotState();
+          layer.uploadSrc = dataUrl;
+          // If the user previously had source='builtin', flip to 'upload' on first upload so
+          // they don't have to remember to switch the dropdown.
+          if(!layer.source || layer.source === 'builtin') layer.source = 'upload';
+          delete _sprinkleLayerImageCache[dataUrl];
+          layer._uploadKeyedSrc = null;
+          // If a removal mode is set, key the new image immediately
+          if(layer.bgRemove && layer.bgRemove !== 'none'){
+            rekeySprinkleLayer(layer);
+          }
+          renderProps();
+          redraw();
+        } catch(err){
+          console.warn('[sprinkle] upload processing error:', err);
+        } finally {
+          try{ document.body.removeChild(input); }catch(_){}
+        }
+      };
+      raw.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+// Remove the uploaded image. The Source dropdown stays at 'upload'; rendering falls back to
+// the built-in catnip pieces until the user uploads a new image.
+function clearSprinkleLayerUpload(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer) return;
+  snapshotState();
+  if(layer.uploadSrc) delete _sprinkleLayerImageCache[layer.uploadSrc];
+  if(layer._uploadKeyedSrc) delete _sprinkleLayerImageCache[layer._uploadKeyedSrc];
+  layer.uploadSrc = null;
+  layer._uploadKeyedSrc = null;
+  renderProps();
+  redraw();
+}
+
+// Re-randomize the scatter layout by picking a new seed.
+function rerollSprinkleLayer(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer) return;
+  layer.seed = Math.floor(Math.random() * 9999) + 1;
+  renderProps();
+  redraw();
+}
+
+// Render the sprinkle layer. Honors rotation/opacity/shadow like other layers.
+function drawSprinkleLayer(ctx, layer){
+  withRotation(ctx, layer, function(){
+    ctx.save();
+    ctx.globalAlpha = (layer.opacity == null ? 100 : layer.opacity) / 100;
+
+    // Choose the piece pool: built-in catnip pieces, or a single uploaded image used as the
+    // sprinkle source. Falls back to built-in if the upload is loading or missing.
+    var source = layer.source || 'builtin';
+    var pieces;
+    if(source === 'upload'){
+      var up = getSprinkleLayerImage(layer);
+      if(up && up.complete && up.naturalWidth) pieces = [up];
+      else pieces = CATNIP_PIECE_IMAGES;
+    } else {
+      pieces = CATNIP_PIECE_IMAGES;
+    }
+    if(!pieces || pieces.length === 0){ ctx.restore(); return; }
+
+    var x = layer.x, y = layer.y, w = layer.w, h = layer.h;
+    var count = Math.max(0, Math.min(200, layer.count == null ? 30 : layer.count));
+    var size  = Math.max(2, Math.min(150, layer.size == null ? 25 : layer.size));
+    var seed  = (layer.seed || 1) >>> 0;
+    var tintMix = Math.max(0, Math.min(100, layer.tint || 0));
+    var tint = layer.tintColor || '#ffd24a';
+
+    // Piece average size: percent of the box's shorter dimension. Pieces vary ±40% from this.
+    var avgPx = Math.min(w, h) * (size / 100);
+
+    // Seeded RNG (Mulberry32)
+    var s = seed === 0 ? 1 : seed;
+    function rnd(){
+      s = (s + 0x6D2B79F5) >>> 0;
+      var t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+
+    // Drop shadow applies to each piece individually so they cast properly-shaped shadows.
+    var hasShadow = layerHasShadow && layerHasShadow(layer);
+
+    for(var i = 0; i < count; i++){
+      var imgIdx = Math.floor(rnd() * pieces.length) % pieces.length;
+      var img = pieces[imgIdx];
+      if(!img || !img.complete || !img.naturalWidth) continue;
+
+      // Uniform position within the box. (No glyph mask — this is just a rectangular scatter.)
+      var px = x + rnd() * w;
+      var py = y + rnd() * h;
+      var rot = (rnd() - 0.5) * Math.PI * 2;
+      var sz = avgPx * (0.6 + rnd() * 0.8);
+      var aspect = img.naturalHeight / img.naturalWidth;
+      var dw = sz, dh = sz * aspect;
+
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(rot);
+
+      if(tintMix > 0){
+        // Tint by compositing on an offscreen canvas (so source-atop clips to the catnip
+        // silhouette only, not the entire underlying canvas — same fix as in v69).
+        var off = document.createElement('canvas');
+        off.width = Math.max(1, Math.ceil(dw));
+        off.height = Math.max(1, Math.ceil(dh));
+        var octx = off.getContext('2d');
+        octx.drawImage(img, 0, 0, off.width, off.height);
+        octx.globalCompositeOperation = 'source-atop';
+        octx.globalAlpha = tintMix / 100;
+        octx.fillStyle = tint;
+        octx.fillRect(0, 0, off.width, off.height);
+        if(hasShadow) applyLayerShadow(ctx, layer);
+        ctx.drawImage(off, -dw/2, -dh/2, dw, dh);
+      } else {
+        if(hasShadow) applyLayerShadow(ctx, layer);
+        ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+  });
 }
 
 // ── BUBBLE STICKER DRAW ──
@@ -5620,6 +5560,7 @@ function doStaticExport(){
       else if(layer.type==='video')drawVideoLayer(bctx,layer);
       else if(layer.type==='sticker')drawStickerLayer(bctx,layer);
       else if(layer.type==='shape')drawShapeLayer(bctx,layer);
+      else if(layer.type==='sprinkle')drawSprinkleLayer(bctx,layer);
       else if(layer.type==='svg')drawSvgLayer(bctx,layer);
       else if(layer.type==='text')drawTextLayer(bctx,layer);
     }catch(e){console.error('[export] layer',i,'type',layer.type,'error:',e);}
@@ -5765,6 +5706,7 @@ function doGifExport(){
           else if(layer.type === 'video') drawVideoLayer(octx, layer);
           else if(layer.type === 'sticker') drawStickerLayer(octx, layer);
           else if(layer.type === 'shape')   drawShapeLayer(octx, layer);
+          else if(layer.type === 'sprinkle') drawSprinkleLayer(octx, layer);
           else if(layer.type === 'svg')     drawSvgLayer(octx, layer);
           else if(layer.type === 'text')    drawTextLayer(octx, layer);
         } catch(e){ console.error('[gif] layer error:', e); }
