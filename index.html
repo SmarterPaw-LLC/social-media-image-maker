@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v58</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v60</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -542,6 +542,7 @@ function addLogoLayer(key){
       x: (canvasW - targetW) / 2,
       y: (canvasH - targetH) / 2,
       w: targetW, h: targetH,
+      _baseW: targetW, _baseH: targetH,   // baseline for the scale slider (100% = as-placed)
       opacity: 100, fit: 'contain', flipH: false, flipV: false, rotation: 0
     });
     selectLayer(id); renderLayerList(); redraw();
@@ -1850,6 +1851,9 @@ function addImageLayer(imgEl,filename){
     id:id,type:'image',name:filename||'Image '+id,
     img:imgEl||null,
     x:0,y:0,w:canvasW,h:canvasH,
+    // Baseline dimensions for the scale slider — 100% means "the size this image was placed at".
+    // Captured at upload time so users can always Reset to recover the original layout size.
+    _baseW: canvasW, _baseH: canvasH,
     opacity:100,fit:'cover',flipH:false,flipV:false,rotation:0,
   });
   selectLayer(id);renderLayerList();redraw();
@@ -2697,8 +2701,21 @@ function bindShadowEvents(prefix, layer){
   });
 }
 
+// Lazily initialize the scale-slider baseline for image layers loaded from older saves
+// (which won't have _baseW/_baseH). Once set, the baseline is preserved on disk so
+// "Reset to 100%" always returns to the same recorded size.
+function ensureImageBaseline(layer){
+  if(!layer || layer.type !== 'image') return;
+  if(!layer._baseW || layer._baseW <= 0) layer._baseW = layer.w || 1;
+  if(!layer._baseH || layer._baseH <= 0) layer._baseH = layer.h || 1;
+}
+
 function buildImageProps(l){
+  ensureImageBaseline(l);
   var hasCrop=(l.cropX!=null&&(l.cropX>0||l.cropY>0||(l.img&&(l.cropW<l.img.naturalWidth||l.cropH<l.img.naturalHeight))));
+  // Scale % is computed from the current width vs. the recorded baseline. Width is the source
+  // of truth (height follows aspect ratio), so we display width-derived percent.
+  var scalePct = Math.round((l.w / l._baseW) * 100);
   return '<div class="prop-section">'
     +'<button class="btn-add" onclick="promptImageUpload('+l.id+')">📁 Replace Image…</button>'
     +'<input type="file" id="fi_'+l.id+'" accept="image/*" style="display:none" onchange="handleFileInput(event,'+l.id+')">'
@@ -2710,6 +2727,10 @@ function buildImageProps(l){
     +NUMPAIR('W (px)','nw',l.w,'H (px)','nh',l.h)
     +R('X','px',l.x,-canvasW,canvasW*2,1)+R('Y','py',l.y,-canvasH,canvasH*2,1)
     +R('Width','pw',l.w,10,canvasW*3,2)+R('Height','ph',l.h,10,canvasH*3,2)
+    +'<div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:5px;">'
+      +'<div style="flex:1;margin-bottom:0;">'+R('Scale (%)','pimg_scale',scalePct,10,500,1)+'</div>'
+      +'<button class="btn-sm" style="height:32px;white-space:nowrap;" onclick="resetImageScale('+l.id+')" title="Reset to original placed size">Reset</button>'
+    +'</div>'
     +SEL('Fit','pfit',[['cover','Cover'],['contain','Contain'],['fill','Stretch']],l.fit)
     +R('Rotation','protation',l.rotation,-180,180,1)
     +R('Opacity','popacity',l.opacity,0,100,1)
@@ -3013,12 +3034,46 @@ function bindPropEvents(layer){
   }
 
   if(layer.type==='image'){
+    ensureImageBaseline(layer);
+    // Helper: update the Scale slider's displayed value to match the current width/baseline.
+    // Called whenever something else changes the layer's dimensions (W/H sliders, grab handle).
+    function syncScaleSliderFromW(){
+      var s = document.getElementById('pimg_scale');
+      if(!s) return;
+      var pct = Math.round((layer.w / layer._baseW) * 100);
+      s.value = pct;
+      var sv = document.getElementById('pimg_scale_v');
+      if(sv) sv.textContent = pct;
+    }
     num('nx',function(v){layer.x=v;redraw();},'px');
     num('ny',function(v){layer.y=v;redraw();},'py');
-    num('nw',function(v){layer.w=v;redraw();},'pw');
-    num('nh',function(v){layer.h=v;redraw();},'ph');
+    num('nw',function(v){layer.w=v;redraw();syncScaleSliderFromW();},'pw');
+    num('nh',function(v){layer.h=v;redraw();syncScaleSliderFromW();},'ph');
     rng('px',function(v){layer.x=v;redraw();});rng('py',function(v){layer.y=v;redraw();});
-    rng('pw',function(v){layer.w=v;redraw();});rng('ph',function(v){layer.h=v;redraw();});
+    rng('pw',function(v){layer.w=v;redraw();syncScaleSliderFromW();});
+    rng('ph',function(v){layer.h=v;redraw();syncScaleSliderFromW();});
+    // Scale slider: scale w/h proportionally from the layer center (so position feels stable).
+    // Uses the *current* aspect ratio (so a previously-stretched image scales without changing
+    // shape). Width drives the percentage; height is computed from current aspect.
+    rng('pimg_scale', function(pct){
+      var curAspect = (layer.h && layer.w) ? (layer.h / layer.w) : (layer._baseH / layer._baseW);
+      var newW = layer._baseW * (pct/100);
+      var newH = newW * curAspect;
+      // Anchor at the visual center so growing/shrinking happens evenly
+      var cx = layer.x + layer.w/2;
+      var cy = layer.y + layer.h/2;
+      layer.w = Math.max(10, newW);
+      layer.h = Math.max(10, newH);
+      layer.x = cx - layer.w/2;
+      layer.y = cy - layer.h/2;
+      // Keep all the other size/position controls in sync
+      var ids = [['pw',layer.w],['ph',layer.h],['px',layer.x],['py',layer.y],['nw',Math.round(layer.w)],['nh',Math.round(layer.h)],['nx',Math.round(layer.x)],['ny',Math.round(layer.y)]];
+      ids.forEach(function(p){
+        var el=document.getElementById(p[0]); if(el) el.value=p[1];
+        var v =document.getElementById(p[0]+'_v'); if(v) v.textContent=Math.round(p[1]);
+      });
+      redraw();
+    });
     on('pfit','change',function(e){layer.fit=e.target.value;redraw();});
     rng('protation',function(v){layer.rotation=v;redraw();});
     rng('popacity',function(v){layer.opacity=v;redraw();});
@@ -3726,6 +3781,17 @@ function syncPropWH(l){
   var nhId=l.type==='shape'?'nshh':l.type==='svg'?'nsvgh':l.type==='text'?'ntxth':'nh';
   var nw=document.getElementById(nwId),nh=document.getElementById(nhId);
   if(nw)nw.value=Math.round(l.w);if(nh)nh.value=Math.round(l.h);
+  // For image layers: also keep the Scale (%) slider in sync when the user resizes via the
+  // grab handle. Width is the source of truth; height follows aspect ratio.
+  if(l.type==='image' && l._baseW){
+    var s = document.getElementById('pimg_scale');
+    if(s){
+      var pct = Math.round((l.w / l._baseW) * 100);
+      s.value = pct;
+      var sv = document.getElementById('pimg_scale_v');
+      if(sv) sv.textContent = pct;
+    }
+  }
 }
 
 // ── REDRAW ──
@@ -3858,6 +3924,22 @@ function clearCrop(layerId){
   if(!layer)return;
   snapshotState();
   delete layer.cropX; delete layer.cropY; delete layer.cropW; delete layer.cropH;
+  renderProps(); redraw();
+}
+
+// Reset an image layer back to its baseline size (the size it had when first placed),
+// scaling from the visual center so position feels stable. Triggered by the "Reset" button
+// next to the Scale slider in the image properties panel.
+function resetImageScale(layerId){
+  var layer=layers.find(function(l){return l.id===layerId;});
+  if(!layer || layer.type !== 'image') return;
+  ensureImageBaseline(layer);
+  snapshotState();
+  var cx = layer.x + layer.w/2, cy = layer.y + layer.h/2;
+  layer.w = layer._baseW;
+  layer.h = layer._baseH;
+  layer.x = cx - layer.w/2;
+  layer.y = cy - layer.h/2;
   renderProps(); redraw();
 }
 
@@ -4588,6 +4670,15 @@ function doExport(){
   else              doStaticExport();
 }
 
+// Build a safe filename slug from the active board's name. Falls back to "smarterpaw" if the
+// board name is empty or just whitespace. Strips characters illegal in filenames and trims length.
+// (Matches the sanitization used by downloadDesignFile.)
+function exportFilenameSlug(){
+  var name = (getBoard() && getBoard().name) ? getBoard().name : '';
+  var safe = name.replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
+  return safe || 'smarterpaw';
+}
+
 function doStaticExport(){
   // Pause any playing video so the exported frame matches exactly what the user sees on canvas.
   // (Otherwise the video advances during the few ms of export, capturing a slightly later frame.)
@@ -4633,7 +4724,7 @@ function doStaticExport(){
   var mime={'png':'image/png','jpeg':'image/jpeg','webp':'image/webp'}[format]||'image/png';
   var dataUrl=format==='png'?outCanvas.toDataURL('image/png'):outCanvas.toDataURL(mime,quality);
   var link=document.createElement('a');
-  link.download='smarterpaw-'+ew+'x'+eh+'.'+format;
+  link.download=exportFilenameSlug()+'-'+ew+'x'+eh+'.'+format;
   link.href=dataUrl;link.click();
   closeExportModal();
   redraw();
@@ -4738,7 +4829,7 @@ function doGifExport(){
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
       a.href = url;
-      a.download = 'smarterpaw-' + outW + 'x' + outH + '-' + fps + 'fps.gif';
+      a.download = exportFilenameSlug() + '-' + outW + 'x' + outH + '-' + fps + 'fps.gif';
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
       setTimeout(function(){ cleanup(); closeExportModal(); }, 600);
