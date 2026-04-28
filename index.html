@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v68</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v70</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4731,6 +4731,21 @@ function drawTextLayer(ctx, layer){
       ctx.strokeText(line, dx, dy);
     }
 
+    // ── PASS 0: CATNIP SPRINKLE (drawn behind text) ──
+    // Sprinkles should look like catnip scattered on a surface that the text sits on top of,
+    // so we draw them FIRST — before glow, fill, and outline. Each later pass paints on top
+    // and hides any sprinkle pixels under the glyphs / outline.
+    // We pass the wrapped lines and metrics so the sprinkle code can rasterize a glyph mask
+    // for tight per-letter clustering.
+    if(layer.effectCatnipSprinkle && CATNIP_PIECE_IMAGES.length > 0){
+      var sprMetrics = {
+        x: x, y: y, w: w, totalH: totalH, lineH: lineH,
+        align: align, font: weight+' '+size+'px '+family+', sans-serif',
+        useManualKerning: useManualKerning, letterSpacing: letterSpacing
+      };
+      paintCatnipSprinkles(ctx, layer, lines, sprMetrics);
+    }
+
     // ── PASS 1: GLOW ──
     // Soft halo around glyphs. Done with ctx.shadow* set to a glow color and large blur,
     // then drawing the text in a transparent fill so only the shadow remains visible.
@@ -4829,20 +4844,6 @@ function drawTextLayer(ctx, layer){
       }
       eachLine(drawLineStroked);
       ctx.restore();
-    }
-
-    // ── PASS 4: CATNIP SPRINKLE ──
-    // Scatter real-photo catnip pieces around (and optionally on top of) the text. Drawn last
-    // so they sit above everything else, including outline. We pass the wrapped lines and
-    // metrics so the sprinkle code can cluster pieces tightly around each line's actual
-    // rendered extent (instead of the layer's full width, which is usually wider than the text).
-    if(layer.effectCatnipSprinkle && CATNIP_PIECE_IMAGES.length > 0){
-      var sprMetrics = {
-        x: x, y: y, w: w, totalH: totalH, lineH: lineH,
-        align: align, font: weight+' '+size+'px '+family+', sans-serif',
-        useManualKerning: useManualKerning, letterSpacing: letterSpacing
-      };
-      paintCatnipSprinkles(ctx, layer, lines, sprMetrics);
     }
 
     ctx.restore();
@@ -5028,13 +5029,21 @@ function paintCatnipSprinkles(ctx, layer, lines, metrics){
     ctx.translate(px, py);
     ctx.rotate(rot);
     if(tintMix > 0){
-      ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
-      ctx.save();
-      ctx.globalCompositeOperation = 'source-atop';
-      ctx.globalAlpha = tintMix / 100;
-      ctx.fillStyle = tint;
-      ctx.fillRect(-dw/2, -dh/2, dw, dh);
-      ctx.restore();
+      // Build a tinted version on an offscreen canvas, then blit that. We can't tint directly
+      // on the main ctx with source-atop because that would also tint anything else underneath
+      // the piece (other layers, background, etc). On the offscreen the only "destination"
+      // is the catnip silhouette, so source-atop correctly clips the tint to just the catnip
+      // pixels — no rectangular green box.
+      var off = document.createElement('canvas');
+      off.width = Math.max(1, Math.ceil(dw));
+      off.height = Math.max(1, Math.ceil(dh));
+      var octx = off.getContext('2d');
+      octx.drawImage(img, 0, 0, off.width, off.height);
+      octx.globalCompositeOperation = 'source-atop';
+      octx.globalAlpha = tintMix / 100;
+      octx.fillStyle = tint;
+      octx.fillRect(0, 0, off.width, off.height);
+      ctx.drawImage(off, -dw/2, -dh/2, dw, dh);
     } else {
       ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
     }
