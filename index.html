@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v62</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v63</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2718,6 +2718,139 @@ function ensureImageBaseline(layer){
   if(!layer._baseH || layer._baseH <= 0) layer._baseH = layer.h || 1;
 }
 
+// ── TEXT EFFECTS UI ──
+// Catnip-fill, glow, outline (solid or gradient stroke). All effects are independent (you can
+// stack them). Each block is conditionally rendered only when its checkbox is on, to keep
+// the panel compact.
+function textEffectsUI(l){
+  var outlineCol = rgbaToHex(l.effectOutlineColor || '#000000');
+  var glowCol    = rgbaToHex(l.effectGlowColor    || '#a8e063');
+  var catnipCol  = rgbaToHex(l.effectCatnipColor  || '#6db029');
+  var gradTop    = rgbaToHex(l.effectStrokeGradTop || '#8ab81d');
+  var gradBot    = rgbaToHex(l.effectStrokeGradBot || '#3c8e14');
+  var html = ''
+    +'<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;font-size:11px;font-weight:700;color:var(--muted);">EFFECTS</div>'
+
+    // ── CATNIP FILL ──
+    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer;">'
+      +'<input type="checkbox" id="ptxt_fxCatnip"'+(l.effectCatnip?' checked':'')+'>'
+      +'<span>🌿 Catnip leaves (fill texture)</span>'
+    +'</label>'
+    +(l.effectCatnip
+      ? '<div style="margin:0 0 8px 22px;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
+        +'<label style="font-size:11px;">Leaf color</label>'
+        +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">'
+          +'<input type="color" id="ptxt_fxCatnipColor" value="'+catnipCol+'" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
+          +'<input type="text" id="ptxt_fxCatnipColorHex" value="'+catnipCol.toUpperCase()+'" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
+        +'</div>'
+        +R('Density','ptxt_fxCatnipDensity', l.effectCatnipDensity||3, 1, 5, 1)
+      +'</div>'
+      : '')
+
+    // ── GLOW ──
+    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer;">'
+      +'<input type="checkbox" id="ptxt_fxGlow"'+(l.effectGlow?' checked':'')+'>'
+      +'<span>✨ Glow / halo</span>'
+    +'</label>'
+    +(l.effectGlow
+      ? '<div style="margin:0 0 8px 22px;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
+        +'<label style="font-size:11px;">Glow color</label>'
+        +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">'
+          +'<input type="color" id="ptxt_fxGlowColor" value="'+glowCol+'" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
+          +'<input type="text" id="ptxt_fxGlowColorHex" value="'+glowCol.toUpperCase()+'" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
+        +'</div>'
+        +R('Blur radius','ptxt_fxGlowBlur', (l.effectGlowBlur!=null?l.effectGlowBlur:24), 1, 80, 1)
+        +R('Intensity (passes)','ptxt_fxGlowIntensity', l.effectGlowIntensity||1, 1, 3, 1)
+      +'</div>'
+      : '')
+
+    // ── OUTLINE / STROKE ──
+    +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer;">'
+      +'<input type="checkbox" id="ptxt_fxOutline"'+(l.effectOutline?' checked':'')+'>'
+      +'<span>⭕ Outline</span>'
+    +'</label>'
+    +(l.effectOutline
+      ? '<div style="margin:0 0 8px 22px;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
+        +R('Width','ptxt_fxOutlineWidth', l.effectOutlineWidth||4, 0.5, 30, 0.5)
+        +SEL('Style','ptxt_fxOutlineMode',[['solid','Solid color'],['gradient','Gradient']], l.effectOutlineMode||'solid')
+        +(l.effectOutlineMode === 'gradient'
+          ? '<label style="font-size:11px;">Stroke gradient</label>'
+            +'<div class="col2" style="margin-bottom:5px;">'
+              +COL('Top','ptxt_fxStrokeGradTop', gradTop)
+              +COL('Bottom','ptxt_fxStrokeGradBot', gradBot)
+            +'</div>'
+            +'<div style="margin-bottom:4px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
+            +'<div class="preset-grid" style="margin-top:3px;">'
+            + gradientPresets.map(function(p){
+                return '<div class="preset-swatch" style="background:'+presetSwatchCss(p)+'" title="'+escAttr(p.label)+'" onclick="applyEffectStrokePreset(\''+l.id+'\',\''+p.id+'\')"></div>';
+              }).join('')
+            +'</div></div>'
+          : '<label style="font-size:11px;">Color</label>'
+            +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">'
+              +'<input type="color" id="ptxt_fxOutlineColor" value="'+outlineCol+'" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
+              +'<input type="text" id="ptxt_fxOutlineColorHex" value="'+outlineCol.toUpperCase()+'" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
+            +'</div>'
+        )
+      +'</div>'
+      : '');
+  return html;
+}
+
+// Wire up the effects controls. Toggling any checkbox or changing 'Style' must re-render the
+// panel so the conditional sub-controls appear; everything else just updates and redraws.
+function bindTextEffectsEvents(layer){
+  function on(id,evt,fn){var e=document.getElementById(id);if(e)e.addEventListener(evt,fn);}
+  function rng(id,fn){var e=document.getElementById(id);if(!e)return;e.addEventListener('input',function(){var v=document.getElementById(id+'_v');if(v)v.textContent=e.value;fn(+e.value);});}
+  function colorPair(pickerId, hexId, setFn){
+    on(pickerId, 'input', function(e){
+      setFn(e.target.value);
+      var h = document.getElementById(hexId); if(h) h.value = e.target.value.toUpperCase();
+      redraw();
+    });
+    on(hexId, 'input', function(e){
+      var s = e.target.value.trim();
+      if(/^#?[0-9a-fA-F]{6}$/.test(s)){
+        if(s[0] !== '#') s = '#' + s;
+        setFn(s);
+        var pk = document.getElementById(pickerId); if(pk) pk.value = s;
+        e.target.style.borderColor = '';
+        redraw();
+      } else {
+        e.target.style.borderColor = '#e53';
+      }
+    });
+  }
+  // Master toggles — flip the layer flag and re-render the panel so the conditional controls show/hide.
+  on('ptxt_fxCatnip',  'change', function(e){ layer.effectCatnip  = e.target.checked; renderProps(); redraw(); });
+  on('ptxt_fxGlow',    'change', function(e){ layer.effectGlow    = e.target.checked; renderProps(); redraw(); });
+  on('ptxt_fxOutline', 'change', function(e){ layer.effectOutline = e.target.checked; renderProps(); redraw(); });
+  on('ptxt_fxOutlineMode','change',function(e){ layer.effectOutlineMode = e.target.value; renderProps(); redraw(); });
+  // Catnip controls
+  colorPair('ptxt_fxCatnipColor', 'ptxt_fxCatnipColorHex', function(c){ layer.effectCatnipColor = c; });
+  rng('ptxt_fxCatnipDensity', function(v){ layer.effectCatnipDensity = v; redraw(); });
+  // Glow controls
+  colorPair('ptxt_fxGlowColor', 'ptxt_fxGlowColorHex', function(c){ layer.effectGlowColor = c; });
+  rng('ptxt_fxGlowBlur',      function(v){ layer.effectGlowBlur = v; redraw(); });
+  rng('ptxt_fxGlowIntensity', function(v){ layer.effectGlowIntensity = v; redraw(); });
+  // Outline controls
+  rng('ptxt_fxOutlineWidth', function(v){ layer.effectOutlineWidth = v; redraw(); });
+  colorPair('ptxt_fxOutlineColor',  'ptxt_fxOutlineColorHex',  function(c){ layer.effectOutlineColor = c; });
+  on('ptxt_fxStrokeGradTop','input', function(e){ layer.effectStrokeGradTop = e.target.value; redraw(); });
+  on('ptxt_fxStrokeGradBot','input', function(e){ layer.effectStrokeGradBot = e.target.value; redraw(); });
+}
+
+// Apply a gradient preset's two stops to the text-effect outline gradient (parallel to
+// applyPresetToLayer but targeting the effect-stroke fields, not the main fill fields).
+function applyEffectStrokePreset(layerId, presetId){
+  var layer = layers.find(function(l){ return String(l.id) === String(layerId); });
+  if(!layer) return;
+  var preset = gradientPresets.find(function(p){ return p.id === presetId; });
+  if(!preset) return;
+  layer.effectStrokeGradTop = preset.top;
+  layer.effectStrokeGradBot = preset.bottom;
+  renderProps(); redraw();
+}
+
 function buildImageProps(l){
   ensureImageBaseline(l);
   var hasCrop=(l.cropX!=null&&(l.cropX>0||l.cropY>0||(l.img&&(l.cropW<l.img.naturalWidth||l.cropH<l.img.naturalHeight))));
@@ -2949,6 +3082,7 @@ function buildTextProps(l){
     +R('Width','ptxt_w',Math.round(l.w),10,canvasW*3,2)
     +R('Rotation','ptxt_rot',l.rotation,-180,180,1)
     +R('Opacity','ptxt_opacity',l.opacity,0,100,1)
+    +textEffectsUI(l)
     +shadowUI('ptxt_', l)
     +moveBtns(l.id)+'</div>';
 }
@@ -3371,6 +3505,7 @@ function bindPropEvents(layer){
     rng('ptxt_rot',function(v){layer.rotation=v;redraw();});
     rng('ptxt_opacity',function(v){layer.opacity=v;redraw();});
     bindShadowEvents('ptxt_', layer);
+    bindTextEffectsEvents(layer);
   }
 }
 
@@ -4082,6 +4217,103 @@ function withRotation(ctx,layer,fn){
   ctx.save();ctx.translate(cx,cy);ctx.rotate(layer.rotation*Math.PI/180);ctx.translate(-cx,-cy);fn();ctx.restore();
 }
 
+// ── CATNIP TEXTURE PATTERN ──
+// Generates a tileable canvas pattern of catnip-style leaves in two color tones, used as
+// the fill style for text when the user picks the "catnip" effect. Cached by config so we
+// only regenerate when the user changes color or density.
+var _catnipPatternCache = {};
+
+// Draw a single catnip-style leaf at (cx,cy) with the given size, rotation, and color.
+// The leaf is a pointed almond shape with a centered vein. Uses bezier curves so it stays
+// smooth at any tile size.
+function drawCatnipLeaf(ctx, cx, cy, size, angle, fillColor, veinColor){
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  // Leaf outline: pointed almond. Width is ~0.45×size; length is `size`.
+  var L = size, W = size * 0.45;
+  ctx.beginPath();
+  ctx.moveTo(0, -L/2);                                            // tip
+  ctx.bezierCurveTo( W*0.6, -L*0.35,  W*0.7,  L*0.25,  0,  L/2);  // right side down to base
+  ctx.bezierCurveTo(-W*0.7,  L*0.25, -W*0.6, -L*0.35,  0, -L/2);  // left side up to tip
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  // Center vein for a touch of detail (slightly darker tone).
+  ctx.beginPath();
+  ctx.moveTo(0, -L*0.42);
+  ctx.lineTo(0,  L*0.42);
+  ctx.strokeStyle = veinColor;
+  ctx.lineWidth = Math.max(1, size * 0.04);
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  // A few side-veins angling out from the center
+  for(var i = 0; i < 3; i++){
+    var t = -0.25 + i * 0.25;            // -0.25, 0, 0.25 (proportion of leaf length)
+    var py = t * L;
+    var len = W * (0.55 - Math.abs(t)*0.6);
+    ctx.beginPath();
+    ctx.moveTo(0, py);
+    ctx.lineTo( len, py + L*0.08);
+    ctx.moveTo(0, py);
+    ctx.lineTo(-len, py + L*0.08);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Build a tileable pattern of catnip leaves. The tile is 96×96 by default with several leaves
+// at varied angles to avoid an obvious grid. `color` is the leaf fill (vein is darkened).
+// Returns a CanvasPattern ready to use as a fillStyle.
+function buildCatnipPattern(ctx, color, density){
+  var key = color + '|' + density;
+  if(_catnipPatternCache[key]) return _catnipPatternCache[key];
+  var TILE = 96;
+  var off = document.createElement('canvas');
+  off.width = TILE; off.height = TILE;
+  var octx = off.getContext('2d');
+  // Vein color: darker tone of fill color. Quick HSL darken via parseInt-on-hex math.
+  var veinHex = (color || '#3c8e14').replace('#','');
+  if(veinHex.length === 3) veinHex = veinHex[0]+veinHex[0]+veinHex[1]+veinHex[1]+veinHex[2]+veinHex[2];
+  var vr = Math.max(0, parseInt(veinHex.substring(0,2),16) - 50);
+  var vg = Math.max(0, parseInt(veinHex.substring(2,4),16) - 50);
+  var vb = Math.max(0, parseInt(veinHex.substring(4,6),16) - 50);
+  var veinColor = 'rgba('+vr+','+vg+','+vb+',0.7)';
+  // Density: 1 (sparse) to 5 (dense). Drives both leaf count and base size.
+  var d = Math.max(1, Math.min(5, density || 3));
+  var leafCount = 3 + d * 2;     // 5 → 13 leaves per tile
+  var baseSize = TILE * (0.7 - d * 0.06);  // bigger leaves at lower density
+  // Seeded layout so the pattern is deterministic across redraws.
+  var seed = 1337;
+  function rand(){ seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+  for(var i = 0; i < leafCount; i++){
+    var lx = rand() * TILE;
+    var ly = rand() * TILE;
+    var lr = (rand() - 0.5) * Math.PI * 2;
+    var sz = baseSize * (0.7 + rand() * 0.6);
+    drawCatnipLeaf(octx, lx, ly, sz, lr, color, veinColor);
+    // Wrap-around copies so leaves crossing tile edges still look continuous when tiled.
+    if(lx < sz) drawCatnipLeaf(octx, lx + TILE, ly, sz, lr, color, veinColor);
+    if(lx > TILE - sz) drawCatnipLeaf(octx, lx - TILE, ly, sz, lr, color, veinColor);
+    if(ly < sz) drawCatnipLeaf(octx, lx, ly + TILE, sz, lr, color, veinColor);
+    if(ly > TILE - sz) drawCatnipLeaf(octx, lx, ly - TILE, sz, lr, color, veinColor);
+  }
+  var pattern = ctx.createPattern(off, 'repeat');
+  _catnipPatternCache[key] = pattern;
+  return pattern;
+}
+
+// Build a CanvasGradient for a stroke of the given length, oriented vertically across the text.
+// Uses the layer's effectStrokeGradTop/Bottom (or default brand greens) and gradient-stop logic.
+function buildEffectStrokeGradient(ctx, layer, x, y, h){
+  var grad = ctx.createLinearGradient(x, y, x, y + h);
+  // Reuse addLayerGradientStops by temporarily swapping fields, but it reads fixed names —
+  // simpler to just manually add 2 stops here.
+  grad.addColorStop(0, layer.effectStrokeGradTop || '#8ab81d');
+  grad.addColorStop(1, layer.effectStrokeGradBot || '#3c8e14');
+  return grad;
+}
+
 // ── DRAW TEXT LAYER ──
 // Renders a text block with word-wrap within the layer's width.
 // Respects font, weight, size, color, alignment, line-height, letter-spacing, opacity, rotation.
@@ -4125,14 +4357,61 @@ function drawTextLayer(ctx, layer){
     var totalH = lines.length * lineH;
     ctx.textAlign = (align==='center')?'center':(align==='right')?'right':'left';
 
-    // Build fill: solid color OR linear gradient spanning the full text block
-    if(layer.fillMode === 'gradient'){
+    // Helper to iterate lines and call a per-line drawing op (used by every render pass below).
+    function eachLine(op){
+      lines.forEach(function(line, i){
+        var drawX = x;
+        if(align==='center') drawX = x + w/2;
+        else if(align==='right') drawX = x + w;
+        var drawY = y + i*lineH;
+        op(line, drawX, drawY);
+      });
+    }
+    function drawLineFilled(line, dx, dy){
+      if(useManualKerning) drawTextWithLetterSpacing(ctx, line, dx, dy, letterSpacing, align, w);
+      else                 ctx.fillText(line, dx, dy);
+    }
+    function drawLineStroked(line, dx, dy){
+      // Manual kerning + strokeText is rare enough that we don't bother — fall back to single stroke
+      ctx.strokeText(line, dx, dy);
+    }
+
+    // ── PASS 1: GLOW ──
+    // Soft halo around glyphs. Done with ctx.shadow* set to a glow color and large blur,
+    // then drawing the text in a transparent fill so only the shadow remains visible.
+    // The fill itself is invisible because we set globalAlpha=0 just for this pass; this lets
+    // the ACTUAL fill (and any other passes) paint over it cleanly.
+    if(layer.effectGlow){
+      ctx.save();
+      ctx.shadowColor = layer.effectGlowColor || '#a8e063';
+      ctx.shadowBlur = (layer.effectGlowBlur != null ? layer.effectGlowBlur : 24);
+      ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      // For a more intense glow, we redraw the same text multiple times (1-3 passes) so the
+      // shadow stacks. Intensity 1=single pass, 3=heavy bloom.
+      var passes = Math.max(1, Math.min(3, layer.effectGlowIntensity || 1));
+      ctx.fillStyle = layer.effectGlowColor || '#a8e063';   // any non-transparent color works
+      for(var gp = 0; gp < passes; gp++){
+        eachLine(drawLineFilled);
+      }
+      ctx.restore();
+    }
+
+    // ── PASS 2: MAIN FILL (with optional drop shadow) ──
+    // Build the fill style: solid / gradient / catnip texture.
+    if(layer.effectCatnip){
+      var pat = buildCatnipPattern(ctx, layer.effectCatnipColor || '#6db029', layer.effectCatnipDensity || 3);
+      // Shift the pattern so it scrolls with the text — without this, leaves "drift through" glyphs
+      // as the layer is moved on canvas.
+      if(pat && pat.setTransform){
+        try { pat.setTransform(new DOMMatrix().translate(x, y)); } catch(e){}
+      }
+      ctx.fillStyle = pat || (layer.color || '#3c8e14');
+    } else if(layer.fillMode === 'gradient'){
       var angle = (layer.gradAngle==null ? 90 : layer.gradAngle) * Math.PI/180;
-      var cx = x + w/2, cy = y + totalH/2;
-      // Use the text block diagonal as the gradient span so it covers all content
+      var ccx = x + w/2, ccy = y + totalH/2;
       var len = Math.sqrt(w*w + totalH*totalH)/2;
-      var gx1 = cx - Math.cos(angle)*len, gy1 = cy - Math.sin(angle)*len;
-      var gx2 = cx + Math.cos(angle)*len, gy2 = cy + Math.sin(angle)*len;
+      var gx1 = ccx - Math.cos(angle)*len, gy1 = ccy - Math.sin(angle)*len;
+      var gx2 = ccx + Math.cos(angle)*len, gy2 = ccy + Math.sin(angle)*len;
       var grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
       addLayerGradientStops(grad, layer);
       ctx.fillStyle = grad;
@@ -4140,24 +4419,34 @@ function drawTextLayer(ctx, layer){
       ctx.fillStyle = layer.color || '#222';
     }
 
-    // Drop shadow: applied to every fillText call. Setting shadow* on the ctx makes each glyph
-    // cast its own properly-shaped shadow (no offscreen canvas needed).
+    // Drop shadow: applied to the main fill pass only (we don't want outline or glow doubling up).
     if(layerHasShadow(layer)) applyLayerShadow(ctx, layer);
 
-    lines.forEach(function(line, i){
-      var drawX = x;
-      if(align==='center') drawX = x + w/2;
-      else if(align==='right') drawX = x + w;
-      var drawY = y + i*lineH;
-      if(useManualKerning){
-        drawTextWithLetterSpacing(ctx, line, drawX, drawY, letterSpacing, align, w);
-      } else {
-        ctx.fillText(line, drawX, drawY);
-      }
-    });
+    eachLine(drawLineFilled);
 
     // Track the actual rendered height on the layer so bounds/selection match
     layer._renderedH = totalH;
+
+    // ── PASS 3: OUTLINE / GRADIENT STROKE ──
+    // Drawn AFTER the fill so the stroke sits on top of the glyph edge cleanly. Half of the stroke
+    // overlays the fill (since canvas stroke centers on the path), the other half extends outside.
+    if(layer.effectOutline){
+      ctx.save();
+      // Clear shadow state — we don't want the outline to also cast the drop shadow.
+      ctx.shadowColor = 'rgba(0,0,0,0)';
+      ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      ctx.lineWidth = Math.max(0.5, layer.effectOutlineWidth || 4);
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      if(layer.effectOutlineMode === 'gradient'){
+        ctx.strokeStyle = buildEffectStrokeGradient(ctx, layer, x, y, totalH);
+      } else {
+        ctx.strokeStyle = layer.effectOutlineColor || '#000000';
+      }
+      eachLine(drawLineStroked);
+      ctx.restore();
+    }
+
     ctx.restore();
   });
 }
