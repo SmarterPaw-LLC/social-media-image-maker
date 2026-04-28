@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v53</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v55</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -176,6 +176,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div class="col2">
       <button class="btn-add" onclick="addSvgLayer()">+ SVG</button>
       <button class="btn-add" onclick="addVideoLayer()">+ Video</button>
+    </div>
+    <div class="col2">
+      <button class="btn-add" onclick="addFramedImageLayer()" title="Image clipped inside a shape mask">+ Framed Image</button>
+      <span></span>
     </div>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
     <!-- Shape picker (hidden by default) -->
@@ -813,12 +817,13 @@ function copySelected(){
     var out = {};
     for(var k in l){
       if(k==='img') continue;
+      if(k==='_img') continue;       // framed image's image element
       if(k==='_video') continue;
       if(k==='_playing') continue;
       out[k] = l[k];
     }
     if(l.img) out._imgSrc = l.src || l.img.src || null;
-    // video: videoSrc is already a normal field, survives the clone
+    // framedImage already has _imgSrc as a regular field; videoSrc same
     return out;
   }).filter(Boolean);
 }
@@ -833,14 +838,23 @@ function pasteClipboard(){
     copy.name = (copy.name || 'Layer') + ' copy';
     if(typeof copy.x === 'number') copy.x += 20;
     if(typeof copy.y === 'number') copy.y += 20;
-    // Image rehydration
-    if(copy._imgSrc){
+    // Regular image rehydration: _imgSrc → img, then strip _imgSrc
+    // (skip framedImage which uses _img + keeps _imgSrc on the layer)
+    if(copy._imgSrc && copy.type !== 'framedImage'){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){ redraw(); };
       img.src = copy._imgSrc;
       copy.img = img;
       delete copy._imgSrc;
+    }
+    // Framed image rehydration: _imgSrc stays, recreate the HTMLImageElement at _img
+    if(copy.type === 'framedImage' && copy._imgSrc){
+      var fimg = new Image();
+      fimg.crossOrigin = 'anonymous';
+      fimg.onload = function(){ redraw(); };
+      fimg.src = copy._imgSrc;
+      copy._img = fimg;
     }
     // Video rehydration
     if(copy.type === 'video' && copy.videoSrc){
@@ -853,7 +867,6 @@ function pasteClipboard(){
       v.addEventListener('loadedmetadata', function(){
         try { v.currentTime = copy.trimStart || 0; } catch(e){}
       });
-      // Redraw once the actual frame pixels arrive so the layer isn't blank until Play
       v.addEventListener('loadeddata', function(){ redraw(); });
       v.addEventListener('seeked',     function(){ redraw(); });
       copy._video = v;
@@ -899,19 +912,21 @@ var _undoSuppressed = false; // used to prevent snapshots during programmatic re
 
 function serializeLayers(){
   // Deep-clone layers but strip non-JSON-safe parts (HTMLImageElement, HTMLVideoElement, transient flags).
-  // Video: `videoSrc` (data URL) is already a normal serializable field; just skip `_video` / `_playing`.
+  // Video: `videoSrc` is already serializable; just skip `_video` / `_playing`.
+  // Framed image: `_imgSrc` is already on the layer (set at creation); skip `_img` (HTMLImageElement).
   return JSON.stringify(layers.map(function(l){
     var out = {};
     for(var k in l){
-      if(k==='img') continue;
+      if(k==='img') continue;        // regular image layer's image element
+      if(k==='_img') continue;       // framed image's image element (kept separate to avoid name clash)
       if(k==='_video') continue;
       if(k==='_playing') continue;
       out[k] = l[k];
     }
     if(l.img){
-      // prefer the stored src (for remote logos), else the img's own src
       out._imgSrc = l.src || l.img.src || null;
     }
+    // Framed image keeps _imgSrc as a normal serialized field set at creation, no special handling
     return out;
   }));
 }
@@ -920,13 +935,23 @@ function deserializeLayers(json){
   var raw = JSON.parse(json);
   var restored = [];
   raw.forEach(function(o){
-    if(o._imgSrc){
+    // Regular image layer rehydration: _imgSrc → img, then strip _imgSrc.
+    // BUT skip this for framedImage — that type uses _img + keeps _imgSrc as a normal field.
+    if(o._imgSrc && o.type !== 'framedImage'){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){ redraw(); };
       img.src = o._imgSrc;
       o.img = img;
       delete o._imgSrc;
+    }
+    // Framed image rehydration: _imgSrc stays, but we recreate the HTMLImageElement at _img
+    if(o.type === 'framedImage' && o._imgSrc){
+      var fimg = new Image();
+      fimg.crossOrigin = 'anonymous';
+      fimg.onload = function(){ redraw(); };
+      fimg.src = o._imgSrc;
+      o._img = fimg;
     }
     // Video: rehydrate the HTMLVideoElement from videoSrc. Runtime `_video` was stripped during serialization.
     if(o.type === 'video' && o.videoSrc){
@@ -937,11 +962,8 @@ function deserializeLayers(json){
       v.preload = 'auto';
       v.src = o.videoSrc;
       v.addEventListener('loadedmetadata', function(){
-        // Seek to trim start so the first frame is visible
         try { v.currentTime = o.trimStart || 0; } catch(e){}
       });
-      // Redraw once actual pixel data is available (metadata-only isn't enough — browsers need
-      // to decode at least one frame before drawImage(video) produces visible pixels)
       v.addEventListener('loadeddata', function(){ redraw(); });
       v.addEventListener('seeked',     function(){ redraw(); });
       o._video = v;
@@ -1767,7 +1789,6 @@ function ensureVideoAnimLoop(){
   _videoAnimLoopActive = true;
   function tick(){
     var anyPlaying = layers.some(function(l){return l.type==='video' && l._playing;});
-    // Also include videos on OTHER boards? No — only the currently-rendered board matters.
     if(!anyPlaying){ _videoAnimLoopActive = false; return; }
     // Auto-pause when any video crosses its trimEnd
     layers.forEach(function(l){
@@ -1781,6 +1802,23 @@ function ensureVideoAnimLoop(){
         }
       }
     });
+    // Live-update the playhead slider for the selected video so the user sees it advancing
+    var sel = layers.find(function(l){return l.id===selectedId && l.type==='video' && l._playing && l._video;});
+    if(sel){
+      var seek = document.getElementById('pvid_seek');
+      if(seek) seek.value = sel._video.currentTime.toFixed(2);
+      // Also update the time display (clip-relative)
+      var trimStart = sel.trimStart || 0;
+      var trimEnd = sel.trimEnd != null ? sel.trimEnd : sel._video.duration;
+      var clipCur = Math.max(0, sel._video.currentTime - trimStart);
+      var clipLen = Math.max(0, trimEnd - trimStart);
+      // Find the time display span. It's the second flex child after the play button.
+      var props = document.getElementById('propContent');
+      if(props){
+        var times = props.querySelector('.prop-section > div > div');
+        if(times) times.textContent = clipCur.toFixed(2) + ' / ' + clipLen.toFixed(2) + 's';
+      }
+    }
     redraw();
     requestAnimationFrame(tick);
   }
@@ -1895,10 +1933,14 @@ function togglePlayVideoLayer(layerId){
     l._video.pause();
     l._playing = false;
   } else {
-    // If at/past trim end, rewind to trim start so play does something visible
-    var end = l.trimEnd != null ? l.trimEnd : l._video.duration;
+    // Snap current time into the trim window before playing. This handles three cases:
+    // - currentTime > trimEnd  → rewind to trimStart
+    // - currentTime < trimStart → jump to trimStart (e.g. trim sliders just moved)
+    // - currentTime within range → keep position (resume from where they paused)
     var start = l.trimStart || 0;
-    if(l._video.currentTime >= end - 0.05) l._video.currentTime = start;
+    var end = l.trimEnd != null ? l.trimEnd : l._video.duration;
+    var cur = l._video.currentTime;
+    if(cur < start || cur >= end - 0.05) l._video.currentTime = start;
     var p = l._video.play();
     if(p && p.catch) p.catch(function(e){ console.warn('[video] play blocked:', e); });
     l._playing = true;
@@ -1907,10 +1949,13 @@ function togglePlayVideoLayer(layerId){
   renderProps();
 }
 
+// Seek the video; clamp to trim window so users can't scrub outside the clip
 function seekVideoLayer(layerId, time){
   var l = layers.find(function(x){return x.id===layerId;});
   if(!l || !l._video) return;
-  var t = Math.max(0, Math.min(l._video.duration || 0, time));
+  var start = l.trimStart || 0;
+  var end = l.trimEnd != null ? l.trimEnd : (l._video.duration || 0);
+  var t = Math.max(start, Math.min(end, time));
   try { l._video.currentTime = t; } catch(e){}
   redraw();
 }
@@ -1918,21 +1963,25 @@ function seekVideoLayer(layerId, time){
 function buildVideoProps(l){
   var v = l._video;
   var dur = (v && v.duration) || l.duration || 0;
-  var cur = (v && v.currentTime) || 0;
   var trimStart = l.trimStart || 0;
   var trimEnd = l.trimEnd != null ? l.trimEnd : Math.min(10, dur);
   var trimLen = Math.max(0, trimEnd - trimStart);
+  // Clamp the displayed playhead into the trim window
+  var rawCur = (v && v.currentTime) || 0;
+  var cur = Math.min(Math.max(rawCur, trimStart), trimEnd);
+  // Clip-relative time (what the user sees) goes 0 → trimLen
+  var clipCur = Math.max(0, cur - trimStart);
   var trimWarn = trimLen > 10 ? '<div style="font-size:10px;color:#c60;margin-top:2px;">⚠ GIF export will cap at 10s from trim start.</div>' : '';
   return '<div class="prop-section">'
     +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">'
       +'<button class="btn-sm" style="flex:1;" onclick="togglePlayVideoLayer('+l.id+')">'+(l._playing?'⏸ Pause':'▶ Play')+'</button>'
-      +'<div style="font-size:11px;color:var(--muted);white-space:nowrap;">'+cur.toFixed(2)+' / '+dur.toFixed(2)+'s</div>'
+      +'<div style="font-size:11px;color:var(--muted);white-space:nowrap;">'+clipCur.toFixed(2)+' / '+trimLen.toFixed(2)+'s</div>'
     +'</div>'
-    +'<label style="font-size:10px;color:var(--muted);">Playhead (s)</label>'
-    +'<input type="range" id="pvid_seek" min="0" max="'+dur.toFixed(3)+'" step="0.01" value="'+cur.toFixed(2)+'" oninput="seekVideoLayer('+l.id+',+this.value)">'
+    +'<label style="font-size:10px;color:var(--muted);">Playhead (within clip)</label>'
+    +'<input type="range" id="pvid_seek" min="'+trimStart.toFixed(3)+'" max="'+trimEnd.toFixed(3)+'" step="0.01" value="'+cur.toFixed(2)+'" oninput="seekVideoLayer('+l.id+',+this.value)">'
     +R('Trim Start (s)','pvid_trimStart', trimStart, 0, dur, 0.05)
     +R('Trim End (s)','pvid_trimEnd',   trimEnd,   0, dur, 0.05)
-    +'<div style="font-size:10px;color:var(--muted);">Clip length: '+trimLen.toFixed(2)+'s</div>'
+    +'<div style="font-size:10px;color:var(--muted);">Clip length: '+trimLen.toFixed(2)+'s · Source: '+dur.toFixed(2)+'s</div>'
     +trimWarn
     +'<div style="display:flex;gap:6px;margin-top:8px;">'
       +'<button class="btn-sm" style="flex:1;" onclick="flipVideoLayer('+l.id+',\'h\')">⇆ Flip H</button>'
@@ -1955,6 +2004,222 @@ function flipVideoLayer(id, axis){
   snapshotState();
   if(axis === 'h') l.flipH = !l.flipH;
   if(axis === 'v') l.flipV = !l.flipV;
+  renderProps(); redraw();
+}
+
+// ── FRAMED IMAGE LAYER ──
+// Image clipped inside a shape outline. Two transformations:
+//   1. Frame: x/y/w/h/rotation on canvas (like any layer).
+//   2. Image-within-frame: pan (imgOffsetX/Y), zoom (imgScale), rotation (imgRotation).
+// Frame uses any of the existing 11 shapes via shared buildShapePath().
+
+function addFramedImageLayer(){
+  // Step 1: pick an image
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = function(e){
+    var file = e.target.files && e.target.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function(){
+        snapshotState();
+        var id = nextId++;
+        // Default frame: square in the middle of the canvas
+        var size = Math.min(canvasW, canvasH) * 0.5;
+        layers.push({
+          id: id, type: 'framedImage',
+          name: 'Framed ' + (file.name || 'image').replace(/\.[^.]+$/, ''),
+          shape: 'circle',           // sensible default (Polaroid/avatar-style)
+          x: (canvasW - size)/2, y: (canvasH - size)/2, w: size, h: size,
+          rotation: 0, opacity: 100,
+          // shape parameters (mirror what shape layer supports)
+          cornerRadius: 0,
+          starPoints: 5, starInner: 0.4,
+          polygonSides: 6,
+          starburstPoints: 12, starburstInner: 0.7,
+          // image-within-frame transform
+          imgOffsetX: 0, imgOffsetY: 0,
+          imgScale: 1.0,        // multiplied with cover-fit baseline
+          imgRotation: 0,
+          fitMode: 'cover',     // 'cover' fills frame; 'contain' fits whole image; 'manual' = ignore baseline
+          // image runtime
+          _img: img,
+          _imgSrc: ev.target.result,    // serialized for save/load (renamed from src on standard image layer to keep types distinct)
+          natW: img.naturalWidth, natH: img.naturalHeight,
+          // frame stroke
+          strokeColor: 'rgba(0,0,0,0)', strokeWidth: 0
+        });
+        selectLayer(id);
+        renderLayerList(); redraw();
+      };
+      img.onerror = function(){ alert('Could not load image.'); };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+function drawFramedImageLayer(ctx, layer){
+  if(!layer._img) return;
+  withRotation(ctx, layer, function(){
+    ctx.save();
+    // Clip to the shape path
+    buildShapePath(ctx, layer);
+    ctx.clip();
+    // Compute the image's "base" placement: cover-fit, contain-fit, or 1:1 (manual)
+    var fw = layer.w, fh = layer.h;
+    var iw = layer.natW || layer._img.naturalWidth || fw;
+    var ih = layer.natH || layer._img.naturalHeight || fh;
+    var baseScale;
+    if(layer.fitMode === 'contain'){
+      baseScale = Math.min(fw / iw, fh / ih);
+    } else if(layer.fitMode === 'manual'){
+      baseScale = 1;
+    } else {
+      // cover (default)
+      baseScale = Math.max(fw / iw, fh / ih);
+    }
+    var totalScale = baseScale * (layer.imgScale || 1);
+    var drawW = iw * totalScale;
+    var drawH = ih * totalScale;
+    // Center inside frame, then apply user offset
+    var cx = layer.x + fw/2 + (layer.imgOffsetX || 0);
+    var cy = layer.y + fh/2 + (layer.imgOffsetY || 0);
+    // Rotate around the image center
+    if(layer.imgRotation){
+      ctx.translate(cx, cy);
+      ctx.rotate((layer.imgRotation || 0) * Math.PI / 180);
+      ctx.translate(-cx, -cy);
+    }
+    try {
+      ctx.drawImage(layer._img, cx - drawW/2, cy - drawH/2, drawW, drawH);
+    } catch(e){ /* image not yet decoded */ }
+    ctx.restore();
+    // Draw stroke ON TOP of the clipped image (outside the clip region)
+    if(layer.strokeWidth > 0){
+      ctx.save();
+      ctx.strokeStyle = layer.strokeColor || '#000';
+      ctx.lineWidth = layer.strokeWidth;
+      buildShapePath(ctx, layer);
+      ctx.stroke();
+      ctx.restore();
+    }
+  });
+}
+
+// Property-panel builder
+function buildFramedImageProps(l){
+  var shapeOpts = SHAPES.map(function(s){
+    return '<option value="'+s.id+'"'+(l.shape===s.id?' selected':'')+'>'+s.label+'</option>';
+  }).join('');
+  // Show shape-specific params only when relevant
+  var shapeParams = '';
+  if(l.shape === 'star'){
+    shapeParams = R('Star points','pfimg_starPoints', l.starPoints||5, 3, 12, 1)
+      + R('Inner radius','pfimg_starInner', (l.starInner||0.4)*100, 10, 90, 1);
+  } else if(l.shape === 'starburst'){
+    shapeParams = R('Burst points','pfimg_burstPoints', l.starburstPoints||12, 6, 32, 1)
+      + R('Inner radius','pfimg_burstInner', (l.starburstInner||0.7)*100, 30, 95, 1);
+  } else if(l.shape === 'polygon'){
+    shapeParams = R('Polygon sides','pfimg_polySides', l.polygonSides||6, 3, 12, 1);
+  }
+  return '<div class="prop-section">'
+    +'<div style="margin-bottom:8px;">'
+      +'<button class="btn-sm" style="width:100%;" onclick="replaceFramedImage('+l.id+')">📁 Replace Image…</button>'
+    +'</div>'
+    +'<label>Frame shape</label>'
+    +'<select id="pfimg_shape" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:5px;font-size:12px;">'+shapeOpts+'</select>'
+    +shapeParams
+    +R('Corner radius','pfimg_cornerRadius', l.cornerRadius||0, 0, 200, 1)
+    // Image-within-frame
+    +'<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;font-size:11px;font-weight:700;color:var(--muted);">IMAGE INSIDE FRAME</div>'
+    +'<div style="display:flex;gap:6px;margin:6px 0;">'
+      +'<button class="btn-sm" style="flex:1;" onclick="setFramedImageFit('+l.id+',\'cover\')">Cover</button>'
+      +'<button class="btn-sm" style="flex:1;" onclick="setFramedImageFit('+l.id+',\'contain\')">Contain</button>'
+      +'<button class="btn-sm" style="flex:1;" onclick="resetFramedImageTransform('+l.id+')">Reset</button>'
+    +'</div>'
+    +R('Image scale','pfimg_imgScale', (l.imgScale||1)*100, 10, 500, 1)
+    +R('Image offset X','pfimg_imgOffsetX', l.imgOffsetX||0, -Math.max(canvasW,1000), Math.max(canvasW,1000), 2)
+    +R('Image offset Y','pfimg_imgOffsetY', l.imgOffsetY||0, -Math.max(canvasH,1000), Math.max(canvasH,1000), 2)
+    +R('Image rotation','pfimg_imgRotation', l.imgRotation||0, -180, 180, 1)
+    // Stroke
+    +'<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;font-size:11px;font-weight:700;color:var(--muted);">FRAME BORDER</div>'
+    +R('Border width','pfimg_strokeWidth', l.strokeWidth||0, 0, 60, 1)
+    +'<label style="font-size:11px;">Border color</label>'
+    +'<div style="display:flex;gap:6px;align-items:center;">'
+      +'<input type="color" id="pfimg_strokeColor" value="'+rgbaToHex(l.strokeColor)+'" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
+      +'<input type="text" id="pfimg_strokeColorHex" value="'+rgbaToHex(l.strokeColor).toUpperCase()+'" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
+    +'</div>'
+    // Standard transforms
+    +'<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;font-size:11px;font-weight:700;color:var(--muted);">FRAME ON CANVAS</div>'
+    +NUMPAIR('X (px)','npfimgx',l.x,'Y (px)','npfimgy',l.y)
+    +NUMPAIR('W (px)','npfimgw',l.w,'H (px)','npfimgh',l.h)
+    +R('X','pfimg_x',Math.round(l.x),-canvasW,canvasW*2,2)
+    +R('Y','pfimg_y',Math.round(l.y),-canvasH,canvasH*2,2)
+    +R('Width','pfimg_w',Math.round(l.w),10,canvasW*3,2)
+    +R('Height','pfimg_h',Math.round(l.h),10,canvasH*3,2)
+    +R('Rotation','pfimg_rot',l.rotation||0,-180,180,1)
+    +R('Opacity','pfimg_opacity',l.opacity,0,100,1)
+    +moveBtns(l.id)+'</div>';
+}
+
+// Helper to convert rgba()/hex strings to a 6-char hex (best effort, used for the color picker default)
+function rgbaToHex(s){
+  if(!s) return '#000000';
+  if(s[0]==='#'){
+    if(s.length===4) return '#'+s[1]+s[1]+s[2]+s[2]+s[3]+s[3];
+    return s.length>=7 ? s.substring(0,7) : '#000000';
+  }
+  var m = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if(m) return '#' + [+m[1],+m[2],+m[3]].map(function(n){var h=n.toString(16);return h.length<2?'0'+h:h;}).join('');
+  return '#000000';
+}
+
+function replaceFramedImage(layerId){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l) return;
+  var input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*';
+  input.onchange = function(e){
+    var file = e.target.files && e.target.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function(){
+        snapshotState();
+        l._img = img; l._imgSrc = ev.target.result;
+        l.natW = img.naturalWidth; l.natH = img.naturalHeight;
+        renderProps(); redraw();
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+function setFramedImageFit(layerId, mode){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l) return;
+  snapshotState();
+  l.fitMode = mode;
+  l.imgScale = 1; l.imgOffsetX = 0; l.imgOffsetY = 0;   // reset user transform when changing fit
+  renderProps(); redraw();
+}
+
+function resetFramedImageTransform(layerId){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l) return;
+  snapshotState();
+  l.imgScale = 1; l.imgOffsetX = 0; l.imgOffsetY = 0; l.imgRotation = 0;
+  l.fitMode = 'cover';
   renderProps(); redraw();
 }
 
@@ -2054,7 +2319,7 @@ function renderLayerList(){
       if(layer.hidden) item.style.opacity='0.5';
       item.draggable = !layer.locked;  // locked layers can't be dragged either
       item.dataset.layerId=layer.id;
-      var icons={image:'🖼',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷'};
+      var icons={image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷'};
       var eyeIcon = layer.hidden ? '⊘' : '●';   // filled circle = visible, crossed circle = hidden
       var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
       var lockIcon = layer.locked ? '🔒' : '🔓';
@@ -2124,6 +2389,7 @@ function renderProps(){
     : '';
   var innerHtml = '';
   if(layer.type==='image')       innerHtml=buildImageProps(layer);
+  else if(layer.type==='framedImage') innerHtml=buildFramedImageProps(layer);
   else if(layer.type==='video')   innerHtml=buildVideoProps(layer);
   else if(layer.type==='sticker') innerHtml=buildStickerProps(layer);
   else if(layer.type==='shape')   innerHtml=buildShapeProps(layer);
@@ -2577,19 +2843,36 @@ function bindPropEvents(layer){
     rng('svgrotation',function(v){layer.rotation=v;redraw();});
     rng('svgopacity',function(v){layer.opacity=v;redraw();});
   } else if(layer.type==='video'){
-    // Trim sliders: clamp so start <= end
+    // Trim sliders: clamp so start <= end and keep the playhead inside the clip range
     rng('pvid_trimStart', function(v){
       layer.trimStart = +v;
       if(layer.trimEnd != null && layer.trimStart > layer.trimEnd) layer.trimEnd = layer.trimStart;
-      // If current playhead is before trim start, move it to trim start
-      if(layer._video && layer._video.currentTime < layer.trimStart){
-        try { layer._video.currentTime = layer.trimStart; } catch(e){}
+      // Snap playhead into the new trim range
+      if(layer._video){
+        if(layer._video.currentTime < layer.trimStart){
+          try { layer._video.currentTime = layer.trimStart; } catch(e){}
+        }
+      }
+      // Update the playhead slider's `min` attribute so it reflects the new range immediately
+      var seek = document.getElementById('pvid_seek');
+      if(seek){
+        seek.min = layer.trimStart;
+        if(+seek.value < layer.trimStart) seek.value = layer.trimStart;
       }
       redraw();
     });
     rng('pvid_trimEnd', function(v){
       layer.trimEnd = +v;
       if(layer.trimStart != null && layer.trimEnd < layer.trimStart) layer.trimStart = layer.trimEnd;
+      // Snap playhead into the new trim range
+      if(layer._video && layer._video.currentTime > layer.trimEnd){
+        try { layer._video.currentTime = layer.trimEnd; } catch(e){}
+      }
+      var seek = document.getElementById('pvid_seek');
+      if(seek){
+        seek.max = layer.trimEnd;
+        if(+seek.value > layer.trimEnd) seek.value = layer.trimEnd;
+      }
       redraw();
     });
     num('nvidx', function(v){layer.x=v;redraw();}, 'pvid_x');
@@ -2602,6 +2885,55 @@ function bindPropEvents(layer){
     rng('pvid_h',  function(v){layer.h=v;redraw();});
     rng('pvid_rot', function(v){layer.rotation=v;redraw();});
     rng('pvid_opacity', function(v){layer.opacity=v;redraw();});
+  } else if(layer.type==='framedImage'){
+    // Frame shape selector
+    on('pfimg_shape', 'change', function(e){
+      snapshotState();
+      layer.shape = e.target.value;
+      renderProps(); redraw();
+    });
+    // Shape-specific params (only present in DOM when relevant)
+    rng('pfimg_starPoints',   function(v){layer.starPoints=+v;redraw();});
+    rng('pfimg_starInner',    function(v){layer.starInner=+v/100;redraw();});
+    rng('pfimg_burstPoints',  function(v){layer.starburstPoints=+v;redraw();});
+    rng('pfimg_burstInner',   function(v){layer.starburstInner=+v/100;redraw();});
+    rng('pfimg_polySides',    function(v){layer.polygonSides=+v;redraw();});
+    rng('pfimg_cornerRadius', function(v){layer.cornerRadius=+v;redraw();});
+    // Image-within-frame transform — these set fitMode to 'manual' so user edits aren't overridden
+    rng('pfimg_imgScale',    function(v){layer.imgScale=+v/100; layer.fitMode='manual'; redraw();});
+    rng('pfimg_imgOffsetX',  function(v){layer.imgOffsetX=+v; layer.fitMode='manual'; redraw();});
+    rng('pfimg_imgOffsetY',  function(v){layer.imgOffsetY=+v; layer.fitMode='manual'; redraw();});
+    rng('pfimg_imgRotation', function(v){layer.imgRotation=+v; redraw();});
+    // Stroke
+    rng('pfimg_strokeWidth', function(v){layer.strokeWidth=+v;redraw();});
+    on('pfimg_strokeColor', 'input', function(e){
+      layer.strokeColor = e.target.value;
+      var hex = document.getElementById('pfimg_strokeColorHex'); if(hex) hex.value = e.target.value.toUpperCase();
+      redraw();
+    });
+    on('pfimg_strokeColorHex', 'input', function(e){
+      var s = e.target.value.trim();
+      if(/^#?[0-9a-fA-F]{6}$/.test(s)){
+        if(s[0] !== '#') s = '#' + s;
+        layer.strokeColor = s;
+        var pk = document.getElementById('pfimg_strokeColor'); if(pk) pk.value = s;
+        e.target.style.borderColor = '';
+        redraw();
+      } else {
+        e.target.style.borderColor = '#e53';
+      }
+    });
+    // Standard transforms
+    num('npfimgx', function(v){layer.x=v;redraw();}, 'pfimg_x');
+    num('npfimgy', function(v){layer.y=v;redraw();}, 'pfimg_y');
+    num('npfimgw', function(v){layer.w=v;redraw();}, 'pfimg_w');
+    num('npfimgh', function(v){layer.h=v;redraw();}, 'pfimg_h');
+    rng('pfimg_x',  function(v){layer.x=v;redraw();});
+    rng('pfimg_y',  function(v){layer.y=v;redraw();});
+    rng('pfimg_w',  function(v){layer.w=v;redraw();});
+    rng('pfimg_h',  function(v){layer.h=v;redraw();});
+    rng('pfimg_rot', function(v){layer.rotation=v;redraw();});
+    rng('pfimg_opacity', function(v){layer.opacity=v;redraw();});
   } else if(layer.type==='text'){
     on('ptxt_text','input',function(e){layer.text=e.target.value;redraw();});
     on('ptxt_family','change',function(e){
@@ -3112,6 +3444,7 @@ function redraw(){
     if(layer.hidden) return;  // visibility toggle
     ctx.save();ctx.globalAlpha=(layer.opacity||100)/100;
     if(layer.type==='image')drawImageLayer(ctx,layer);
+    else if(layer.type==='framedImage')drawFramedImageLayer(ctx,layer);
     else if(layer.type==='video')drawVideoLayer(ctx,layer);
     else if(layer.type==='sticker')drawStickerLayer(ctx,layer);
     else if(layer.type==='shape')drawShapeLayer(ctx,layer);
@@ -3603,6 +3936,29 @@ function buildShapeVertices(layer){
   return {pts:null, roundable:false};
 }
 
+// Build the shape's path on `ctx` (no fill or stroke). Used by both regular shapes and framed images.
+// Reads layer.shape, x/y/w/h, cornerRadius, and shape-specific params (points, sides, etc.).
+function buildShapePath(ctx, layer){
+  var x=layer.x, y=layer.y, w=layer.w, h=layer.h;
+  var cr = layer.cornerRadius || 0;
+  ctx.beginPath();
+  if(layer.shape==='rect'){
+    if(cr>0) ctx.roundRect(x,y,w,h,Math.min(cr,w/2,h/2)); else ctx.rect(x,y,w,h);
+  } else if(layer.shape==='roundrect'){
+    var r = cr>0 ? Math.min(cr,w/2,h/2) : Math.min(32,w/2,h/2);
+    ctx.roundRect(x,y,w,h,r);
+  } else if(layer.shape==='circle'){
+    ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);
+  } else {
+    var v = buildShapeVertices(layer);
+    if(v.pts && v.pts.length){
+      drawRoundedPolygon(ctx, v.pts, cr);
+    } else {
+      ctx.rect(x,y,w,h);
+    }
+  }
+}
+
 function drawShapeLayer(ctx,layer){
   withRotation(ctx,layer,function(){
     var x=layer.x,y=layer.y,w=layer.w,h=layer.h;
@@ -3633,27 +3989,7 @@ function drawShapeLayer(ctx,layer){
     ctx.save();
     ctx.fillStyle=fill;
     if(layer.strokeWidth>0){ctx.strokeStyle=layer.strokeColor||'#000';ctx.lineWidth=layer.strokeWidth;}
-    ctx.beginPath();
-    var cr = layer.cornerRadius||0;
-    // Primitive shapes (native paths, no polygon rounding)
-    if(layer.shape==='rect'){
-      if(cr>0) ctx.roundRect(x,y,w,h,Math.min(cr,w/2,h/2)); else ctx.rect(x,y,w,h);
-    } else if(layer.shape==='roundrect'){
-      // "roundrect" is just a rect with radius — default to 32 if cr is 0 so it isn't surprising
-      var r = cr>0 ? Math.min(cr,w/2,h/2) : Math.min(32,w/2,h/2);
-      ctx.roundRect(x,y,w,h,r);
-    } else if(layer.shape==='circle'){
-      ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);
-    } else {
-      // Polygonal: build vertex list, then render rounded
-      var v = buildShapeVertices(layer);
-      if(v.pts && v.pts.length){
-        drawRoundedPolygon(ctx, v.pts, cr);
-      } else {
-        // Fallback
-        ctx.rect(x,y,w,h);
-      }
-    }
+    buildShapePath(ctx, layer);
     ctx.fill();
     if(layer.strokeWidth>0)ctx.stroke();
     ctx.restore();
@@ -3956,6 +4292,7 @@ function doStaticExport(){
     bctx.save();bctx.globalAlpha=(layer.opacity||100)/100;
     try{
       if(layer.type==='image')drawImageLayer(bctx,layer);
+      else if(layer.type==='framedImage')drawFramedImageLayer(bctx,layer);
       else if(layer.type==='video')drawVideoLayer(bctx,layer);
       else if(layer.type==='sticker')drawStickerLayer(bctx,layer);
       else if(layer.type==='shape')drawShapeLayer(bctx,layer);
@@ -4100,6 +4437,7 @@ function doGifExport(){
         octx.save(); octx.globalAlpha = (layer.opacity || 100) / 100;
         try {
           if(layer.type === 'image')   drawImageLayer(octx, layer);
+          else if(layer.type === 'framedImage') drawFramedImageLayer(octx, layer);
           else if(layer.type === 'video') drawVideoLayer(octx, layer);
           else if(layer.type === 'sticker') drawStickerLayer(octx, layer);
           else if(layer.type === 'shape')   drawShapeLayer(octx, layer);
