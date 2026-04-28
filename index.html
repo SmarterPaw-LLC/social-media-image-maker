@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v72</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v73</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1811,9 +1811,17 @@ function addSprinkleLayer(){
     uploadSrc: null,             // data URL of uploaded image (when source='upload')
     bgRemove: 'none',            // 'none' | 'black' | 'white'
     bgTolerance: 35,
-    // Distribution
+    // Distribution — count + sizing
     count: 30,                   // number of pieces in the box
-    size: 25,                    // % of box's shorter dimension
+    sizeMode: 'relative',        // 'relative' (% of box) | 'absolute' (px)
+    size: 25,                    // when sizeMode='relative': % of box's shorter dim
+    sizePx: 60,                  // when sizeMode='absolute': pixels
+    sizeJitter: 40,              // % size variation (±) per piece (was hardcoded ±40%)
+    // Clustering
+    clusterMode: 'none',         // 'none' (uniform fill) | 'center' (cluster toward box middle) | 'text' (glyph-mask cluster around target text layer)
+    clusterTargetId: null,       // when clusterMode='text': the text layer's id
+    spread: 50,                  // halo radius — % of box's shorter dim. Used by 'center' and 'text' modes.
+    cluster: 70,                 // tightness 0..100. Higher = tighter to anchor (center or glyphs).
     seed: Math.floor(Math.random() * 9999) + 1,
     // Tint
     tint: 0,
@@ -3139,18 +3147,37 @@ function buildShapeProps(l){
 }
 
 // ── SPRINKLE LAYER PROPS ──
-// Standalone sprinkle layer panel: source picker, optional upload + bg removal, distribution
-// controls (count, size, seed reroll), tint, and the standard rotation/opacity/shadow.
+// Standalone sprinkle layer panel. Sections:
+//   - position/size of the sprinkle box
+//   - source: built-in catnip or uploaded image (with bg removal)
+//   - sizing: relative (% of box) OR absolute (px), plus per-piece jitter
+//   - clustering: none (uniform fill), center (cluster toward box middle), or text (cluster
+//     around a target text layer's glyph silhouettes for the "sprinkles around text" effect)
+//   - count/seed/tint, plus standard rotation/opacity/shadow
 function buildSprinkleProps(l){
   var hasUpload = !!l.uploadSrc;
   var src = l.source || 'builtin';
   var tintCol = rgbaToHex(l.tintColor || '#ffd24a');
+  var sizeMode = l.sizeMode || 'relative';
+  var clusterMode = l.clusterMode || 'none';
+
+  // Build the list of text layers available as cluster targets (for clusterMode='text').
+  // Excludes the sprinkle layer itself for safety. If no text layers exist, the dropdown
+  // shows a placeholder option.
+  var textLayerOptions = layers
+    .filter(function(z){ return z.type === 'text'; })
+    .map(function(z){ return [String(z.id), (z.name || ('text '+z.id)) + ' — "' + String(z.text||'').substring(0, 24) + (String(z.text||'').length>24?'…':'') + '"']; });
+  if(textLayerOptions.length === 0){
+    textLayerOptions = [['', '(no text layers — add one to use this mode)']];
+  } else {
+    textLayerOptions.unshift(['', '— pick a text layer —']);
+  }
+
   return '<div class="prop-section">'
     + NUMPAIR('X','nsprx',Math.round(l.x),'Y','nspry',Math.round(l.y))
     + NUMPAIR('W','nsprw',Math.round(l.w),'H','nsprh',Math.round(l.h))
     + SEL('Source','psprSource',[['builtin','Catnip (built-in)'],['upload','Uploaded image']], src)
-    // ── Upload section ── always visible so users can upload regardless of Source dropdown.
-    // First upload auto-switches Source to 'upload' so the new image is used immediately.
+    // ── Upload section ── always visible. First upload auto-switches Source to 'upload'.
     + '<div style="margin:6px 0 6px 0;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
       + '<div style="font-size:10px;color:var(--muted);font-weight:700;margin-bottom:5px;">YOUR IMAGE</div>'
       + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
@@ -3167,8 +3194,32 @@ function buildSprinkleProps(l){
               : '')
         : '<div style="font-size:11px;color:var(--muted);">Upload an image to scatter inside the box. Works best with a small object on a transparent or solid-color background.</div>')
     + '</div>'
+    // ── SIZING section ──
+    + '<div style="margin:6px 0;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
+      + '<div style="font-size:10px;color:var(--muted);font-weight:700;margin-bottom:5px;">SIZING</div>'
+      + SEL('Size mode','psprSizeMode',[['relative','Relative (% of box)'],['absolute','Absolute (px)']], sizeMode)
+      + (sizeMode === 'absolute'
+          ? R('Size (px)','psprSizePx', l.sizePx==null?60:l.sizePx, 4, 600, 1)
+          : R('Size (% of box)','psprSize', l.size==null?25:l.size, 2, 150, 1))
+      + R('Per-piece jitter (%)','psprSizeJitter', l.sizeJitter==null?40:l.sizeJitter, 0, 80, 1)
+    + '</div>'
+    // ── CLUSTERING section ──
+    + '<div style="margin:6px 0;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
+      + '<div style="font-size:10px;color:var(--muted);font-weight:700;margin-bottom:5px;">CLUSTERING</div>'
+      + SEL('Cluster around','psprClusterMode',[
+          ['none','None — uniform fill'],
+          ['center','Box center'],
+          ['text','A text layer (around glyphs)']
+        ], clusterMode)
+      + (clusterMode === 'text'
+          ? SEL('Target text layer','psprClusterTarget', textLayerOptions, String(l.clusterTargetId||''))
+          : '')
+      + (clusterMode !== 'none'
+          ? R('Spread (% of '+(clusterMode==='text'?'text height':'box')+')','psprSpread', l.spread==null?50:l.spread, 0, 150, 1)
+            + R('Cluster tightness (%)','psprCluster', l.cluster==null?70:l.cluster, 0, 100, 1)
+          : '')
+    + '</div>'
     + R('Count','psprCount', l.count==null?30:l.count, 1, 200, 1)
-    + R('Size (% of box)','psprSize', l.size==null?25:l.size, 2, 150, 1)
     + '<div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:5px;">'
       +'<div style="flex:1;margin-bottom:0;">'+R('Seed','psprSeed', l.seed||1, 1, 9999, 1)+'</div>'
       +'<button class="btn-sm" style="height:32px;white-space:nowrap;" onclick="rerollSprinkleLayer('+l.id+')" title="Re-randomize the layout">🎲</button>'
@@ -3509,9 +3560,40 @@ function bindPropEvents(layer){
     // Background-removal mode + tolerance
     on('psprBgRemove','change',function(e){ layer.bgRemove = e.target.value; rekeySprinkleLayer(layer); renderProps(); });
     rng('psprBgTolerance',function(v){ layer.bgTolerance = v; rekeySprinkleLayer(layer); });
+    // Sizing — mode toggle (re-renders panel since the slider that follows depends on mode)
+    on('psprSizeMode','change',function(e){ layer.sizeMode = e.target.value; renderProps(); redraw(); });
+    rng('psprSize',       function(v){ layer.size   = v; redraw(); });
+    rng('psprSizePx',     function(v){ layer.sizePx = v; redraw(); });
+    rng('psprSizeJitter', function(v){ layer.sizeJitter = v; redraw(); });
+    // Clustering — mode dropdown re-renders the panel since spread/cluster/target visibility depends on it
+    on('psprClusterMode','change',function(e){ layer.clusterMode = e.target.value; renderProps(); redraw(); });
+    on('psprClusterTarget','change',function(e){
+      var v = e.target.value;
+      layer.clusterTargetId = v ? +v : null;
+      // When the user picks a target, auto-position the sprinkle box to cover the text plus
+      // a generous halo. This saves the user from having to manually align the box and the
+      // text — they can always fine-tune by dragging the box afterward.
+      if(layer.clusterTargetId){
+        var target = layers.find(function(z){ return z.id === layer.clusterTargetId; });
+        if(target && target.type === 'text'){
+          var size = target.fontSize || 72;
+          var lineH = size * (target.lineHeight || 1.2);
+          var totalH = target._renderedH || lineH;
+          var spread = layer.spread == null ? 50 : layer.spread;
+          var haloPx = Math.max(20, totalH * (spread / 100));
+          layer.x = target.x - haloPx;
+          layer.y = target.y - haloPx;
+          layer.w = target.w + 2 * haloPx;
+          layer.h = totalH + 2 * haloPx;
+          renderProps();   // refresh the X/Y/W/H number inputs
+        }
+      }
+      redraw();
+    });
+    rng('psprSpread',  function(v){ layer.spread  = v; redraw(); });
+    rng('psprCluster', function(v){ layer.cluster = v; redraw(); });
     // Distribution
     rng('psprCount',function(v){ layer.count = v; redraw(); });
-    rng('psprSize', function(v){ layer.size  = v; redraw(); });
     rng('psprSeed', function(v){ layer.seed  = v; redraw(); });
     // Tint
     rng('psprTint', function(v){ layer.tint  = v; renderProps(); });
@@ -5178,14 +5260,121 @@ function rerollSprinkleLayer(layerId){
   redraw();
 }
 
+// Cache for glyph-alpha masks used by sprinkle layers in 'text' cluster mode. Keyed by
+// (text + font + lineH + align + letterSpacing + spread). The mask is in the text layer's
+// LOCAL coordinate space — we translate during sampling to map onto the canvas.
+var _sprinkleGlyphMaskCache = {};
+
+// Build (or fetch from cache) a glyph-alpha mask for a target text layer + halo radius.
+// Returns { data: ImageData, mw, mh, pad, originX, originY } or null if the target isn't
+// a text layer or has no content. `originX/Y` are the canvas-coordinates corresponding to
+// pixel (0,0) of the mask, AFTER padding for the halo.
+function getTargetTextGlyphMask(targetLayer, haloPx){
+  if(!targetLayer || targetLayer.type !== 'text' || !targetLayer.text) return null;
+  var size = targetLayer.fontSize || 72;
+  var weight = targetLayer.fontWeight || 400;
+  var family = targetLayer.fontFamily || 'sans-serif';
+  var align = targetLayer.align || 'left';
+  var lineHeight = targetLayer.lineHeight || 1.2;
+  var letterSpacing = targetLayer.letterSpacing || 0;
+  var w = targetLayer.w;
+  var x = targetLayer.x, y = targetLayer.y;
+  var lineH = size * lineHeight;
+  var font = weight + ' ' + size + 'px ' + family + ', sans-serif';
+
+  // Word-wrap mirrors drawTextLayer
+  var paragraphs = String(targetLayer.text).split('\n');
+  // We need a measure context to wrap. Use a temporary small canvas's ctx.
+  var measure = document.createElement('canvas').getContext('2d');
+  measure.font = font;
+  var lines = [];
+  paragraphs.forEach(function(p){
+    if(p.length === 0){ lines.push(''); return; }
+    var words = p.split(' ');
+    var cur = '';
+    words.forEach(function(word){
+      var test = cur ? cur + ' ' + word : word;
+      var testW = measureTextWithSpacing(measure, test, letterSpacing);
+      if(testW > w && cur){ lines.push(cur); cur = word; }
+      else cur = test;
+    });
+    if(cur) lines.push(cur);
+  });
+  var totalH = lines.length * lineH;
+  var useManualKerning = Math.abs(letterSpacing) > 0.01;
+
+  var pad = Math.ceil(haloPx) + 4;
+  var mw = Math.max(1, Math.ceil(w + pad*2));
+  var mh = Math.max(1, Math.ceil(totalH + pad*2));
+
+  // Cache key
+  var cacheKey = targetLayer.id + '|' + (targetLayer.text||'') + '|' + font + '|' + lineH + '|' + align + '|' + letterSpacing + '|' + haloPx + '|' + w;
+  if(_sprinkleGlyphMaskCache[cacheKey] && _sprinkleGlyphMaskCache[cacheKey].mw === mw && _sprinkleGlyphMaskCache[cacheKey].mh === mh){
+    var cached = _sprinkleGlyphMaskCache[cacheKey];
+    return { data: cached.data, mw: mw, mh: mh, pad: pad, originX: x - pad, originY: y - pad };
+  }
+
+  // Rasterize glyphs to an offscreen
+  var mask = document.createElement('canvas');
+  mask.width = mw; mask.height = mh;
+  var mctx = mask.getContext('2d', { willReadFrequently: true });
+  mctx.font = font;
+  mctx.textBaseline = 'top';
+  mctx.textAlign = align === 'center' ? 'center' : align === 'right' ? 'right' : 'left';
+  mctx.fillStyle = '#fff';
+  for(var li = 0; li < lines.length; li++){
+    var line = lines[li];
+    if(!line) continue;
+    var dx;
+    if(align === 'center') dx = pad + w/2;
+    else if(align === 'right') dx = pad + w;
+    else dx = pad;
+    var dy = pad + li * lineH;
+    if(useManualKerning) drawTextWithLetterSpacing(mctx, line, dx, dy, letterSpacing, align, w);
+    else mctx.fillText(line, dx, dy);
+  }
+  // Blur the mask outward by haloPx so positions near glyphs (but not on them) get progressively
+  // dimmer alpha — used as the acceptance probability during sampling.
+  if(haloPx > 1){
+    var blurSteps = Math.min(8, Math.ceil(haloPx / 4));
+    var stepPx = haloPx / blurSteps;
+    mctx.globalCompositeOperation = 'lighter';
+    for(var bs = 1; bs <= blurSteps; bs++){
+      var off = bs * stepPx;
+      var alphaStep = (1 - bs / (blurSteps + 1)) * 0.45;
+      mctx.globalAlpha = alphaStep;
+      mctx.drawImage(mask,  off, 0); mctx.drawImage(mask, -off, 0);
+      mctx.drawImage(mask, 0,  off); mctx.drawImage(mask, 0, -off);
+      var diag = off * 0.707;
+      mctx.drawImage(mask,  diag,  diag); mctx.drawImage(mask, -diag,  diag);
+      mctx.drawImage(mask,  diag, -diag); mctx.drawImage(mask, -diag, -diag);
+    }
+    mctx.globalAlpha = 1;
+    mctx.globalCompositeOperation = 'source-over';
+  }
+  var maskData;
+  try { maskData = mctx.getImageData(0, 0, mw, mh); } catch(e){ return null; }
+  _sprinkleGlyphMaskCache[cacheKey] = { data: maskData, mw: mw, mh: mh };
+  // Trim cache
+  var keys = Object.keys(_sprinkleGlyphMaskCache);
+  if(keys.length > 10){ delete _sprinkleGlyphMaskCache[keys[0]]; }
+
+  return { data: maskData, mw: mw, mh: mh, pad: pad, originX: x - pad, originY: y - pad };
+}
+
 // Render the sprinkle layer. Honors rotation/opacity/shadow like other layers.
+//
+// Cluster modes:
+//   - 'none'   : uniform random fill within the box (old default behavior)
+//   - 'center' : pieces cluster toward the box's center; spread = radius, cluster = tightness
+//   - 'text'   : pieces cluster around the glyphs of a target text layer; spread = halo radius,
+//                cluster = how strictly pieces hug the glyph silhouettes
 function drawSprinkleLayer(ctx, layer){
   withRotation(ctx, layer, function(){
     ctx.save();
     ctx.globalAlpha = (layer.opacity == null ? 100 : layer.opacity) / 100;
 
-    // Choose the piece pool: built-in catnip pieces, or a single uploaded image used as the
-    // sprinkle source. Falls back to built-in if the upload is loading or missing.
+    // Choose the piece pool: built-in or uploaded.
     var source = layer.source || 'builtin';
     var pieces;
     if(source === 'upload'){
@@ -5198,14 +5387,23 @@ function drawSprinkleLayer(ctx, layer){
     if(!pieces || pieces.length === 0){ ctx.restore(); return; }
 
     var x = layer.x, y = layer.y, w = layer.w, h = layer.h;
-    var count = Math.max(0, Math.min(200, layer.count == null ? 30 : layer.count));
-    var size  = Math.max(2, Math.min(150, layer.size == null ? 25 : layer.size));
-    var seed  = (layer.seed || 1) >>> 0;
+    var count   = Math.max(0, Math.min(200, layer.count == null ? 30 : layer.count));
+    var seed    = (layer.seed || 1) >>> 0;
     var tintMix = Math.max(0, Math.min(100, layer.tint || 0));
-    var tint = layer.tintColor || '#ffd24a';
+    var tint    = layer.tintColor || '#ffd24a';
+    var clusterMode = layer.clusterMode || 'none';
+    var spread = Math.max(0, Math.min(150, layer.spread == null ? 50 : layer.spread));
+    var cluster = Math.max(0, Math.min(100, layer.cluster == null ? 70 : layer.cluster));
+    var sizeJitter = Math.max(0, Math.min(80, layer.sizeJitter == null ? 40 : layer.sizeJitter));
 
-    // Piece average size: percent of the box's shorter dimension. Pieces vary ±40% from this.
-    var avgPx = Math.min(w, h) * (size / 100);
+    // Average piece size in pixels — supports relative-to-box or absolute-pixel modes.
+    var avgPx;
+    if(layer.sizeMode === 'absolute'){
+      avgPx = Math.max(2, layer.sizePx == null ? 60 : layer.sizePx);
+    } else {
+      var rel = Math.max(2, Math.min(150, layer.size == null ? 25 : layer.size));
+      avgPx = Math.min(w, h) * (rel / 100);
+    }
 
     // Seeded RNG (Mulberry32)
     var s = seed === 0 ? 1 : seed;
@@ -5217,7 +5415,75 @@ function drawSprinkleLayer(ctx, layer){
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     }
 
-    // Drop shadow applies to each piece individually so they cast properly-shaped shadows.
+    // ── Set up sampler based on clusterMode ──
+    var sample;   // function returning {px, py} or null if no valid sample
+    if(clusterMode === 'center'){
+      // Cluster around the box's center. Radius is biased so high-cluster values keep pieces
+      // very close to center, low-cluster values let them spread out evenly within `spread` radius.
+      var cx = x + w/2, cy = y + h/2;
+      var maxR = Math.min(w, h) * 0.5 * (spread / 100) * 2;   // up to box diagonal-ish
+      var biasC = 1 + (cluster / 100) * 4;
+      sample = function(){
+        var ang = rnd() * Math.PI * 2;
+        var r = maxR * Math.pow(rnd(), biasC);
+        return { px: cx + Math.cos(ang) * r, py: cy + Math.sin(ang) * r };
+      };
+    } else if(clusterMode === 'text'){
+      // Cluster against a target text layer's glyph mask. Spread = halo radius (% of text height),
+      // cluster = how strict the acceptance threshold is. Outside the box, samples are clipped
+      // so the layer still acts as a region constraint.
+      var target = layers.find(function(l){ return l.id === layer.clusterTargetId; });
+      if(!target || target.type !== 'text'){
+        // Target gone — fall through to uniform fill so something still renders.
+        sample = function(){ return { px: x + rnd() * w, py: y + rnd() * h }; };
+      } else {
+        var size = target.fontSize || 72;
+        var lineH = size * (target.lineHeight || 1.2);
+        var totalH = (target._renderedH || lineH) || size;
+        var haloPx = Math.max(1, totalH * (spread / 100));
+        var maskInfo = getTargetTextGlyphMask(target, haloPx);
+        if(!maskInfo){
+          sample = function(){ return { px: x + rnd() * w, py: y + rnd() * h }; };
+        } else {
+          var maskPx = maskInfo.data.data;
+          var mwM = maskInfo.mw, mhM = maskInfo.mh, originXm = maskInfo.originX, originYm = maskInfo.originY;
+          // cluster=100 → minAlpha=1.0 (only ON glyphs); cluster=0 → minAlpha~0.03 (anywhere alpha>0)
+          var minAlpha = Math.pow(cluster / 100, 1.5) * 0.97 + 0.03;
+          // Sampling region: intersect (sprinkle box) with (text bounding box + halo).
+          // Use the union of (text bbox + halo) clipped to the sprinkle layer's box, so the box
+          // can be drawn anywhere (even bigger than the text) and still scope the effect.
+          var tx0 = Math.max(x, originXm);
+          var ty0 = Math.max(y, originYm);
+          var tx1 = Math.min(x + w, originXm + mwM);
+          var ty1 = Math.min(y + h, originYm + mhM);
+          var trw = Math.max(0, tx1 - tx0), trh = Math.max(0, ty1 - ty0);
+          if(trw <= 0 || trh <= 0){
+            sample = function(){ return null; };
+          } else {
+            var MAX_TRIES = 30;
+            sample = function(){
+              for(var t = 0; t < MAX_TRIES; t++){
+                var cx2 = tx0 + rnd() * trw;
+                var cy2 = ty0 + rnd() * trh;
+                var lx = Math.floor(cx2 - originXm);
+                var ly = Math.floor(cy2 - originYm);
+                if(lx < 0 || ly < 0 || lx >= mwM || ly >= mhM) continue;
+                var alpha = maskPx[(ly * mwM + lx) * 4 + 3] / 255;
+                if(alpha >= minAlpha && rnd() < alpha){
+                  return { px: cx2, py: cy2 };
+                }
+              }
+              // Best-effort: place at last candidate
+              return { px: cx2, py: cy2 };
+            };
+          }
+        }
+      }
+    } else {
+      // 'none' — uniform random fill within the box.
+      sample = function(){ return { px: x + rnd() * w, py: y + rnd() * h }; };
+    }
+
     var hasShadow = layerHasShadow && layerHasShadow(layer);
 
     for(var i = 0; i < count; i++){
@@ -5225,11 +5491,13 @@ function drawSprinkleLayer(ctx, layer){
       var img = pieces[imgIdx];
       if(!img || !img.complete || !img.naturalWidth) continue;
 
-      // Uniform position within the box. (No glyph mask — this is just a rectangular scatter.)
-      var px = x + rnd() * w;
-      var py = y + rnd() * h;
+      var pos = sample();
+      if(!pos) continue;
+      var px = pos.px, py = pos.py;
       var rot = (rnd() - 0.5) * Math.PI * 2;
-      var sz = avgPx * (0.6 + rnd() * 0.8);
+      // Per-piece size variation: ±sizeJitter%, so jitter=40 → 0.6× to 1.4×.
+      var jit = sizeJitter / 100;
+      var sz = avgPx * ((1 - jit) + rnd() * (2 * jit));
       var aspect = img.naturalHeight / img.naturalWidth;
       var dw = sz, dh = sz * aspect;
 
@@ -5238,8 +5506,7 @@ function drawSprinkleLayer(ctx, layer){
       ctx.rotate(rot);
 
       if(tintMix > 0){
-        // Tint by compositing on an offscreen canvas (so source-atop clips to the catnip
-        // silhouette only, not the entire underlying canvas — same fix as in v69).
+        // Tint by compositing on an offscreen canvas so source-atop clips to the silhouette only.
         var off = document.createElement('canvas');
         off.width = Math.max(1, Math.ceil(dw));
         off.height = Math.max(1, Math.ceil(dh));
