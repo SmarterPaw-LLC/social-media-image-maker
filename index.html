@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v63</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v64</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2725,25 +2725,39 @@ function ensureImageBaseline(layer){
 function textEffectsUI(l){
   var outlineCol = rgbaToHex(l.effectOutlineColor || '#000000');
   var glowCol    = rgbaToHex(l.effectGlowColor    || '#a8e063');
-  var catnipCol  = rgbaToHex(l.effectCatnipColor  || '#6db029');
   var gradTop    = rgbaToHex(l.effectStrokeGradTop || '#8ab81d');
   var gradBot    = rgbaToHex(l.effectStrokeGradBot || '#3c8e14');
+  var hasFillImg = !!l.effectImageFillSrc;
   var html = ''
     +'<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;font-size:11px;font-weight:700;color:var(--muted);">EFFECTS</div>'
 
-    // ── CATNIP FILL ──
+    // ── IMAGE FILL (text-as-mask) ──
     +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:4px;cursor:pointer;">'
-      +'<input type="checkbox" id="ptxt_fxCatnip"'+(l.effectCatnip?' checked':'')+'>'
-      +'<span>🌿 Catnip leaves (fill texture)</span>'
+      +'<input type="checkbox" id="ptxt_fxImageFill"'+(l.effectImageFill?' checked':'')+'>'
+      +'<span>🖼 Image fill (text as mask)</span>'
     +'</label>'
-    +(l.effectCatnip
+    +(l.effectImageFill
       ? '<div style="margin:0 0 8px 22px;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
-        +'<label style="font-size:11px;">Leaf color</label>'
-        +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">'
-          +'<input type="color" id="ptxt_fxCatnipColor" value="'+catnipCol+'" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
-          +'<input type="text" id="ptxt_fxCatnipColorHex" value="'+catnipCol.toUpperCase()+'" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
+        // Upload button + thumbnail of current image (if any)
+        +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
+          +'<button class="btn-add" style="flex:1;" onclick="promptImageFillUpload('+l.id+')">📁 '+(hasFillImg?'Replace image…':'Upload image…')+'</button>'
+          +(hasFillImg?'<button class="btn-sm danger" onclick="clearImageFill('+l.id+')" title="Remove uploaded image">✕</button>':'')
         +'</div>'
-        +R('Density','ptxt_fxCatnipDensity', l.effectCatnipDensity||3, 1, 5, 1)
+        +(hasFillImg
+          ? '<div style="margin-bottom:6px;border:1px solid var(--border);border-radius:4px;overflow:hidden;background:repeating-conic-gradient(#e8e8e0 0deg 90deg,#d8d8d0 90deg 180deg) 0 0/14px 14px;">'
+            +'<img src="'+(l._effectImageFillKeyedSrc || l.effectImageFillSrc)+'" style="display:block;width:100%;max-height:90px;object-fit:contain;">'
+          +'</div>'
+          : '<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Upload an image — the text glyphs will mask it.</div>')
+        +(hasFillImg
+          ? SEL('Fit','ptxt_fxImageFillFit',[['cover','Cover (fit to text)'],['tile','Tile (repeat)']], l.effectImageFillFit||'cover')
+            +R('Image scale (%)','ptxt_fxImageFillScale', l.effectImageFillScale||100, 10, 400, 1)
+            +R('Offset X','ptxt_fxImageFillOffsetX', l.effectImageFillOffsetX||0, -500, 500, 1)
+            +R('Offset Y','ptxt_fxImageFillOffsetY', l.effectImageFillOffsetY||0, -500, 500, 1)
+            +SEL('Background removal','ptxt_fxImageFillBgRemove',[['none','None'],['black','Drop near-black'],['white','Drop near-white']], l.effectImageFillBgRemove||'none')
+            +(l.effectImageFillBgRemove && l.effectImageFillBgRemove !== 'none'
+              ? R('Tolerance','ptxt_fxImageFillBgTolerance', l.effectImageFillBgTolerance||35, 5, 120, 1)
+              : '')
+          : '')
       +'</div>'
       : '')
 
@@ -2821,13 +2835,24 @@ function bindTextEffectsEvents(layer){
     });
   }
   // Master toggles — flip the layer flag and re-render the panel so the conditional controls show/hide.
-  on('ptxt_fxCatnip',  'change', function(e){ layer.effectCatnip  = e.target.checked; renderProps(); redraw(); });
+  on('ptxt_fxImageFill','change', function(e){ layer.effectImageFill = e.target.checked; renderProps(); redraw(); });
   on('ptxt_fxGlow',    'change', function(e){ layer.effectGlow    = e.target.checked; renderProps(); redraw(); });
   on('ptxt_fxOutline', 'change', function(e){ layer.effectOutline = e.target.checked; renderProps(); redraw(); });
   on('ptxt_fxOutlineMode','change',function(e){ layer.effectOutlineMode = e.target.value; renderProps(); redraw(); });
-  // Catnip controls
-  colorPair('ptxt_fxCatnipColor', 'ptxt_fxCatnipColorHex', function(c){ layer.effectCatnipColor = c; });
-  rng('ptxt_fxCatnipDensity', function(v){ layer.effectCatnipDensity = v; redraw(); });
+  // Image fill controls
+  on('ptxt_fxImageFillFit','change', function(e){ layer.effectImageFillFit = e.target.value; redraw(); });
+  rng('ptxt_fxImageFillScale',   function(v){ layer.effectImageFillScale = v; redraw(); });
+  rng('ptxt_fxImageFillOffsetX', function(v){ layer.effectImageFillOffsetX = v; redraw(); });
+  rng('ptxt_fxImageFillOffsetY', function(v){ layer.effectImageFillOffsetY = v; redraw(); });
+  on('ptxt_fxImageFillBgRemove','change', function(e){
+    layer.effectImageFillBgRemove = e.target.value;
+    rekeyFillImage(layer);
+    renderProps();
+  });
+  rng('ptxt_fxImageFillBgTolerance', function(v){
+    layer.effectImageFillBgTolerance = v;
+    rekeyFillImage(layer);
+  });
   // Glow controls
   colorPair('ptxt_fxGlowColor', 'ptxt_fxGlowColorHex', function(c){ layer.effectGlowColor = c; });
   rng('ptxt_fxGlowBlur',      function(v){ layer.effectGlowBlur = v; redraw(); });
@@ -2837,6 +2862,72 @@ function bindTextEffectsEvents(layer){
   colorPair('ptxt_fxOutlineColor',  'ptxt_fxOutlineColorHex',  function(c){ layer.effectOutlineColor = c; });
   on('ptxt_fxStrokeGradTop','input', function(e){ layer.effectStrokeGradTop = e.target.value; redraw(); });
   on('ptxt_fxStrokeGradBot','input', function(e){ layer.effectStrokeGradBot = e.target.value; redraw(); });
+}
+
+// Prompt the user to upload an image to use as the text fill. Stores it on the layer as a
+// data URL so the design is fully self-contained on save/load. Triggers re-key if a background
+// removal mode is selected. Downsamples the image to keep design files small for large photos.
+function promptImageFillUpload(layerId){
+  var layer = layers.find(function(l){return l.id===layerId;});
+  if(!layer) return;
+  var input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = function(e){
+    var file = e.target.files && e.target.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      // Decode the image so we can downsample if it's huge.
+      var raw = new Image();
+      raw.onload = function(){
+        // If the image is wider/taller than 1200px, downsample to keep the design file size sane.
+        // Most fill use cases don't need full-resolution photos and the design file balloons fast.
+        // Re-encode photos as JPEG (much smaller than PNG) and PNG/transparent images as PNG.
+        var MAXSIDE = 1200;
+        var iw = raw.naturalWidth, ih = raw.naturalHeight;
+        var dataUrl;
+        var isJpeg = file.type === 'image/jpeg' || file.type === 'image/jpg';
+        if(iw > MAXSIDE || ih > MAXSIDE){
+          var s = Math.min(MAXSIDE / iw, MAXSIDE / ih);
+          var c = document.createElement('canvas');
+          c.width = Math.round(iw * s); c.height = Math.round(ih * s);
+          c.getContext('2d').drawImage(raw, 0, 0, c.width, c.height);
+          dataUrl = isJpeg
+            ? c.toDataURL('image/jpeg', 0.88)
+            : c.toDataURL('image/png');
+        } else {
+          dataUrl = ev.target.result;
+        }
+        snapshotState();
+        layer.effectImageFillSrc = dataUrl;
+        // Bust the in-memory image cache so the new image loads on next redraw
+        delete _fillImageCache[dataUrl];
+        layer._effectImageFillKeyedSrc = null;
+        // Re-key if a background removal mode is set
+        if(layer.effectImageFillBgRemove && layer.effectImageFillBgRemove !== 'none'){
+          rekeyFillImage(layer);
+        }
+        renderProps();
+        redraw();
+      };
+      raw.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+// Remove the uploaded fill image but keep the effect enabled (text falls back to solid color).
+function clearImageFill(layerId){
+  var layer = layers.find(function(l){return l.id===layerId;});
+  if(!layer) return;
+  snapshotState();
+  if(layer.effectImageFillSrc) delete _fillImageCache[layer.effectImageFillSrc];
+  if(layer._effectImageFillKeyedSrc) delete _fillImageCache[layer._effectImageFillKeyedSrc];
+  layer.effectImageFillSrc = null;
+  layer._effectImageFillKeyedSrc = null;
+  renderProps(); redraw();
 }
 
 // Apply a gradient preset's two stops to the text-effect outline gradient (parallel to
@@ -4217,98 +4308,152 @@ function withRotation(ctx,layer,fn){
   ctx.save();ctx.translate(cx,cy);ctx.rotate(layer.rotation*Math.PI/180);ctx.translate(-cx,-cy);fn();ctx.restore();
 }
 
-// ── CATNIP TEXTURE PATTERN ──
-// Generates a tileable canvas pattern of catnip-style leaves in two color tones, used as
-// the fill style for text when the user picks the "catnip" effect. Cached by config so we
-// only regenerate when the user changes color or density.
-var _catnipPatternCache = {};
+// ── IMAGE FILL FOR TEXT (text-as-mask effect) ──
+// Used by the "Image fill" text effect: lets the user upload an image which is then masked
+// by the glyph silhouettes. Supports tile (repeat the image) and cover (fit one copy to the
+// text bounding box) modes, plus optional automatic background-key removal for images that
+// have a flat black or white background (handy for product photos shot on a backdrop).
 
-// Draw a single catnip-style leaf at (cx,cy) with the given size, rotation, and color.
-// The leaf is a pointed almond shape with a centered vein. Uses bezier curves so it stays
-// smooth at any tile size.
-function drawCatnipLeaf(ctx, cx, cy, size, angle, fillColor, veinColor){
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(angle);
-  // Leaf outline: pointed almond. Width is ~0.45×size; length is `size`.
-  var L = size, W = size * 0.45;
-  ctx.beginPath();
-  ctx.moveTo(0, -L/2);                                            // tip
-  ctx.bezierCurveTo( W*0.6, -L*0.35,  W*0.7,  L*0.25,  0,  L/2);  // right side down to base
-  ctx.bezierCurveTo(-W*0.7,  L*0.25, -W*0.6, -L*0.35,  0, -L/2);  // left side up to tip
-  ctx.closePath();
-  ctx.fillStyle = fillColor;
-  ctx.fill();
-  // Center vein for a touch of detail (slightly darker tone).
-  ctx.beginPath();
-  ctx.moveTo(0, -L*0.42);
-  ctx.lineTo(0,  L*0.42);
-  ctx.strokeStyle = veinColor;
-  ctx.lineWidth = Math.max(1, size * 0.04);
-  ctx.lineCap = 'round';
-  ctx.stroke();
-  // A few side-veins angling out from the center
-  for(var i = 0; i < 3; i++){
-    var t = -0.25 + i * 0.25;            // -0.25, 0, 0.25 (proportion of leaf length)
-    var py = t * L;
-    var len = W * (0.55 - Math.abs(t)*0.6);
-    ctx.beginPath();
-    ctx.moveTo(0, py);
-    ctx.lineTo( len, py + L*0.08);
-    ctx.moveTo(0, py);
-    ctx.lineTo(-len, py + L*0.08);
-    ctx.stroke();
-  }
-  ctx.restore();
+// Cache HTMLImageElements by data URL so we don't decode the same image on every redraw.
+var _fillImageCache = {};
+function getFillImage(layer){
+  var src = layer.effectImageFillSrc;
+  if(!src) return null;
+  // The keyed (background-removed) version is stored separately on the layer as a data URL.
+  var keyed = layer._effectImageFillKeyedSrc;
+  var useSrc = keyed || src;
+  if(_fillImageCache[useSrc]) return _fillImageCache[useSrc];
+  var img = new Image();
+  img.onload = function(){ redraw(); };
+  img.src = useSrc;
+  _fillImageCache[useSrc] = img;
+  return img;
 }
 
-// Build a tileable pattern of catnip leaves. The tile is 96×96 by default with several leaves
-// at varied angles to avoid an obvious grid. `color` is the leaf fill (vein is darkened).
-// Returns a CanvasPattern ready to use as a fillStyle.
-function buildCatnipPattern(ctx, color, density){
-  var key = color + '|' + density;
-  if(_catnipPatternCache[key]) return _catnipPatternCache[key];
-  var TILE = 96;
-  var off = document.createElement('canvas');
-  off.width = TILE; off.height = TILE;
-  var octx = off.getContext('2d');
-  // Vein color: darker tone of fill color. Quick HSL darken via parseInt-on-hex math.
-  var veinHex = (color || '#3c8e14').replace('#','');
-  if(veinHex.length === 3) veinHex = veinHex[0]+veinHex[0]+veinHex[1]+veinHex[1]+veinHex[2]+veinHex[2];
-  var vr = Math.max(0, parseInt(veinHex.substring(0,2),16) - 50);
-  var vg = Math.max(0, parseInt(veinHex.substring(2,4),16) - 50);
-  var vb = Math.max(0, parseInt(veinHex.substring(4,6),16) - 50);
-  var veinColor = 'rgba('+vr+','+vg+','+vb+',0.7)';
-  // Density: 1 (sparse) to 5 (dense). Drives both leaf count and base size.
-  var d = Math.max(1, Math.min(5, density || 3));
-  var leafCount = 3 + d * 2;     // 5 → 13 leaves per tile
-  var baseSize = TILE * (0.7 - d * 0.06);  // bigger leaves at lower density
-  // Seeded layout so the pattern is deterministic across redraws.
-  var seed = 1337;
-  function rand(){ seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
-  for(var i = 0; i < leafCount; i++){
-    var lx = rand() * TILE;
-    var ly = rand() * TILE;
-    var lr = (rand() - 0.5) * Math.PI * 2;
-    var sz = baseSize * (0.7 + rand() * 0.6);
-    drawCatnipLeaf(octx, lx, ly, sz, lr, color, veinColor);
-    // Wrap-around copies so leaves crossing tile edges still look continuous when tiled.
-    if(lx < sz) drawCatnipLeaf(octx, lx + TILE, ly, sz, lr, color, veinColor);
-    if(lx > TILE - sz) drawCatnipLeaf(octx, lx - TILE, ly, sz, lr, color, veinColor);
-    if(ly < sz) drawCatnipLeaf(octx, lx, ly + TILE, sz, lr, color, veinColor);
-    if(ly > TILE - sz) drawCatnipLeaf(octx, lx, ly - TILE, sz, lr, color, veinColor);
+// Apply automatic background removal: pixels close to pure black (or white) become transparent.
+// `mode` is 'black' or 'white'. `tolerance` is 0–255 (how dark/light counts as background).
+// Returns a data URL. Caller should store this on the layer as _effectImageFillKeyedSrc.
+function keyOutBackground(srcImage, mode, tolerance){
+  var c = document.createElement('canvas');
+  c.width = srcImage.naturalWidth || srcImage.width;
+  c.height = srcImage.naturalHeight || srcImage.height;
+  var cx = c.getContext('2d');
+  cx.drawImage(srcImage, 0, 0);
+  var data;
+  try { data = cx.getImageData(0, 0, c.width, c.height); }
+  catch(e){ console.warn('[fill] could not read image data (CORS?)', e); return null; }
+  var px = data.data;
+  var t = tolerance == null ? 35 : tolerance;
+  if(mode === 'black'){
+    for(var i = 0; i < px.length; i += 4){
+      if(px[i] < t && px[i+1] < t && px[i+2] < t){
+        // Set alpha based on how close to pure black; smooth edges instead of hard-keying.
+        var brightness = (px[i] + px[i+1] + px[i+2]) / 3;
+        px[i+3] = Math.max(0, Math.min(255, brightness * (255 / t)));
+      }
+    }
+  } else if(mode === 'white'){
+    for(var j = 0; j < px.length; j += 4){
+      if(px[j] > 255-t && px[j+1] > 255-t && px[j+2] > 255-t){
+        var darkness = 255 - ((px[j] + px[j+1] + px[j+2]) / 3);
+        px[j+3] = Math.max(0, Math.min(255, darkness * (255 / t)));
+      }
+    }
   }
-  var pattern = ctx.createPattern(off, 'repeat');
-  _catnipPatternCache[key] = pattern;
-  return pattern;
+  cx.putImageData(data, 0, 0);
+  return c.toDataURL('image/png');
+}
+
+// Re-key the layer's source image whenever the bg-removal mode changes. Drops cache so the
+// new keyed image is loaded by the next redraw.
+function rekeyFillImage(layer){
+  layer._effectImageFillKeyedSrc = null;
+  if(!layer.effectImageFillSrc) return;
+  var mode = layer.effectImageFillBgRemove;
+  if(!mode || mode === 'none') { redraw(); return; }
+  var img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = function(){
+    var keyed = keyOutBackground(img, mode, layer.effectImageFillBgTolerance || 35);
+    if(keyed) layer._effectImageFillKeyedSrc = keyed;
+    // Bust the in-memory cache so the next redraw picks up the new src
+    delete _fillImageCache[layer.effectImageFillSrc];
+    if(keyed) delete _fillImageCache[keyed];
+    redraw();
+  };
+  img.src = layer.effectImageFillSrc;
+}
+
+// Render the text layer with image-fill mode active. We draw text glyphs onto an offscreen
+// canvas, switch to source-in compositing so subsequent draws only land where text was, then
+// drawImage the fill image to fill the glyph silhouettes. Finally blit the offscreen onto
+// the real ctx, where it sits at the same position the text would have been.
+//
+// `linesArr` is the wrapped lines, `metrics` is {x, y, w, totalH, lineH, align, font, useManualKerning, letterSpacing}.
+function paintImageFilledText(ctx, layer, linesArr, metrics){
+  var img = getFillImage(layer);
+  if(!img || !img.complete || !img.naturalWidth){
+    // Image not loaded yet — fall back to a solid color so something shows.
+    ctx.fillStyle = layer.color || '#222';
+    return false;
+  }
+  // Offscreen canvas sized to the text bounding box (with some padding for shadow blur etc.)
+  var pad = 4;
+  var W = Math.max(1, Math.ceil(metrics.w + pad*2));
+  var H = Math.max(1, Math.ceil(metrics.totalH + pad*2));
+  var off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  var octx = off.getContext('2d');
+  octx.font = metrics.font;
+  octx.textBaseline = 'top';
+  octx.textAlign = metrics.align==='center' ? 'center' : metrics.align==='right' ? 'right' : 'left';
+  octx.fillStyle = '#000';   // any opaque color; this is the mask
+  // Draw lines into the offscreen, translated so (metrics.x, metrics.y) maps to (pad, pad).
+  linesArr.forEach(function(line, i){
+    var lx = pad;
+    if(metrics.align === 'center') lx = pad + metrics.w/2;
+    else if(metrics.align === 'right') lx = pad + metrics.w;
+    var ly = pad + i * metrics.lineH;
+    if(metrics.useManualKerning){
+      drawTextWithLetterSpacing(octx, line, lx, ly, metrics.letterSpacing, metrics.align, metrics.w);
+    } else {
+      octx.fillText(line, lx, ly);
+    }
+  });
+  // Now keep only where the text was, and paint the image into that region.
+  octx.globalCompositeOperation = 'source-in';
+  var fitMode = layer.effectImageFillFit || 'cover';   // 'cover' or 'tile'
+  if(fitMode === 'tile'){
+    // Build (or reuse) a CanvasPattern from the image and fill the whole offscreen — only
+    // glyph regions survive due to source-in.
+    var pat = octx.createPattern(img, 'repeat');
+    if(pat){
+      var scale = Math.max(0.1, (layer.effectImageFillScale || 100) / 100);
+      if(pat.setTransform){
+        try { pat.setTransform(new DOMMatrix().scale(scale, scale)); } catch(e){}
+      }
+      octx.fillStyle = pat;
+      octx.fillRect(0, 0, W, H);
+    }
+  } else {
+    // 'cover': scale the image to fill the text bounding box (preserves aspect, may crop).
+    var iw = img.naturalWidth, ih = img.naturalHeight;
+    var s = Math.max(W / iw, H / ih) * Math.max(0.1, (layer.effectImageFillScale || 100) / 100);
+    var dw = iw * s, dh = ih * s;
+    var dx = (W - dw) / 2 + (layer.effectImageFillOffsetX || 0);
+    var dy = (H - dh) / 2 + (layer.effectImageFillOffsetY || 0);
+    octx.drawImage(img, dx, dy, dw, dh);
+  }
+  octx.globalCompositeOperation = 'source-over';
+  // Blit the masked text onto the real ctx at (metrics.x - pad, metrics.y - pad).
+  ctx.drawImage(off, metrics.x - pad, metrics.y - pad);
+  return true;
 }
 
 // Build a CanvasGradient for a stroke of the given length, oriented vertically across the text.
 // Uses the layer's effectStrokeGradTop/Bottom (or default brand greens) and gradient-stop logic.
 function buildEffectStrokeGradient(ctx, layer, x, y, h){
   var grad = ctx.createLinearGradient(x, y, x, y + h);
-  // Reuse addLayerGradientStops by temporarily swapping fields, but it reads fixed names —
-  // simpler to just manually add 2 stops here.
   grad.addColorStop(0, layer.effectStrokeGradTop || '#8ab81d');
   grad.addColorStop(1, layer.effectStrokeGradBot || '#3c8e14');
   return grad;
@@ -4397,32 +4542,61 @@ function drawTextLayer(ctx, layer){
     }
 
     // ── PASS 2: MAIN FILL (with optional drop shadow) ──
-    // Build the fill style: solid / gradient / catnip texture.
-    if(layer.effectCatnip){
-      var pat = buildCatnipPattern(ctx, layer.effectCatnipColor || '#6db029', layer.effectCatnipDensity || 3);
-      // Shift the pattern so it scrolls with the text — without this, leaves "drift through" glyphs
-      // as the layer is moved on canvas.
-      if(pat && pat.setTransform){
-        try { pat.setTransform(new DOMMatrix().translate(x, y)); } catch(e){}
+    // Image fill is handled specially: 'tile' mode uses createPattern (simple, fast),
+    // 'cover' mode uses an offscreen canvas with source-in compositing to mask one image
+    // copy to the text bounding box. The two modes have different drop-shadow handling.
+    var didImageFill = false;
+    if(layer.effectImageFill && layer.effectImageFillSrc){
+      var fimg = getFillImage(layer);
+      if(fimg && fimg.complete && fimg.naturalWidth){
+        var fitMode = layer.effectImageFillFit || 'cover';
+        if(fitMode === 'tile'){
+          var pat = ctx.createPattern(fimg, 'repeat');
+          if(pat){
+            var sc = Math.max(0.05, (layer.effectImageFillScale || 100) / 100);
+            if(pat.setTransform){
+              try {
+                pat.setTransform(new DOMMatrix()
+                  .translate(x + (layer.effectImageFillOffsetX || 0), y + (layer.effectImageFillOffsetY || 0))
+                  .scale(sc, sc));
+              } catch(e){}
+            }
+            if(layerHasShadow(layer)) applyLayerShadow(ctx, layer);
+            ctx.fillStyle = pat;
+            eachLine(drawLineFilled);
+            didImageFill = true;
+          }
+        } else {
+          // 'cover' mode — offscreen mask + drawImage. Drop shadow applied to the blit.
+          var metrics = {
+            x: x, y: y, w: w, totalH: totalH, lineH: lineH,
+            align: align, font: weight+' '+size+'px '+family+', sans-serif',
+            useManualKerning: useManualKerning, letterSpacing: letterSpacing
+          };
+          if(layerHasShadow(layer)) applyLayerShadow(ctx, layer);
+          if(paintImageFilledText(ctx, layer, lines, metrics)){
+            didImageFill = true;
+          }
+        }
       }
-      ctx.fillStyle = pat || (layer.color || '#3c8e14');
-    } else if(layer.fillMode === 'gradient'){
-      var angle = (layer.gradAngle==null ? 90 : layer.gradAngle) * Math.PI/180;
-      var ccx = x + w/2, ccy = y + totalH/2;
-      var len = Math.sqrt(w*w + totalH*totalH)/2;
-      var gx1 = ccx - Math.cos(angle)*len, gy1 = ccy - Math.sin(angle)*len;
-      var gx2 = ccx + Math.cos(angle)*len, gy2 = ccy + Math.sin(angle)*len;
-      var grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
-      addLayerGradientStops(grad, layer);
-      ctx.fillStyle = grad;
-    } else {
-      ctx.fillStyle = layer.color || '#222';
     }
-
-    // Drop shadow: applied to the main fill pass only (we don't want outline or glow doubling up).
-    if(layerHasShadow(layer)) applyLayerShadow(ctx, layer);
-
-    eachLine(drawLineFilled);
+    if(!didImageFill){
+      // Build standard fill: solid / gradient.
+      if(layer.fillMode === 'gradient'){
+        var angle = (layer.gradAngle==null ? 90 : layer.gradAngle) * Math.PI/180;
+        var ccx = x + w/2, ccy = y + totalH/2;
+        var len = Math.sqrt(w*w + totalH*totalH)/2;
+        var gx1 = ccx - Math.cos(angle)*len, gy1 = ccy - Math.sin(angle)*len;
+        var gx2 = ccx + Math.cos(angle)*len, gy2 = ccy + Math.sin(angle)*len;
+        var grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
+        addLayerGradientStops(grad, layer);
+        ctx.fillStyle = grad;
+      } else {
+        ctx.fillStyle = layer.color || '#222';
+      }
+      if(layerHasShadow(layer)) applyLayerShadow(ctx, layer);
+      eachLine(drawLineFilled);
+    }
 
     // Track the actual rendered height on the layer so bounds/selection match
     layer._renderedH = totalH;
