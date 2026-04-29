@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v79</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v80</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4844,8 +4844,11 @@ function paintImageFilledText(ctx, layer, linesArr, metrics){
   octx.font = metrics.font;
   octx.textBaseline = 'top';
   octx.textAlign = metrics.align==='center' ? 'center' : metrics.align==='right' ? 'right' : 'left';
-  octx.fillStyle = '#000';   // any opaque color; this is the mask
-  // Draw lines into the offscreen, translated so (metrics.x, metrics.y) maps to (pad, pad).
+  // First pass: draw the glyphs in the layer's solid color. This gives the glyph silhouette
+  // an opaque base — important because if the user's fill image has transparent gaps (e.g. a
+  // bg-removed catnip photo), those gaps would otherwise let layers BEHIND show through the
+  // glyph shape. With this base, transparent gaps in the fill image just reveal solid color.
+  octx.fillStyle = layer.color || '#222';
   linesArr.forEach(function(line, i){
     var lx = pad;
     if(metrics.align === 'center') lx = pad + metrics.w/2;
@@ -4857,8 +4860,11 @@ function paintImageFilledText(ctx, layer, linesArr, metrics){
       octx.fillText(line, lx, ly);
     }
   });
-  // Now keep only where the text was, and paint the image into that region.
-  octx.globalCompositeOperation = 'source-in';
+  // Now overlay the fill image on top of the solid-color glyph silhouette. We use 'source-atop'
+  // (paint where dest is opaque, preserving dest's opacity) instead of 'source-in' (which would
+  // erase the solid base wherever the image has transparent pixels). With source-atop, the
+  // image's transparent areas reveal the solid base — no holes for behind-layers to peek through.
+  octx.globalCompositeOperation = 'source-atop';
   var fitMode = layer.effectImageFillFit || 'cover';   // 'cover' or 'tile'
   if(fitMode === 'tile'){
     // Build (or reuse) a CanvasPattern from the image and fill the whole offscreen — only
