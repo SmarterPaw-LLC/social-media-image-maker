@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v90</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v91</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4237,14 +4237,13 @@ function bindCanvasEvents(){
     // If the clicked layer is part of the current multi-selection, keep the whole group selected
     // and start a GROUP drag. Otherwise replace selection with just this layer.
     var inSelection = selectedIds && selectedIds.length > 1 && selectedIds.indexOf(layer.id) >= 0;
-    if(!inSelection){
-      selectLayer(layer.id);
-    }
     // Locked layers can be selected but not dragged around
-    if(layer.locked) return;
+    if(layer.locked){
+      if(!inSelection) selectLayer(layer.id);
+      return;
+    }
     snapshotState();
-    // Build the drag state. For group drag, capture each participating layer's original x/y so we can
-    // translate them together. Locked layers in the group stay put (skipped during drag).
+    // Build the drag state FIRST so the very next mousemove sees the drag in flight.
     var groupIds = inSelection ? selectedIds.slice() : [layer.id];
     var origPositions = {};
     groupIds.forEach(function(id){
@@ -4263,6 +4262,20 @@ function bindCanvasEvents(){
       origPositions: origPositions
     };
     e.preventDefault();
+    // Defer the property-panel rebuild to the next frame. Building text/sticker panels takes
+    // 50–150ms (font lists, color pickers, effect sections); doing that synchronously here
+    // delays the next mousemove and makes drag feel laggy. By deferring, drag tracks instantly
+    // and the panel catches up a frame later.
+    if(!inSelection){
+      // Update selectedId immediately so other UI reads it correctly, but defer the heavy
+      // DOM rebuild done in renderLayerList + renderProps.
+      selectedId = layer.id;
+      selectedIds = [layer.id];
+      requestAnimationFrame(function(){
+        renderLayerList();
+        renderProps();
+      });
+    }
   });
   window.addEventListener('mousemove',function(e){
     if(cropState && cropState.dragHandle){
@@ -4783,22 +4796,22 @@ function redraw(){
 }
 
 // ── CROP MODE ──
-// cropState.cropX/Y/W/H are in SOURCE-IMAGE pixel coordinates.
-// We map them to/from canvas-space (the displayed layer rect) via the layer's w/h and the image's natural size.
+// cropState holds the crop rectangle as a fraction of the **currently displayed layer area**
+// (cropFx/Fy/Fw/Fh, all in [0..1]). This means the overlay always sits inside the on-canvas
+// layer rect and the geometry is independent of whether the layer is already cropped.
+//
+// On confirmCrop(), the display-fraction is mapped back into source-image coordinates by
+// composing with whatever crop the layer already has (so re-cropping a cropped image just
+// produces a tighter crop in source space — no resetting, no double-mapping).
 
 function enterCropMode(layerId){
   var layer=layers.find(function(l){return l.id===layerId;});
   if(!layer || !layer.img) return;
-  var nw=layer.img.naturalWidth, nh=layer.img.naturalHeight;
   cropState={
     layerId: layer.id,
-    cropX: layer.cropX!=null?layer.cropX:0,
-    cropY: layer.cropY!=null?layer.cropY:0,
-    cropW: layer.cropW!=null?layer.cropW:nw,
-    cropH: layer.cropH!=null?layer.cropH:nh,
-    dragHandle: null,
-    natW: nw,
-    natH: nh
+    // Start with the crop rect filling the entire displayed area — user adjusts inward.
+    cropFx: 0, cropFy: 0, cropFw: 1, cropFh: 1,
+    dragHandle: null
   };
   showCropToolbar();
   redraw();
@@ -4813,12 +4826,19 @@ function exitCropMode(){
 function confirmCrop(){
   if(!cropState)return;
   var layer=layers.find(function(l){return l.id===cropState.layerId;});
-  if(layer){
+  if(layer && layer.img){
     snapshotState();
-    layer.cropX=Math.round(cropState.cropX);
-    layer.cropY=Math.round(cropState.cropY);
-    layer.cropW=Math.round(cropState.cropW);
-    layer.cropH=Math.round(cropState.cropH);
+    var nw = layer.img.naturalWidth, nh = layer.img.naturalHeight;
+    // Existing crop in source pixels (defaults to full image if none yet)
+    var ex = layer.cropX!=null ? layer.cropX : 0;
+    var ey = layer.cropY!=null ? layer.cropY : 0;
+    var ew = layer.cropW!=null ? layer.cropW : nw;
+    var eh = layer.cropH!=null ? layer.cropH : nh;
+    // Map the display-fraction crop into source coords by scaling within the existing crop rect.
+    layer.cropX = Math.round(ex + cropState.cropFx * ew);
+    layer.cropY = Math.round(ey + cropState.cropFy * eh);
+    layer.cropW = Math.round(cropState.cropFw * ew);
+    layer.cropH = Math.round(cropState.cropFh * eh);
   }
   exitCropMode();
   renderProps();
@@ -4848,20 +4868,14 @@ function resetImageScale(layerId){
   renderProps(); redraw();
 }
 
-// Map crop rect from source-image coords to canvas-space (the rectangle on the canvas where
-// that cropped region currently appears, based on the layer's displayed x/y/w/h).
-// For now we treat the crop rect as showing within the layer's displayed bounds proportionally.
-function cropSourceToCanvas(layer){
-  // The layer is displayed at (layer.x, layer.y, layer.w, layer.h).
-  // We'll show the crop rectangle as a sub-rectangle of the displayed area, proportional to the source crop rect.
-  var nw=cropState.natW, nh=cropState.natH;
-  var sxFrac=cropState.cropX/nw, syFrac=cropState.cropY/nh;
-  var swFrac=cropState.cropW/nw, shFrac=cropState.cropH/nh;
+// Map the display-fraction crop rect to canvas-space coordinates (the on-screen rectangle
+// to draw the crop overlay at). Always sits inside the layer's displayed bounds.
+function cropDisplayToCanvas(layer){
   return {
-    x: layer.x + sxFrac*layer.w,
-    y: layer.y + syFrac*layer.h,
-    w: swFrac*layer.w,
-    h: shFrac*layer.h
+    x: layer.x + cropState.cropFx * layer.w,
+    y: layer.y + cropState.cropFy * layer.h,
+    w: cropState.cropFw * layer.w,
+    h: cropState.cropFh * layer.h
   };
 }
 
@@ -4870,7 +4884,7 @@ function drawCropOverlay(ctx){
   if(!layer)return;
   ctx.save();
   // Dim everything outside the crop rect
-  var r=cropSourceToCanvas(layer);
+  var r=cropDisplayToCanvas(layer);
   ctx.fillStyle='rgba(0,0,0,0.45)';
   // Dim outside of crop rect (within the layer's bounds)
   ctx.beginPath();
@@ -4911,7 +4925,7 @@ function hitCropHandle(cx, cy){
   if(!cropState)return null;
   var layer=layers.find(function(l){return l.id===cropState.layerId;});
   if(!layer)return null;
-  var r=cropSourceToCanvas(layer);
+  var r=cropDisplayToCanvas(layer);
   var handles=getCropHandles(r);
   var hitR=(HANDLE_SIZE*1.5)/zoomLevel;
   var found=null;
@@ -4925,22 +4939,20 @@ function hitCropHandle(cx, cy){
 function updateCropHandle(handle, cx, cy){
   var layer=layers.find(function(l){return l.id===cropState.layerId;});
   if(!layer)return;
-  // Convert canvas coord (cx,cy) back to source-image coord
+  // Convert canvas coord (cx,cy) to display fraction within the layer rect, clamped to [0..1].
   var fx=(cx-layer.x)/layer.w;
   var fy=(cy-layer.y)/layer.h;
-  var sx=fx*cropState.natW;
-  var sy=fy*cropState.natH;
-  sx=Math.max(0,Math.min(cropState.natW,sx));
-  sy=Math.max(0,Math.min(cropState.natH,sy));
-  var cx0=cropState.cropX, cy0=cropState.cropY;
-  var cx1=cropState.cropX+cropState.cropW, cy1=cropState.cropY+cropState.cropH;
-  var minSize=20; // min crop rect dimension in source pixels
-  if(handle.indexOf('w')>=0) cx0=Math.min(sx, cx1-minSize);
-  if(handle.indexOf('e')>=0) cx1=Math.max(sx, cx0+minSize);
-  if(handle.indexOf('n')>=0) cy0=Math.min(sy, cy1-minSize);
-  if(handle.indexOf('s')>=0) cy1=Math.max(sy, cy0+minSize);
-  cropState.cropX=cx0; cropState.cropY=cy0;
-  cropState.cropW=cx1-cx0; cropState.cropH=cy1-cy0;
+  fx=Math.max(0, Math.min(1, fx));
+  fy=Math.max(0, Math.min(1, fy));
+  var fx0=cropState.cropFx, fy0=cropState.cropFy;
+  var fx1=cropState.cropFx+cropState.cropFw, fy1=cropState.cropFy+cropState.cropFh;
+  var minF=0.05; // min crop rect dimension as fraction of displayed area
+  if(handle.indexOf('w')>=0) fx0=Math.min(fx, fx1-minF);
+  if(handle.indexOf('e')>=0) fx1=Math.max(fx, fx0+minF);
+  if(handle.indexOf('n')>=0) fy0=Math.min(fy, fy1-minF);
+  if(handle.indexOf('s')>=0) fy1=Math.max(fy, fy0+minF);
+  cropState.cropFx=fx0; cropState.cropFy=fy0;
+  cropState.cropFw=fx1-fx0; cropState.cropFh=fy1-fy0;
   redraw();
 }
 
