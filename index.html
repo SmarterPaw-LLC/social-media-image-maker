@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v88</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v89</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3329,6 +3329,13 @@ function buildTextProps(l){
   return '<div class="prop-section">'
     +'<label style="font-size:10px;color:var(--muted);">Text</label>'
     +'<textarea id="ptxt_text" rows="3" style="width:100%;padding:7px 9px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fafafa;font-family:inherit;resize:vertical;">'+escAttr(l.text)+'</textarea>'
+    // Emoji helper button: focuses the textarea and shows the platform-specific OS shortcut.
+    // We can't open the native emoji picker programmatically (no browser API for that — OS-level
+    // privilege), so this is purely a discoverability aid.
+    +'<div style="display:flex;gap:6px;align-items:center;margin-top:4px;">'
+      +'<button type="button" id="ptxt_emojiBtn" class="btn-sm" style="padding:4px 8px;font-size:12px;" title="Insert emoji using your OS picker">😀 Emoji</button>'
+      +'<span id="ptxt_emojiHint" style="font-size:10px;color:var(--muted);"></span>'
+    +'</div>'
     +'<div class="col2" style="margin-top:5px;gap:5px;">'
     +'<div><label style="font-size:10px;color:var(--muted);">Font</label>'
     +'<select id="ptxt_family">'+fontOpts+'</select></div>'
@@ -3795,6 +3802,27 @@ function bindPropEvents(layer){
     rng('pfimg_opacity', function(v){layer.opacity=v;redraw();});
   } else if(layer.type==='text'){
     on('ptxt_text','input',function(e){layer.text=e.target.value;redraw();});
+    // Emoji helper: focuses the textarea and shows the platform-specific OS shortcut as a hint.
+    // The native picker is OS-managed; browsers can't open it via JS, so this is discoverability only.
+    on('ptxt_emojiBtn','click',function(){
+      var ta = document.getElementById('ptxt_text');
+      if(ta) ta.focus();
+      var ua = navigator.userAgent || '';
+      var plat = navigator.platform || '';
+      var hint;
+      if(/Mac|iPad|iPhone|iPod/i.test(plat) || /Mac OS X/i.test(ua)) hint = 'Press ⌃ Ctrl + ⌘ Cmd + Space';
+      else if(/Win/i.test(plat))                                     hint = 'Press Win + . (period)';
+      else if(/Android/i.test(ua))                                   hint = 'Long-press on your keyboard to switch to emoji';
+      else if(/Linux/i.test(plat))                                   hint = 'Press Ctrl + . (period) — varies by desktop';
+      else                                                           hint = 'Use your OS emoji shortcut';
+      var hintEl = document.getElementById('ptxt_emojiHint');
+      if(hintEl){
+        hintEl.textContent = hint;
+        hintEl.style.color = 'var(--green)';
+        // Fade back to muted after a few seconds
+        setTimeout(function(){ if(hintEl) hintEl.style.color = 'var(--muted)'; }, 4000);
+      }
+    });
     on('ptxt_family','change',function(e){
       var val = e.target.value;
       if(val === '__browse__'){
