@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v74</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v79</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -852,6 +852,7 @@ function copySelected(){
       if(k==='_img') continue;       // framed image's image element
       if(k==='_video') continue;
       if(k==='_playing') continue;
+      if(k==='_editingInline') continue;  // transient editing UI flag
       if(l.type==='svg' && k==='url') continue;  // blob URL — regenerated from svgText on paste
       out[k] = l[k];
     }
@@ -968,6 +969,7 @@ function serializeLayers(){
       if(k==='_img') continue;       // framed image's image element (kept separate to avoid name clash)
       if(k==='_video') continue;
       if(k==='_playing') continue;
+      if(k==='_editingInline') continue;  // transient editing UI flag
       if(l.type==='svg' && k==='url') continue;  // blob URL — regenerated from svgText on load
       out[k] = l[k];
     }
@@ -1820,6 +1822,7 @@ function addSprinkleLayer(){
     // Clustering
     clusterMode: 'none',         // 'none' (uniform fill) | 'center' (cluster toward box middle) | 'text' (glyph-mask cluster around target text layer)
     clusterTargetId: null,       // when clusterMode='text': the text layer's id
+    clipToGlyphs: false,         // when clusterMode='text': also clip rendered pieces to (glyph + spread-px bleed) so they don't extend past the letter shapes
     spread: 50,                  // halo radius — % of box's shorter dim. Used by 'center' and 'text' modes.
     cluster: 70,                 // tightness 0..100. Higher = tighter to anchor (center or glyphs).
     seed: Math.floor(Math.random() * 9999) + 1,
@@ -3218,6 +3221,13 @@ function buildSprinkleProps(l){
           ? R('Spread (% of '+(clusterMode==='text'?'text height':'box')+')','psprSpread', l.spread==null?50:l.spread, 0, 150, 1)
             + R('Cluster tightness (%)','psprCluster', l.cluster==null?70:l.cluster, 0, 100, 1)
           : '')
+      + (clusterMode === 'text'
+          ? '<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:4px;cursor:pointer;">'
+              +'<input type="checkbox" id="psprClipToGlyphs"'+(l.clipToGlyphs?' checked':'')+'>'
+              +'<span>Clip pieces to glyph shape</span>'
+            +'</label>'
+            +'<div style="font-size:10px;color:var(--muted);margin:2px 0 0 22px;line-height:1.3;">When on, sprinkles only show inside the letter shapes (plus the spread bleed) — pieces won\'t extend far past the letter edges.</div>'
+          : '')
     + '</div>'
     + R('Count','psprCount', l.count==null?30:l.count, 1, 200, 1)
     + '<div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:5px;">'
@@ -3592,6 +3602,7 @@ function bindPropEvents(layer){
     });
     rng('psprSpread',  function(v){ layer.spread  = v; redraw(); });
     rng('psprCluster', function(v){ layer.cluster = v; redraw(); });
+    on('psprClipToGlyphs','change', function(e){ layer.clipToGlyphs = e.target.checked; redraw(); });
     // Distribution
     rng('psprCount',function(v){ layer.count = v; redraw(); });
     rng('psprSeed', function(v){ layer.seed  = v; redraw(); });
@@ -3933,6 +3944,14 @@ function bindCanvasEvents(){
   });
 
   wrap.addEventListener('mousedown',function(e){
+    // If the inline text editor is open and the mousedown is inside it (or on the textarea
+    // itself), let the textarea handle the event natively — selection, caret movement, etc.
+    // Without this bailout, the layer-drag logic below calls e.preventDefault() which blocks
+    // the textarea's selection start.
+    if(_inlineTextEditor && _inlineTextEditor.textarea){
+      var ta = _inlineTextEditor.textarea;
+      if(e.target === ta || (ta.contains && ta.contains(e.target))) return;
+    }
     var rect=wrap.getBoundingClientRect();
     var cx=(e.clientX-rect.left)/zoomLevel,cy=(e.clientY-rect.top)/zoomLevel;
     // Crop mode takes precedence — handle drags adjust the crop rect
@@ -4087,6 +4106,193 @@ function bindCanvasEvents(){
       redraw();
     }
   });
+
+  // Double-click on a text layer → start inline editing. We hit-test the topmost text layer
+  // at the click position (respecting layer order, hidden, locked) and if found, spawn an
+  // overlay textarea positioned over the layer for in-place editing.
+  wrap.addEventListener('dblclick', function(e){
+    if(cropState) return;        // crop mode has its own interactions
+    if(_inlineTextEditor) return; // already editing — let the textarea handle it
+    var c = clientToCanvas(e.clientX, e.clientY);
+    // Walk layers top-down (front to back) and find the first text layer the click hits.
+    for(var i = layers.length - 1; i >= 0; i--){
+      var l = layers[i];
+      if(l.type !== 'text' || l.hidden || l.locked) continue;
+      var b = getLayerBounds(l);
+      // Hit-test in layer-local coords (handle rotation by inverse-rotating the click point).
+      var rot = (l.rotation || 0) * Math.PI / 180;
+      var ccx = b.x + b.w/2, ccy = b.y + b.h/2;
+      var lx = c.x - ccx, ly = c.y - ccy;
+      if(rot){
+        var cs = Math.cos(-rot), sn = Math.sin(-rot);
+        var rx = lx*cs - ly*sn, ry = lx*sn + ly*cs;
+        lx = rx; ly = ry;
+      }
+      lx += b.w/2; ly += b.h/2;
+      if(lx >= 0 && lx <= b.w && ly >= 0 && ly <= b.h){
+        e.preventDefault();
+        e.stopPropagation();
+        selectLayer(l.id);
+        startInlineTextEdit(l);
+        return;
+      }
+    }
+  });
+}
+
+// ── INLINE TEXT EDITOR ──
+// A floating <textarea> overlay positioned over a text layer for in-place editing on the
+// canvas. Activated by double-clicking the text layer. The canvas-rendered text is hidden
+// while the editor is open (via the layer's _editingInline flag) so the user only sees the
+// textarea's content. Live updates: each keystroke writes to layer.text and redraws the
+// canvas (so any image-fill / catnip-sprinkle / outline effects update as you type — though
+// those updates are only visible briefly when the textarea closes; while editing, the layer
+// is hidden).
+//
+// Commit triggers: blur, Escape, Ctrl/Cmd+Enter. Plain Enter inserts a newline (matches the
+// multi-line behavior of the side-panel textarea and lets users build multi-line text inline).
+var _inlineTextEditor = null;     // { layer, textarea, originalText, savedRotation, savedEditingFlag }
+
+function startInlineTextEdit(layer){
+  if(!layer || layer.type !== 'text') return;
+  if(_inlineTextEditor) return;
+
+  // Capture pre-edit state so the entire edit becomes ONE undo entry. snapshotState() pushes
+  // the current state; subsequent edits during the session will mutate layer.text in place
+  // without further snapshots, so undo will revert all the edits at once.
+  snapshotState();
+
+  var wrap = document.getElementById('canvasWrap');
+  var ta = document.createElement('textarea');
+  // Compute the layer's screen position (canvas-local coords × zoom + canvas offset)
+  var bds = getLayerBounds(layer);
+  var size = layer.fontSize || 72;
+  var weight = layer.fontWeight || 400;
+  var family = layer.fontFamily || 'sans-serif';
+  var lineHeight = layer.lineHeight || 1.2;
+  var letterSpacing = layer.letterSpacing || 0;
+  var align = layer.align || 'left';
+  var color = layer.color || '#222';
+
+  // Apply CSS to mirror the rendered text. We use the layer's box dimensions × current zoom.
+  ta.value = layer.text || '';
+  ta.spellcheck = false;
+  ta.style.position = 'absolute';
+  ta.style.left = (bds.x * zoomLevel) + 'px';
+  ta.style.top  = (bds.y * zoomLevel) + 'px';
+  ta.style.width  = (bds.w * zoomLevel) + 'px';
+  // Height: match the rendered text height if known, else a comfortable default
+  var renderedH = layer._renderedH || (size * lineHeight);
+  ta.style.height = Math.max(size * lineHeight * zoomLevel, renderedH * zoomLevel) + 'px';
+  ta.style.font = (weight) + ' ' + (size * zoomLevel) + 'px ' + family + ', sans-serif';
+  ta.style.lineHeight = lineHeight;
+  ta.style.letterSpacing = (letterSpacing * zoomLevel) + 'px';
+  ta.style.color = color;
+  ta.style.textAlign = align;
+  ta.style.background = 'rgba(255,255,255,0.85)';
+  ta.style.border = '2px dashed var(--green)';
+  ta.style.borderRadius = '4px';
+  ta.style.padding = '0';
+  ta.style.margin = '0';
+  ta.style.outline = 'none';
+  ta.style.resize = 'none';
+  ta.style.overflow = 'hidden';
+  ta.style.boxSizing = 'border-box';
+  ta.style.zIndex = '1000';
+  ta.style.whiteSpace = 'pre-wrap';
+  ta.style.overflowWrap = 'break-word';
+  // The canvas-wrap has user-select:none and cursor:default for drag/marquee behavior. Both
+  // get inherited by the textarea, which would block text selection and show the wrong cursor.
+  // Override both explicitly so the textarea behaves like a normal text input.
+  ta.style.userSelect = 'text';
+  ta.style.webkitUserSelect = 'text';
+  ta.style.cursor = 'text';
+
+  // Apply rotation if the layer is rotated. The textarea rotates around its center, matching
+  // how the canvas text rotates around the layer's center.
+  if(layer.rotation){
+    ta.style.transformOrigin = '50% 50%';
+    ta.style.transform = 'rotate(' + layer.rotation + 'deg)';
+  }
+
+  // Hide the canvas-rendered text while editing so the user only sees the textarea.
+  layer._editingInline = true;
+  redraw();
+
+  wrap.appendChild(ta);
+  ta.focus();
+  // Place caret at end (default for new focus) — selection is at the end
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+
+  // Live update: typing changes the layer's text immediately so when the user commits, the
+  // canvas text reappears with the new content.
+  ta.addEventListener('input', function(){
+    layer.text = ta.value;
+    // Auto-grow the textarea to fit content (so multi-line edits don't get clipped)
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+    // Don't redraw the canvas while editing — the layer is hidden — but DO update the
+    // side-panel textarea so the property-panel value stays in sync.
+    var pt = document.getElementById('ptxt_text');
+    if(pt) pt.value = ta.value;
+  });
+
+  // Commit on blur, Escape, or Ctrl/Cmd+Enter. Plain Enter inserts a newline.
+  ta.addEventListener('keydown', function(ev){
+    if(ev.key === 'Escape'){
+      ev.preventDefault();
+      // Restore original text on Escape
+      layer.text = _inlineTextEditor ? _inlineTextEditor.originalText : layer.text;
+      var pt = document.getElementById('ptxt_text');
+      if(pt) pt.value = layer.text;
+      stopInlineTextEdit();
+    } else if(ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)){
+      ev.preventDefault();
+      stopInlineTextEdit();
+    }
+  });
+  ta.addEventListener('blur', function(){
+    // Defer slightly so a click landing OUTSIDE doesn't immediately re-enter editing.
+    setTimeout(stopInlineTextEdit, 0);
+  });
+
+  // Document-level mousedown: commit the edit on click outside the textarea. Needed because
+  // <canvas> isn't focusable, so clicking on the canvas does NOT blur the textarea — without
+  // this listener the editor would stay open until the user clicks a focusable element.
+  // Stored on the editor info so we can remove it in stopInlineTextEdit.
+  var outsideClickHandler = function(ev){
+    if(!_inlineTextEditor) return;
+    if(ev.target === _inlineTextEditor.textarea) return;
+    if(_inlineTextEditor.textarea.contains && _inlineTextEditor.textarea.contains(ev.target)) return;
+    // Commit immediately — don't wait for blur
+    stopInlineTextEdit();
+  };
+  // Use capture phase so we run BEFORE the canvas mousedown handler (which would otherwise
+  // start a drag on the layer behind the editor). This way we close the editor first; the
+  // canvas handler still fires after, but its hit-test is then on the layer the user just
+  // clicked, which is the intuitive behavior.
+  document.addEventListener('mousedown', outsideClickHandler, true);
+
+  _inlineTextEditor = { layer: layer, textarea: ta, originalText: layer.text || '', outsideClickHandler: outsideClickHandler };
+  // Also auto-grow once on open, in case the layer's text is multi-line.
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+}
+
+function stopInlineTextEdit(){
+  if(!_inlineTextEditor) return;
+  var info = _inlineTextEditor;
+  _inlineTextEditor = null;
+  if(info.outsideClickHandler){
+    document.removeEventListener('mousedown', info.outsideClickHandler, true);
+  }
+  if(info.textarea && info.textarea.parentNode){
+    info.textarea.parentNode.removeChild(info.textarea);
+  }
+  if(info.layer){
+    info.layer._editingInline = false;
+  }
+  redraw();
 }
 
 // Finalize the marquee: walk all non-locked, non-hidden layers and select any whose
@@ -4695,6 +4901,7 @@ function buildEffectStrokeGradient(ctx, layer, x, y, h){
 // Respects font, weight, size, color, alignment, line-height, letter-spacing, opacity, rotation.
 function drawTextLayer(ctx, layer){
   if(!layer.text) return;
+  if(layer._editingInline) return;   // inline editor is showing the text instead
   withRotation(ctx, layer, function(){
     var x=layer.x, y=layer.y, w=layer.w;
     var size=layer.fontSize||72;
@@ -5500,6 +5707,50 @@ function drawSprinkleLayer(ctx, layer){
 
     var hasShadow = layerHasShadow && layerHasShadow(layer);
 
+    // ── Optional: clip rendered pieces to (glyph silhouette + spread bleed) ──
+    // When the user enables "Clip pieces to glyph shape", we render all pieces to an offscreen
+    // canvas first, then composite with destination-in against the glyph mask. The result is
+    // pieces that visually hug the letter shapes — even at large piece sizes, the visible
+    // catnip stays inside the glyph + spread-bleed region. Piece centers are still chosen by
+    // the cluster sampler, but the rendering is masked.
+    var clipOffscreen = null;   // when non-null, draw pieces here instead of main ctx
+    var clipOffOriginX = 0, clipOffOriginY = 0;   // canvas-coords of offscreen's (0,0)
+    var clipMaskInfo = null;
+    if(clusterMode === 'text' && layer.clipToGlyphs){
+      // Re-fetch the mask info (separate from the sampling mask that may have been used above).
+      // Same haloPx so the cache hit is free.
+      var clipTarget = layers.find(function(l){ return l.id === layer.clusterTargetId; });
+      if(clipTarget && clipTarget.type === 'text'){
+        var clipSize = clipTarget.fontSize || 72;
+        var clipLineH = clipSize * (clipTarget.lineHeight || 1.2);
+        var clipTotalH = (clipTarget._renderedH || clipLineH) || clipSize;
+        var clipHaloPx = Math.max(1, clipTotalH * spreadCurve(spread));
+        clipMaskInfo = getTargetTextGlyphMask(clipTarget, clipHaloPx);
+        if(clipMaskInfo){
+          // The offscreen must cover (mask region + max piece overflow) so pieces sampled
+          // anywhere in the sampling region render fully before clipping.
+          var maxPiecePx = Math.ceil(avgPx * (1 + sizeJitter / 100));
+          var pad = maxPiecePx + 4;
+          var offW = clipMaskInfo.mw + pad * 2;
+          var offH = clipMaskInfo.mh + pad * 2;
+          clipOffOriginX = clipMaskInfo.originX - pad;
+          clipOffOriginY = clipMaskInfo.originY - pad;
+          clipOffscreen = document.createElement('canvas');
+          clipOffscreen.width = offW;
+          clipOffscreen.height = offH;
+        } else {
+          // Mask build failed — fall back to direct rendering
+        }
+      }
+    }
+    // The drawing context for pieces: either offscreen (if clipping) or main ctx
+    var pctx = clipOffscreen ? clipOffscreen.getContext('2d') : ctx;
+    // If using offscreen, translate to its coordinate space
+    if(clipOffscreen){
+      pctx.save();
+      pctx.translate(-clipOffOriginX, -clipOffOriginY);
+    }
+
     for(var i = 0; i < count; i++){
       var imgIdx = Math.floor(rnd() * pieces.length) % pieces.length;
       var img = pieces[imgIdx];
@@ -5515,9 +5766,9 @@ function drawSprinkleLayer(ctx, layer){
       var aspect = img.naturalHeight / img.naturalWidth;
       var dw = sz, dh = sz * aspect;
 
-      ctx.save();
-      ctx.translate(px, py);
-      ctx.rotate(rot);
+      pctx.save();
+      pctx.translate(px, py);
+      pctx.rotate(rot);
 
       if(tintMix > 0){
         // Tint by compositing on an offscreen canvas so source-atop clips to the silhouette only.
@@ -5530,13 +5781,34 @@ function drawSprinkleLayer(ctx, layer){
         octx.globalAlpha = tintMix / 100;
         octx.fillStyle = tint;
         octx.fillRect(0, 0, off.width, off.height);
-        if(hasShadow) applyLayerShadow(ctx, layer);
-        ctx.drawImage(off, -dw/2, -dh/2, dw, dh);
+        // Shadow only applies when drawing to the main ctx; for offscreen it'd cast a shadow
+        // INSIDE the clipped region which looks wrong. Skip shadows in clip mode.
+        if(hasShadow && !clipOffscreen) applyLayerShadow(pctx, layer);
+        pctx.drawImage(off, -dw/2, -dh/2, dw, dh);
       } else {
-        if(hasShadow) applyLayerShadow(ctx, layer);
-        ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
+        if(hasShadow && !clipOffscreen) applyLayerShadow(pctx, layer);
+        pctx.drawImage(img, -dw/2, -dh/2, dw, dh);
       }
-      ctx.restore();
+      pctx.restore();
+    }
+
+    // If we rendered to the offscreen, now mask it against the glyph silhouette and blit.
+    if(clipOffscreen && clipMaskInfo){
+      pctx.restore();   // pop the translate we did at the start
+      // Build a mask canvas from the cached mask ImageData (same size as the offscreen's mask region)
+      var maskCanvas = document.createElement('canvas');
+      maskCanvas.width = clipMaskInfo.mw;
+      maskCanvas.height = clipMaskInfo.mh;
+      maskCanvas.getContext('2d').putImageData(clipMaskInfo.data, 0, 0);
+      // Apply destination-in: keeps offscreen pixels only where mask alpha is non-zero.
+      // Position the mask on the offscreen at the same place the mask covers in canvas coords.
+      pctx.globalCompositeOperation = 'destination-in';
+      pctx.drawImage(maskCanvas, clipMaskInfo.originX - clipOffOriginX, clipMaskInfo.originY - clipOffOriginY);
+      pctx.globalCompositeOperation = 'source-over';
+      // Apply drop shadow when blitting (so the clipped silhouette casts a coherent shadow,
+      // rather than each piece casting its own).
+      if(hasShadow) applyLayerShadow(ctx, layer);
+      ctx.drawImage(clipOffscreen, clipOffOriginX, clipOffOriginY);
     }
     ctx.restore();
   });
