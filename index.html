@@ -129,7 +129,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v99</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v100</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4271,6 +4271,22 @@ function bindCanvasEvents(){
     var rect=wrap.getBoundingClientRect();
     var ovs = _overscanOn ? _overscanPx : 0;
     var cx=(e.clientX-rect.left)/zoomLevel - ovs, cy=(e.clientY-rect.top)/zoomLevel - ovs;
+    // DEBUG: log the click and which layer (if any) was hit. Off-canvas layers have negative
+    // coords or coords > canvasW/canvasH; if hits aren't being detected when overscan is on,
+    // this log will reveal whether the issue is in the math or somewhere else.
+    if(_overscanOn){
+      var hitLayer = getLayerAt(cx, cy);
+      console.log('[overscan-click]', {
+        clientXY: [e.clientX, e.clientY],
+        wrapRect: [rect.left, rect.top, rect.width, rect.height],
+        zoom: zoomLevel,
+        overscan: ovs,
+        canvasCoord: [cx.toFixed(1), cy.toFixed(1)],
+        canvasSize: [canvasW, canvasH],
+        hit: hitLayer ? {id: hitLayer.id, type: hitLayer.type, name: hitLayer.name, xywh: [hitLayer.x, hitLayer.y, hitLayer.w, hitLayer.h], hidden: hitLayer.hidden, locked: hitLayer.locked} : null,
+        allLayers: layers.map(function(l){return {id: l.id, type: l.type, xywh: [l.x, l.y, l.w, l.h], hidden: !!l.hidden, locked: !!l.locked};})
+      });
+    }
     // Crop mode takes precedence — handle drags adjust the crop rect
     if(cropState){
       var handle=hitCropHandle(cx,cy);
