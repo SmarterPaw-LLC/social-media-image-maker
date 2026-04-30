@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v91</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v92</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4288,7 +4288,7 @@ function bindCanvasEvents(){
       var rect=wrap.getBoundingClientRect();
       marqueeState.curX=(e.clientX-rect.left)/zoomLevel;
       marqueeState.curY=(e.clientY-rect.top)/zoomLevel;
-      redraw();
+      redrawSoon();
       return;
     }
     if(rotateState){
@@ -4306,7 +4306,7 @@ function bindCanvasEvents(){
       // sync slider if present
       var slider=document.getElementById(layer.type==='shape'?'pshrotation':layer.type==='svg'?'svgrotation':layer.type==='sticker'?'prot':layer.type==='sprinkle'?'psprRot':'protation');
       if(slider){slider.value=Math.round(newRot); var v=document.getElementById(slider.id+'_v'); if(v) v.textContent=Math.round(newRot);}
-      redraw();
+      redrawSoon();
       return;
     }
     if(dragState){
@@ -4323,7 +4323,7 @@ function bindCanvasEvents(){
         if(+id === dragState.layerId) primary = l;
       });
       if(primary) syncPropXY(primary);
-      redraw();
+      redrawSoon();
     }
     if(resizeState){
       var layer=layers.find(function(l){return l.id===resizeState.layerId;});if(!layer)return;
@@ -4339,7 +4339,7 @@ function bindCanvasEvents(){
         layer.w=Math.round(nw);layer.h=Math.round(nh);
         syncPropWH(layer);
       }
-      redraw();
+      redrawSoon();
     }
   });
   window.addEventListener('mouseup',function(){
@@ -4795,6 +4795,20 @@ function redraw(){
   if(cropState) drawCropOverlay(ctx);
 }
 
+// Coalesced redraw: schedules a redraw on the next animation frame and ignores additional
+// calls in the same frame. Use this from any handler that fires many times per second
+// (mousemove, slider input). Render rate is capped at one frame per ~16ms instead of one per
+// event, which prevents drag lag when each redraw is heavy (sprinkles, shadows, image clipping).
+var _redrawScheduled = false;
+function redrawSoon(){
+  if(_redrawScheduled) return;
+  _redrawScheduled = true;
+  requestAnimationFrame(function(){
+    _redrawScheduled = false;
+    redraw();
+  });
+}
+
 // ── CROP MODE ──
 // cropState holds the crop rectangle as a fraction of the **currently displayed layer area**
 // (cropFx/Fy/Fw/Fh, all in [0..1]). This means the overlay always sits inside the on-canvas
@@ -4953,7 +4967,7 @@ function updateCropHandle(handle, cx, cy){
   if(handle.indexOf('s')>=0) fy1=Math.max(fy, fy0+minF);
   cropState.cropFx=fx0; cropState.cropFy=fy0;
   cropState.cropFw=fx1-fx0; cropState.cropFh=fy1-fy0;
-  redraw();
+  redrawSoon();
 }
 
 function showCropToolbar(){
