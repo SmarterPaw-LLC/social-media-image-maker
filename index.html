@@ -6253,7 +6253,7 @@ function drawStickerLayer(ctx,layer){
   var lines=layer.lines.filter(function(l){return l.text&&l.text.trim();});
   if(!lines.length)return;
   var _ts=(layer.textScale!==undefined&&layer.textScale!==100)?(layer.textScale/100):1;
-  if(_ts!==1)lines=lines.map(function(l){return{text:l.text,size:Math.max(12,Math.round(l.size*_ts)),offsetX:l.offsetX,curve:l.curve};});
+  if(_ts!==1)lines=lines.map(function(l){return{text:l.text,size:Math.max(12,Math.round(l.size*_ts)),offsetX:l.offsetX,curve:l.curve};}); 
   var align=layer.align||'left';
   var TOP=layer.padTop||40,BOT=layer.padBottom||40;
   var gradTop=layer.gradTop||'#8ab81d',gradBot=layer.gradBottom||'#3c8e14';
