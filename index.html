@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v92</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v93</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4848,11 +4848,26 @@ function confirmCrop(){
     var ey = layer.cropY!=null ? layer.cropY : 0;
     var ew = layer.cropW!=null ? layer.cropW : nw;
     var eh = layer.cropH!=null ? layer.cropH : nh;
-    // Map the display-fraction crop into source coords by scaling within the existing crop rect.
+    // Map the display-fraction crop into source coords by composing with the existing crop.
     layer.cropX = Math.round(ex + cropState.cropFx * ew);
     layer.cropY = Math.round(ey + cropState.cropFy * eh);
     layer.cropW = Math.round(cropState.cropFw * ew);
     layer.cropH = Math.round(cropState.cropFh * eh);
+    // Resize the layer's display rect to match the on-canvas crop box. This is what makes the
+    // crop feel like a real crop: the layer's bounding box shrinks to be the cropped region,
+    // anchored at the crop box's on-canvas position so the image doesn't jump.
+    var newX = layer.x + cropState.cropFx * layer.w;
+    var newY = layer.y + cropState.cropFy * layer.h;
+    var newW = cropState.cropFw * layer.w;
+    var newH = cropState.cropFh * layer.h;
+    layer.x = Math.round(newX);
+    layer.y = Math.round(newY);
+    layer.w = Math.round(newW);
+    layer.h = Math.round(newH);
+    // Update the baseline size so a future "Reset Scale" returns to this cropped size, not
+    // the original pre-crop dimensions (which would un-crop visually).
+    layer._baseW = layer.w;
+    layer._baseH = layer.h;
   }
   exitCropMode();
   renderProps();
@@ -4862,6 +4877,21 @@ function clearCrop(layerId){
   var layer=layers.find(function(l){return l.id===layerId;});
   if(!layer)return;
   snapshotState();
+  // Restore the layer's display rect to show the full source image, anchored on the cropped
+  // layer's center so the image expands outward symmetrically rather than jumping to a corner.
+  if(layer.img && layer.cropW && layer.cropH){
+    var nw = layer.img.naturalWidth, nh = layer.img.naturalHeight;
+    // Scale factor: how much bigger is the full image than the current crop, in each dimension.
+    var sx = nw / layer.cropW, sy = nh / layer.cropH;
+    var cx = layer.x + layer.w/2, cy = layer.y + layer.h/2;
+    var newW = layer.w * sx, newH = layer.h * sy;
+    layer.x = Math.round(cx - newW/2);
+    layer.y = Math.round(cy - newH/2);
+    layer.w = Math.round(newW);
+    layer.h = Math.round(newH);
+    layer._baseW = layer.w;
+    layer._baseH = layer.h;
+  }
   delete layer.cropX; delete layer.cropY; delete layer.cropW; delete layer.cropH;
   renderProps(); redraw();
 }
@@ -6253,7 +6283,7 @@ function drawStickerLayer(ctx,layer){
   var lines=layer.lines.filter(function(l){return l.text&&l.text.trim();});
   if(!lines.length)return;
   var _ts=(layer.textScale!==undefined&&layer.textScale!==100)?(layer.textScale/100):1;
-  if(_ts!==1)lines=lines.map(function(l){return{text:l.text,size:Math.max(12,Math.round(l.size*_ts)),offsetX:l.offsetX,curve:l.curve};}); 
+  if(_ts!==1)lines=lines.map(function(l){return{text:l.text,size:Math.max(12,Math.round(l.size*_ts)),offsetX:l.offsetX,curve:l.curve};});
   var align=layer.align||'left';
   var TOP=layer.padTop||40,BOT=layer.padBottom||40;
   var gradTop=layer.gradTop||'#8ab81d',gradBot=layer.gradBottom||'#3c8e14';
