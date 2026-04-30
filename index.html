@@ -124,7 +124,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v93</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v96</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -303,6 +303,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
   <div class="modal">
     <h2>💾 Save Design</h2>
     <div style="display:flex;flex-direction:column;gap:10px;">
+      <!-- Shown only when updating an existing design (set by promptSaveDesign) -->
+      <div id="saveModalUpdateBanner" class="hidden" style="padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:12px;color:#3a5e10;">
+        <strong>Updating existing design:</strong> <span id="saveModalUpdateName" style="font-weight:600;"></span>
+      </div>
       <div>
         <label>Design name</label>
         <input type="text" id="saveDesignName" placeholder="e.g. Fall launch hero" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
@@ -313,7 +317,9 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeSaveModal()">Cancel</button>
-      <button class="btn-primary" onclick="confirmSaveDesign()">Save</button>
+      <!-- "Save as new" button shown only when updating existing — gives the user an escape hatch -->
+      <button class="btn-sm hidden" id="saveAsNewBtn" onclick="confirmSaveDesign(true)" title="Save as a separate copy instead of updating">Save as new</button>
+      <button class="btn-primary" id="confirmSaveBtn" onclick="confirmSaveDesign(false)">Save</button>
     </div>
   </div>
 </div>
@@ -1283,6 +1289,10 @@ var DESIGN_SCHEMA_VERSION = 1;
 var AUTOSAVE_ID = 999999999;
 var AUTOSAVE_DEBOUNCE_MS = 1200;
 var _autosaveTimer = null;
+// Tracks which IndexedDB record the current design corresponds to. Set when loading from
+// My Designs, set when saving for the first time. null means "this is a new unsaved design".
+// When non-null, the Save button defaults to UPDATING that record instead of creating a new one.
+var _currentDesignId = null;
 
 // Capture the full current design state as a plain JS object (JSON-safe).
 function gatherDesignState(){
@@ -1340,14 +1350,33 @@ function restoreDesignState(state){
 }
 
 // ── Save dialog flow ──
+// If the user has an existing design loaded (_currentDesignId set), the modal shows an
+// "Updating existing design" banner and a "Save as new" escape hatch. Default Save updates
+// the open record. Otherwise, default Save creates a new record.
 function promptSaveDesign(){
+  var updating = _currentDesignId != null;
+  var banner = document.getElementById('saveModalUpdateBanner');
+  var saveAsNewBtn = document.getElementById('saveAsNewBtn');
+  var confirmBtn = document.getElementById('confirmSaveBtn');
+  if(updating){
+    banner.classList.remove('hidden');
+    saveAsNewBtn.classList.remove('hidden');
+    document.getElementById('saveModalUpdateName').textContent = _lastDesignName || '(unnamed)';
+    confirmBtn.textContent = 'Update';
+  } else {
+    banner.classList.add('hidden');
+    saveAsNewBtn.classList.add('hidden');
+    confirmBtn.textContent = 'Save';
+  }
   document.getElementById('saveDesignName').value = _lastDesignName || ('Design ' + new Date().toLocaleDateString());
   document.getElementById('saveModal').classList.remove('hidden');
   setTimeout(function(){ document.getElementById('saveDesignName').focus(); document.getElementById('saveDesignName').select(); }, 50);
 }
 function closeSaveModal(){ document.getElementById('saveModal').classList.add('hidden'); }
 var _lastDesignName = '';
-function confirmSaveDesign(){
+// confirmSaveDesign(forceNew): if forceNew is true OR there's no current design id, creates a
+// new IDB record. Otherwise updates the open record in place.
+function confirmSaveDesign(forceNew){
   var name = document.getElementById('saveDesignName').value.trim();
   if(!name){ alert('Please enter a name.'); return; }
   _lastDesignName = name;
@@ -1355,8 +1384,11 @@ function confirmSaveDesign(){
   state.name = name;
   // 1. Download as file
   downloadDesignFile(state, name);
-  // 2. Save to IndexedDB so it shows in My Designs
-  idbSaveDesign(null, state).then(function(){
+  // 2. Save to IndexedDB. Pass the existing id to update in place; null to create new.
+  var targetId = (!forceNew && _currentDesignId != null) ? _currentDesignId : null;
+  idbSaveDesign(targetId, state).then(function(id){
+    // Track the record so subsequent saves keep updating it
+    _currentDesignId = id;
     closeSaveModal();
   }).catch(function(e){
     console.error('[save] IDB error:', e);
@@ -1390,6 +1422,7 @@ function loadFromFileInput(event){
       var state = JSON.parse(e.target.result);
       if(restoreDesignState(state)){
         _lastDesignName = state.name || '';
+        _currentDesignId = null; // file load isn't tied to an IDB record; next save creates new
         closeMyDesignsModal();
       }
     } catch(err){
@@ -1572,6 +1605,9 @@ function renderMyDesigns(){
       row.querySelector('[data-action="load"]').onclick = function(){
         if(restoreDesignState(d)){
           _lastDesignName = d.name || '';
+          // Track this as the open record. Don't track the autosave entry — it's a special
+          // "always-overwrite" slot that shouldn't become the user's default save target.
+          _currentDesignId = d.isAutosave ? null : (d.id != null ? d.id : null);
           closeMyDesignsModal();
         }
       };
@@ -1582,6 +1618,9 @@ function renderMyDesigns(){
       if(delBtn){
         delBtn.onclick = function(){
           if(!confirm('Delete "' + (d.name||'Untitled') + '"? This cannot be undone.')) return;
+          // If they deleted the open record, reset so next Save creates a new one rather than
+          // trying to update a non-existent id.
+          if(_currentDesignId === d.id) _currentDesignId = null;
           idbDeleteDesign(d.id).then(renderMyDesigns);
         };
       }
@@ -4800,14 +4839,56 @@ function redraw(){
 // (mousemove, slider input). Render rate is capped at one frame per ~16ms instead of one per
 // event, which prevents drag lag when each redraw is heavy (sprinkles, shadows, image clipping).
 var _redrawScheduled = false;
+// Drag-performance diagnostic. Toggle with Ctrl+Shift+P (Cmd+Shift+P on Mac). When on, every
+// drag mousemove and redraw gets timed and logged to the console. Run a slow drag, then check
+// the numbers — paste them back to me and I can pinpoint the bottleneck.
+var _perfDiag = false;
+var _perfStats = {moveCount: 0, redrawCount: 0, redrawTotalMs: 0, redrawMaxMs: 0, lastLog: 0};
+function perfLogStart(label){
+  if(!_perfDiag) return 0;
+  return performance.now();
+}
+function perfLogEnd(label, t0){
+  if(!_perfDiag || !t0) return;
+  var dt = performance.now() - t0;
+  if(label === 'redraw'){
+    _perfStats.redrawCount++;
+    _perfStats.redrawTotalMs += dt;
+    if(dt > _perfStats.redrawMaxMs) _perfStats.redrawMaxMs = dt;
+  }
+  // Every 500ms, dump a summary while a drag is in flight
+  var now = performance.now();
+  if(now - _perfStats.lastLog > 500 && (dragState || resizeState || rotateState)){
+    _perfStats.lastLog = now;
+    var avg = _perfStats.redrawCount ? (_perfStats.redrawTotalMs / _perfStats.redrawCount).toFixed(1) : 0;
+    console.log('[perf] mousemoves=' + _perfStats.moveCount
+      + ' redraws=' + _perfStats.redrawCount
+      + ' avg=' + avg + 'ms'
+      + ' max=' + _perfStats.redrawMaxMs.toFixed(1) + 'ms'
+      + ' layers=' + layers.length
+      + ' canvas=' + canvasW + 'x' + canvasH);
+  }
+}
 function redrawSoon(){
+  if(_perfDiag) _perfStats.moveCount++;
   if(_redrawScheduled) return;
   _redrawScheduled = true;
   requestAnimationFrame(function(){
     _redrawScheduled = false;
+    var t0 = perfLogStart('redraw');
     redraw();
+    perfLogEnd('redraw', t0);
   });
 }
+// Wire up the toggle hotkey on first-load (handler attached to document so it works anywhere).
+document.addEventListener('keydown', function(e){
+  if((e.ctrlKey||e.metaKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')){
+    _perfDiag = !_perfDiag;
+    _perfStats = {moveCount: 0, redrawCount: 0, redrawTotalMs: 0, redrawMaxMs: 0, lastLog: 0};
+    console.log('[perf] diagnostic ' + (_perfDiag ? 'ON — drag a layer; numbers will log every 500ms' : 'OFF'));
+    e.preventDefault();
+  }
+});
 
 // ── CROP MODE ──
 // cropState holds the crop rectangle as a fraction of the **currently displayed layer area**
@@ -4827,6 +4908,15 @@ function enterCropMode(layerId){
     cropFx: 0, cropFy: 0, cropFw: 1, cropFh: 1,
     dragHandle: null
   };
+  console.log('[crop] enter', {
+    layerId: layer.id,
+    layerName: layer.name,
+    layerXYWH: [layer.x, layer.y, layer.w, layer.h],
+    existingCrop: [layer.cropX, layer.cropY, layer.cropW, layer.cropH],
+    naturalSize: [layer.img.naturalWidth, layer.img.naturalHeight],
+    fit: layer.fit,
+    rotation: layer.rotation
+  });
   showCropToolbar();
   redraw();
 }
@@ -4848,6 +4938,7 @@ function confirmCrop(){
     var ey = layer.cropY!=null ? layer.cropY : 0;
     var ew = layer.cropW!=null ? layer.cropW : nw;
     var eh = layer.cropH!=null ? layer.cropH : nh;
+    var beforeXYWH = [layer.x, layer.y, layer.w, layer.h];
     // Map the display-fraction crop into source coords by composing with the existing crop.
     layer.cropX = Math.round(ex + cropState.cropFx * ew);
     layer.cropY = Math.round(ey + cropState.cropFy * eh);
@@ -4868,6 +4959,16 @@ function confirmCrop(){
     // the original pre-crop dimensions (which would un-crop visually).
     layer._baseW = layer.w;
     layer._baseH = layer.h;
+    console.log('[crop] confirm', {
+      layerId: layer.id,
+      layerName: layer.name,
+      cropFraction: [cropState.cropFx, cropState.cropFy, cropState.cropFw, cropState.cropFh],
+      existingCrop: [ex, ey, ew, eh],
+      newSourceCrop: [layer.cropX, layer.cropY, layer.cropW, layer.cropH],
+      layerBefore: beforeXYWH,
+      layerAfter: [layer.x, layer.y, layer.w, layer.h],
+      naturalSize: [nw, nh]
+    });
   }
   exitCropMode();
   renderProps();
