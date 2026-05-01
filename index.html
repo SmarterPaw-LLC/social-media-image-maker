@@ -67,6 +67,8 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .board-tab .board-name{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .board-tab .board-close{opacity:0.55;font-size:14px;line-height:1;margin-left:2px;padding:0 3px;border-radius:3px;}
 .board-tab .board-close:hover{opacity:1;background:rgba(0,0,0,0.1);}
+.board-tab .board-dup{opacity:0.55;font-size:13px;line-height:1;margin-left:2px;padding:0 3px;border-radius:3px;}
+.board-tab .board-dup:hover{opacity:1;background:rgba(0,0,0,0.1);}
 .board-tab.new-board{background:#f0f0e8;color:var(--green-dark);font-weight:700;padding:6px 14px;}
 .board-tab.new-board:hover{background:#e4e4d8;}
 .canvas-stage{flex:1;display:flex;align-items:center;justify-content:center;width:100%;}
@@ -129,7 +131,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v100</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v101</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -975,6 +977,13 @@ function renderBoardTabs(){
     nameSpan.className = 'board-name';
     nameSpan.textContent = b.name;
     tab.appendChild(nameSpan);
+    // Duplicate button — clones the board with all its layers
+    var dup = document.createElement('span');
+    dup.className = 'board-dup';
+    dup.textContent = '⎘';
+    dup.title = 'Duplicate board';
+    dup.onclick = function(e){ e.stopPropagation(); duplicateBoard(b.id); };
+    tab.appendChild(dup);
     // Only show close when >1 board so the last board can't be deleted
     if(boards.length > 1){
       var close = document.createElement('span');
@@ -986,11 +995,13 @@ function renderBoardTabs(){
     }
     tab.onclick = function(e){
       if(e.target.classList.contains('board-close')) return;
+      if(e.target.classList.contains('board-dup')) return;
       switchBoard(b.id);
     };
     // Double-click to rename
     tab.ondblclick = function(e){
       if(e.target.classList.contains('board-close')) return;
+      if(e.target.classList.contains('board-dup')) return;
       var newName = prompt('Rename board:', b.name);
       if(newName && newName.trim()){ b.name = newName.trim(); renderBoardTabs(); }
     };
@@ -1026,6 +1037,87 @@ function createNewBoard(){
   var b = makeBoard(null, cur.canvasW, cur.canvasH);
   boards.push(b);
   switchBoard(b.id);
+}
+
+// Duplicate the given board: clone all layers (with fresh ids and properly rehydrated image/video
+// elements), copy canvas size + brand state, insert next to the source board, switch to it.
+// Doesn't carry over undo/redo history (a duplicated board starts fresh).
+function duplicateBoard(id){
+  var src = boards.find(function(b){return b.id === id;});
+  if(!src) return;
+  // Make a new board with the same canvas dimensions
+  var dup = makeBoard(src.name + ' copy', src.canvasW, src.canvasH);
+  dup.activePresetId = src.activePresetId;
+  // Clone each layer using the same serialize-and-rehydrate strategy that copy/paste uses.
+  // This skips live HTMLImageElement/HTMLVideoElement references (can't structured-clone them)
+  // and reconstructs them from src URLs after the layer is JSON-cloned.
+  dup.layers = src.layers.map(function(l){
+    // 1. Build a JSON-safe shallow snapshot
+    var snap = {};
+    for(var k in l){
+      if(k === 'img') continue;
+      if(k === '_img') continue;
+      if(k === '_video') continue;
+      if(k === '_playing') continue;
+      if(k === '_editingInline') continue;
+      if(l.type === 'svg' && k === 'url') continue;
+      snap[k] = l[k];
+    }
+    if(l.img && l.type !== 'svg' && l.type !== 'framedImage'){
+      snap._imgSrc = l.src || l.img.src || null;
+    }
+    // 2. Deep-copy plain data
+    var copy = JSON.parse(JSON.stringify(snap));
+    // 3. Fresh layer id (must be unique across ALL boards)
+    copy.id = nextId++;
+    // 4. Rehydrate live elements from src URLs (mirrors pasteClipboard)
+    if(copy.type === 'svg' && copy.svgText){
+      var pnorm = normalizeSvgDimensions(copy.svgText);
+      copy.svgText = pnorm.svgText;
+      if(!copy.natW && pnorm.intrinsicW) copy.natW = pnorm.intrinsicW;
+      if(!copy.natH && pnorm.intrinsicH) copy.natH = pnorm.intrinsicH;
+      var sblob = new Blob([copy.svgText], {type:'image/svg+xml'});
+      copy.url = URL.createObjectURL(sblob);
+      var simg = new Image();
+      simg.onload = function(){ redraw(); };
+      simg.src = copy.url;
+      copy.img = simg;
+    } else if(copy._imgSrc && copy.type !== 'framedImage'){
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function(){ redraw(); };
+      img.src = copy._imgSrc;
+      copy.img = img;
+      delete copy._imgSrc;
+    }
+    if(copy.type === 'framedImage' && copy._imgSrc){
+      var fimg = new Image();
+      fimg.crossOrigin = 'anonymous';
+      fimg.onload = function(){ redraw(); };
+      fimg.src = copy._imgSrc;
+      copy._img = fimg;
+    }
+    if(copy.type === 'video' && copy.videoSrc){
+      var v = document.createElement('video');
+      v.crossOrigin = 'anonymous';
+      v.muted = true;
+      v.playsInline = true;
+      v.preload = 'auto';
+      v.src = copy.videoSrc;
+      v.addEventListener('loadedmetadata', function(){
+        try { v.currentTime = copy.trimStart || 0; } catch(e){}
+      });
+      v.addEventListener('loadeddata', function(){ redraw(); });
+      v.addEventListener('seeked',     function(){ redraw(); });
+      copy._video = v;
+      copy._playing = false;
+    }
+    return copy;
+  });
+  // Insert immediately after the source board
+  var idx = boards.findIndex(function(b){return b.id === id;});
+  boards.splice(idx + 1, 0, dup);
+  switchBoard(dup.id);
 }
 
 function closeBoard(id){
