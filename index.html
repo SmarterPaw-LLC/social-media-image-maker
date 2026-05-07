@@ -131,7 +131,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v104</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v106</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2308,7 +2308,79 @@ function normalizeSvgDimensions(svgText){
       svgText = svgText.replace(/<svg\b/, '<svg' + inject);
     }
   }
+  // Inline CSS class fills/strokes. Some SVGs (especially Adobe Illustrator exports) define
+  // styles like `.g{fill:url(#f);}` in a <style> block and apply them via class="g" on elements.
+  // When loaded into an <img> for canvas rendering, certain browser/blob-URL combinations don't
+  // resolve fill="url(#localId)" references coming from CSS — the elements render black/blank.
+  // Inlining the rule as a `fill` attribute on each element bypasses the issue entirely.
+  svgText = inlineSvgStyleClasses(svgText);
   return {svgText: svgText, intrinsicW: intrinsicW, intrinsicH: intrinsicH};
+}
+
+// Parse <style>.classname{prop:val; ...}</style> blocks and push the fill/stroke/etc. declarations
+// as direct attributes on each element with that class. Skips elements that already have an
+// explicit fill/stroke attribute (those win over the class). Idempotent — safe to run multiple times.
+function inlineSvgStyleClasses(svgText){
+  // Extract <style>...</style> blocks (there can be multiple)
+  var styleBlocks = [];
+  var styleMatch = svgText.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
+  if(!styleMatch) return svgText;
+  styleMatch.forEach(function(block){
+    // Get just the content between the tags
+    var content = block.replace(/<style[^>]*>/i, '').replace(/<\/style>/i, '');
+    styleBlocks.push(content);
+  });
+  // Build a map: className → "prop:val;prop:val;" (only fills/strokes — those are what break)
+  var classMap = {};
+  styleBlocks.forEach(function(content){
+    // Match `.className{...}` rules — single-class selectors only (the common AI export pattern).
+    // More complex selectors (descendant, multi-class) are ignored.
+    var ruleRe = /\.([A-Za-z_][\w-]*)\s*\{([^}]*)\}/g;
+    var m;
+    while((m = ruleRe.exec(content)) !== null){
+      var cls = m[1];
+      var decls = m[2].trim();
+      // Only inline fill/stroke/fill-opacity/stroke-* declarations — those are the ones that
+      // commonly fail to resolve via <style> when loaded into <img>. Layout properties like
+      // `display` or `font-family` work fine via <style> and shouldn't be inlined as attrs.
+      var attrs = '';
+      decls.split(';').forEach(function(decl){
+        var kv = decl.split(':');
+        if(kv.length !== 2) return;
+        var prop = kv[0].trim().toLowerCase();
+        var val = kv[1].trim();
+        if(!prop || !val) return;
+        if(prop === 'fill' || prop === 'stroke' ||
+           prop === 'fill-opacity' || prop === 'stroke-opacity' ||
+           prop === 'stroke-width' || prop === 'stroke-linecap' ||
+           prop === 'stroke-linejoin' || prop === 'stroke-dasharray'){
+          attrs += ' ' + prop + '="' + val.replace(/"/g, '&quot;') + '"';
+        }
+      });
+      if(attrs) classMap[cls] = (classMap[cls] || '') + attrs;
+    }
+  });
+  // For each known class, push attrs onto every element using class="..."
+  Object.keys(classMap).forEach(function(cls){
+    var attrs = classMap[cls];
+    // Match element tags with this class (handles class="cls" or class="other cls more")
+    var classElRe = new RegExp('(<[a-zA-Z][\\w-]*\\b[^>]*?)\\sclass\\s*=\\s*"([^"]*)"', 'g');
+    svgText = svgText.replace(classElRe, function(match, prefix, classList){
+      var classes = classList.split(/\s+/);
+      if(classes.indexOf(cls) === -1) return match;   // doesn't apply
+      // Don't override explicit fill/stroke that's already on the element
+      var inject = '';
+      attrs.split(/\s(?=[a-z-]+=")/).forEach(function(a){
+        a = a.trim();
+        if(!a) return;
+        var attrName = a.split('=')[0];
+        var hasAlready = new RegExp('\\s' + attrName + '\\s*=', 'i').test(prefix);
+        if(!hasAlready) inject += ' ' + a;
+      });
+      return prefix + inject + ' class="' + classList + '"';
+    });
+  });
+  return svgText;
 }
 
 function addSvgLayer(){
@@ -4555,6 +4627,12 @@ function bindCanvasEvents(){
       // DOM rebuild done in renderLayerList + renderProps.
       selectedId = layer.id;
       selectedIds = [layer.id];
+      // Redraw the canvas right away so the selection chrome (bounding box + handles) appears
+      // on the clicked layer immediately. Without this, a click that doesn't trigger a drag
+      // (or the click portion before mouse movement) leaves the chrome on the previous layer.
+      // The redraw is fast — only the panel rebuild is expensive enough to defer.
+      ensureChromeVisible();
+      redraw();
       requestAnimationFrame(function(){
         renderLayerList();
         renderProps();
