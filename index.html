@@ -131,7 +131,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v101</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v102</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1742,11 +1742,71 @@ function renderMyDesigns(){
 
 // ── KEYBOARD SHORTCUTS ──
 function bindKeyboardShortcuts(){
+  // Coalesce undo snapshots for arrow-key nudges: snapshot only if >1s since last nudge.
+  // Without this, holding the arrow key would create dozens of undo entries for what the user
+  // perceives as a single "drag" action.
+  var _lastNudgeAt = 0;
+  function snapshotIfNudgeIsNew(){
+    var now = performance.now();
+    if(now - _lastNudgeAt > 1000) snapshotState();
+    _lastNudgeAt = now;
+  }
   document.addEventListener('keydown', function(e){
     // Ignore if user is typing in an input/textarea/contenteditable
     var tgt = e.target;
     var tag = (tgt.tagName || '').toLowerCase();
     if(tag === 'input' || tag === 'textarea' || tgt.isContentEditable) return;
+    // Don't intercept while crop overlay is active — crop has its own concerns
+    if(cropState) return;
+
+    // Tab — cycle through layers in panel order (Shift+Tab = backwards). Wraps at the ends.
+    // Layer-list order is REVERSE of `layers[]` (top-most layer is last in array, first in panel),
+    // so we iterate accordingly.
+    if(e.key === 'Tab'){
+      if(!layers.length) return;
+      e.preventDefault();
+      // Build panel order: top of panel = last in layers[]
+      var panel = layers.slice().reverse();
+      var curIdx = -1;
+      if(selectedId != null){
+        curIdx = panel.findIndex(function(l){return l.id === selectedId;});
+      }
+      var nextIdx;
+      if(e.shiftKey){
+        nextIdx = curIdx <= 0 ? panel.length - 1 : curIdx - 1;
+      } else {
+        nextIdx = curIdx >= panel.length - 1 ? 0 : curIdx + 1;
+      }
+      selectLayer(panel[nextIdx].id);
+      return;
+    }
+
+    // Arrow keys — nudge the selected layer(s). Shift = 10px, plain = 1px.
+    if(e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown'){
+      var ids = (selectedIds && selectedIds.length) ? selectedIds.slice() : (selectedId != null ? [selectedId] : []);
+      if(!ids.length) return;
+      e.preventDefault();
+      var step = e.shiftKey ? 10 : 1;
+      var dx = (e.key === 'ArrowLeft') ? -step : (e.key === 'ArrowRight') ? step : 0;
+      var dy = (e.key === 'ArrowUp')   ? -step : (e.key === 'ArrowDown')  ? step : 0;
+      // Snapshot only if this is a "new" nudge (>1s since last). Holding the key creates one
+      // undo entry for the whole continuous move, not one per repeat event.
+      var moved = false;
+      ids.forEach(function(id){
+        var l = layers.find(function(x){return x.id===id;});
+        if(!l || l.locked) return;
+        if(typeof l.x !== 'number' || typeof l.y !== 'number') return;
+        if(!moved){ snapshotIfNudgeIsNew(); moved = true; }
+        l.x += dx; l.y += dy;
+      });
+      if(moved){
+        // Refresh property panel x/y readouts and the canvas in one frame
+        var primary = layers.find(function(l){return l.id===selectedId;});
+        if(primary && typeof syncPropXY === 'function') syncPropXY(primary);
+        redrawSoon();
+      }
+      return;
+    }
 
     // Undo / Redo
     var isMeta = e.metaKey || e.ctrlKey;
@@ -2963,7 +3023,34 @@ function selectLayer(id, opts){
     selectedId = id;
     selectedIds = id != null ? [id] : [];
   }
+  ensureChromeVisible();
   renderLayerList(); renderProps();
+}
+
+// If the selected layer's chrome (bounding box + handles) extends outside the canvas, auto-enable
+// overscan so the user can see and grab the handles. We don't auto-DISABLE it when the layer comes
+// back in-bounds (would feel jumpy); user can toggle off manually.
+function ensureChromeVisible(){
+  if(_overscanOn) return;          // already on, nothing to do
+  if(selectedId == null) return;
+  var l = layers.find(function(x){return x.id === selectedId;});
+  if(!l) return;
+  if(typeof l.x !== 'number' || typeof l.y !== 'number') return;
+  if(typeof l.w !== 'number' || typeof l.h !== 'number') return;
+  // Chrome extends ~6px past the layer bbox on bottom/sides (corner handles), and ~34px above
+  // the top edge (rotation handle). Approximate without accounting for rotation — overscan is
+  // generous enough to compensate.
+  var ROT_MARGIN = (typeof ROTATE_HANDLE_DIST !== 'undefined' ? ROTATE_HANDLE_DIST : 28) + 8;
+  var SIDE_MARGIN = (typeof HANDLE_SIZE !== 'undefined' ? HANDLE_SIZE : 12) / 2 + 2;
+  var top = l.y - ROT_MARGIN;
+  var bot = l.y + l.h + SIDE_MARGIN;
+  var lft = l.x - SIDE_MARGIN;
+  var rgt = l.x + l.w + SIDE_MARGIN;
+  var outside = (top < 0) || (lft < 0) || (bot > canvasH) || (rgt > canvasW);
+  if(outside){
+    // Auto-enable. toggleOverscan handles the canvas resize, button styling, and redraw.
+    toggleOverscan();
+  }
 }
 function deleteLayer(id){
   layers=layers.filter(function(l){return l.id!==id;});
