@@ -131,7 +131,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v102</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v104</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3025,6 +3025,10 @@ function selectLayer(id, opts){
   }
   ensureChromeVisible();
   renderLayerList(); renderProps();
+  // Redraw the canvas so the selection chrome (bounding box + handles) updates immediately.
+  // Without this, clicking a layer in the panel updates the panel/properties UI but the canvas
+  // still shows the previous layer's outline, making it look like nothing happened.
+  redraw();
 }
 
 // If the selected layer's chrome (bounding box + handles) extends outside the canvas, auto-enable
@@ -4610,8 +4614,18 @@ function bindCanvasEvents(){
     }
     if(resizeState){
       var layer=layers.find(function(l){return l.id===resizeState.layerId;});if(!layer)return;
-      var dw=(e.clientX-resizeState.startX)/zoomLevel;
-      var dh=(e.clientY-resizeState.startY)/zoomLevel;
+      // Mouse delta in WORLD coords (canvas-pixel space)
+      var wdx=(e.clientX-resizeState.startX)/zoomLevel;
+      var wdy=(e.clientY-resizeState.startY)/zoomLevel;
+      // The bottom-right resize handle is positioned in the layer's LOCAL space (i.e., before
+      // rotation). We need to convert the world-space mouse delta into local-space delta so that
+      // "drag handle toward center" always reads as shrink, regardless of how the layer is rotated.
+      // Without this, an upside-down layer (180° rotation) reverses both axes — dragging "in"
+      // visually was producing positive dw/dh, growing the layer instead of shrinking it.
+      var rot=(layer.rotation||0)*Math.PI/180;
+      var cs=Math.cos(-rot), sn=Math.sin(-rot);
+      var dw=wdx*cs-wdy*sn;
+      var dh=wdx*sn+wdy*cs;
       if(layer.type==='sticker'){
         var newW=Math.max(40,resizeState.origW+dw);
         layer.scale=Math.max(0.1,Math.min(3,newW/(canvasW)));
@@ -5040,16 +5054,38 @@ function redraw(){
       ctx.strokeRect(bds.x,bds.y,bds.w,bds.h);
       // No resize/rotate handles for locked layers
     } else {
-      ctx.strokeStyle='rgba(138,184,29,0.8)';ctx.lineWidth=2;ctx.setLineDash([6,3]);
-      ctx.strokeRect(bds.x,bds.y,bds.w,bds.h);ctx.setLineDash([]);
-      // resize handle at bottom-right corner
-      ctx.fillStyle='#fff';ctx.strokeStyle='#8ab81d';ctx.lineWidth=2;
-      ctx.fillRect(bds.x+bds.w-HANDLE_SIZE/2,bds.y+bds.h-HANDLE_SIZE/2,HANDLE_SIZE,HANDLE_SIZE);
-      ctx.strokeRect(bds.x+bds.w-HANDLE_SIZE/2,bds.y+bds.h-HANDLE_SIZE/2,HANDLE_SIZE,HANDLE_SIZE);
-      // rotation handle: circle above the top-center, connected by a short line
-      var rhX=bds.x+bds.w/2, rhY=bds.y-ROTATE_HANDLE_DIST;
-      ctx.beginPath();ctx.moveTo(bds.x+bds.w/2,bds.y);ctx.lineTo(rhX,rhY);ctx.stroke();
-      ctx.beginPath();ctx.arc(rhX,rhY,HANDLE_SIZE/2+1,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.stroke();
+      // Editable selection chrome — drawn with a two-pass technique: a thicker semi-transparent
+      // white "halo" first, then the green dashed line on top. The halo makes the outline pop
+      // against both light and dark layer content (without it, green-on-green is invisible).
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.setLineDash([]);
+      ctx.strokeRect(bds.x, bds.y, bds.w, bds.h);
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = 'rgba(138,184,29,1)';
+      ctx.setLineDash([7, 4]);
+      ctx.strokeRect(bds.x, bds.y, bds.w, bds.h);
+      ctx.setLineDash([]);
+      // Resize handle at bottom-right corner — slightly larger and with a thicker border so it
+      // reads clearly even on busy backgrounds.
+      var hs = HANDLE_SIZE + 2;
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = '#6a9c12';
+      ctx.lineWidth = 2.5;
+      ctx.fillRect(bds.x + bds.w - hs/2, bds.y + bds.h - hs/2, hs, hs);
+      ctx.strokeRect(bds.x + bds.w - hs/2, bds.y + bds.h - hs/2, hs, hs);
+      // Rotation handle: circle above the top-center, connected by a short line
+      var rhX = bds.x + bds.w/2, rhY = bds.y - ROTATE_HANDLE_DIST;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath(); ctx.moveTo(bds.x + bds.w/2, bds.y); ctx.lineTo(rhX, rhY); ctx.stroke();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#6a9c12';
+      ctx.beginPath(); ctx.moveTo(bds.x + bds.w/2, bds.y); ctx.lineTo(rhX, rhY); ctx.stroke();
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(rhX, rhY, hs/2 + 1, 0, Math.PI*2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.strokeStyle = '#6a9c12'; ctx.stroke();
     }
     ctx.restore();
   }
