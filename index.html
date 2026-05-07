@@ -131,7 +131,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v106</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v109</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2383,44 +2383,197 @@ function inlineSvgStyleClasses(svgText){
   return svgText;
 }
 
+// ── SVG color extraction & remapping ──
+// Scans the SVG for every color the user could meaningfully change: direct fill="#xxx" / stroke
+// attributes on elements, and <stop stop-color="#xxx"> inside gradients. Returns a list of
+// "swatches", each with a stable key (used for find-and-replace) plus the current color and a
+// human-readable label. Grouping: swatches from the same gradient share a gradient label.
+function extractSvgSwatches(svgText){
+  var swatches = [];
+  var seen = {};   // dedupe identical color values within the same source category
+
+  // Helper: normalize various color representations to lowercase hex (or special tokens).
+  // Returns null for anything we can't / shouldn't expose as an editable swatch.
+  function normalize(value){
+    if(!value) return null;
+    var v = value.trim().toLowerCase();
+    if(!v) return null;
+    if(v === 'none' || v === 'transparent') return null;       // not a color
+    if(v.indexOf('url(') === 0) return null;                   // refers to a gradient — not a direct color
+    if(v.indexOf('currentcolor') === 0) return null;           // inherits — leave alone
+    // 3-digit hex → 6-digit
+    var m3 = v.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i);
+    if(m3) return '#' + m3[1]+m3[1] + m3[2]+m3[2] + m3[3]+m3[3];
+    var m6 = v.match(/^#[0-9a-f]{6}$/i);
+    if(m6) return v;
+    // rgb(r,g,b)
+    var mrgb = v.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if(mrgb){
+      var r = parseInt(mrgb[1]), g = parseInt(mrgb[2]), b = parseInt(mrgb[3]);
+      function hh(n){ var s = Math.max(0,Math.min(255,n)).toString(16); return s.length<2?'0'+s:s; }
+      return '#' + hh(r) + hh(g) + hh(b);
+    }
+    // Common named colors — quick lookup, fall through to keep the literal name for replacement
+    var named = {black:'#000000', white:'#ffffff', red:'#ff0000', green:'#008000', blue:'#0000ff',
+                 yellow:'#ffff00', cyan:'#00ffff', magenta:'#ff00ff', gray:'#808080', grey:'#808080'};
+    if(named[v]) return named[v];
+    return null;   // unknown — don't expose
+  }
+
+  // 1. Direct fill/stroke attributes on elements (after inlineSvgStyleClasses runs, all class-based
+  //    fills are now inline attributes, so a single attribute scan covers everything).
+  ['fill', 'stroke'].forEach(function(propName){
+    var re = new RegExp('\\s' + propName + '\\s*=\\s*"([^"]+)"', 'gi');
+    var match;
+    while((match = re.exec(svgText)) !== null){
+      var raw = match[1];
+      var hex = normalize(raw);
+      if(!hex) continue;
+      var key = propName + ':' + raw.toLowerCase();
+      if(seen[key]) continue;
+      seen[key] = true;
+      swatches.push({
+        kind: propName,
+        key: key,
+        rawValue: raw,             // exact substring used in the SVG (for replace)
+        currentHex: hex,           // normalized hex for the picker
+        label: (propName === 'fill' ? 'Fill' : 'Stroke') + ' ' + hex,
+        groupLabel: null
+      });
+    }
+  });
+
+  // 2. Gradient stops — <stop stop-color="..." offset="..."> inside <linearGradient>/<radialGradient>
+  //    Extract gradient blocks first so we can label stops with their parent gradient id.
+  var gradRe = /<(linearGradient|radialGradient)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+  var gMatch;
+  while((gMatch = gradRe.exec(svgText)) !== null){
+    var gradTag = gMatch[1];
+    var gradAttrs = gMatch[2];
+    var gradBody = gMatch[3];
+    var idMatch = gradAttrs.match(/\bid\s*=\s*"([^"]+)"/);
+    var gradId = idMatch ? idMatch[1] : '?';
+    var groupLabel = gradTag.replace('Gradient', ' gradient') + ' "' + gradId + '"';
+    // Walk stops in order (so the swatches reflect the gradient direction visually)
+    var stopRe = /<stop\b([^>]*)\/?>/gi;
+    var sMatch;
+    var stopIdx = 0;
+    while((sMatch = stopRe.exec(gradBody)) !== null){
+      var stopAttrs = sMatch[1];
+      // stop-color may be in style="stop-color:#xxx" or as stop-color="#xxx" attribute
+      var sc = stopAttrs.match(/\bstop-color\s*=\s*"([^"]+)"/i);
+      var raw = sc ? sc[1] : null;
+      if(!raw){
+        var styleMatch = stopAttrs.match(/\bstyle\s*=\s*"([^"]+)"/i);
+        if(styleMatch){
+          var declRe = /stop-color\s*:\s*([^;"]+)/i;
+          var dm = styleMatch[1].match(declRe);
+          if(dm) raw = dm[1].trim();
+        }
+      }
+      if(!raw){ stopIdx++; continue; }
+      var hex = normalize(raw);
+      if(!hex){ stopIdx++; continue; }
+      var key = 'stop:' + gradId + ':' + stopIdx;
+      // Stops aren't deduped by color — same color in different stops should remain separate
+      // because changing one independently is the whole point.
+      swatches.push({
+        kind: 'stop',
+        key: key,
+        gradId: gradId,
+        stopIndex: stopIdx,
+        rawValue: raw,
+        currentHex: hex,
+        label: 'Stop ' + (stopIdx + 1) + ': ' + hex,
+        groupLabel: groupLabel
+      });
+      stopIdx++;
+    }
+  }
+  return swatches;
+}
+
+// Replace one swatch's color in the SVG text. Targets only the specific occurrence (not a global
+// find/replace of every occurrence of the old hex, which would clobber unrelated colors).
+function replaceSvgSwatchColor(svgText, swatch, newHex){
+  if(!swatch || !newHex) return svgText;
+  if(swatch.kind === 'fill' || swatch.kind === 'stroke'){
+    // Replace EVERY attribute occurrence using exactly this rawValue. This means changing one
+    // "fill #ec2024" swatch updates every element fill that used #ec2024 — which is the desired
+    // behavior since they were a single shared color from the start.
+    var attrRe = new RegExp('(\\s' + swatch.kind + '\\s*=\\s*")' + escapeRegex(swatch.rawValue) + '(")', 'gi');
+    return svgText.replace(attrRe, '$1' + newHex + '$2');
+  }
+  if(swatch.kind === 'stop'){
+    // Find the gradient block, then the Nth stop within it, and replace its stop-color.
+    var gradTagPattern = '<(linearGradient|radialGradient)\\b[^>]*\\bid\\s*=\\s*"' + escapeRegex(swatch.gradId) + '"[^>]*>([\\s\\S]*?)</\\1>';
+    var gradRe = new RegExp(gradTagPattern, 'i');
+    var gradMatch = svgText.match(gradRe);
+    if(!gradMatch) return svgText;
+    var gradFull = gradMatch[0];
+    var stopRe2 = /(<stop\b)([^>]*?)(\/?>)/gi;
+    var idx = 0;
+    var newGrad = gradFull.replace(stopRe2, function(whole, openTag, attrs, close){
+      if(idx++ !== swatch.stopIndex) return whole;
+      // Replace stop-color="..." OR stop-color:... in style="..."
+      var attrPatched = attrs;
+      if(/\bstop-color\s*=/i.test(attrs)){
+        attrPatched = attrs.replace(/(\bstop-color\s*=\s*")[^"]*(")/i, '$1' + newHex + '$2');
+      } else if(/\bstyle\s*=/i.test(attrs)){
+        attrPatched = attrs.replace(/(\bstyle\s*=\s*"[^"]*?stop-color\s*:\s*)[^;"]+/i, '$1' + newHex);
+      } else {
+        attrPatched = attrs + ' stop-color="' + newHex + '"';
+      }
+      return openTag + attrPatched + close;
+    });
+    return svgText.replace(gradRe, newGrad);
+  }
+  return svgText;
+}
+
+function escapeRegex(s){ return String(s).replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'); }
+
+// Create an SVG layer from raw SVG text. Used by both the "+ SVG" button and the file-drop
+// handler so they share the same normalization (viewBox sizing, style-class inlining) and
+// the same layer-property setup (svgText/natW/natH for save-load, fit-to-canvas, etc.).
+function createSvgLayerFromText(rawSvgText, filename){
+  var norm = normalizeSvgDimensions(rawSvgText);
+  var svgText = norm.svgText;
+  var blob = new Blob([svgText], {type:'image/svg+xml'});
+  var url = URL.createObjectURL(blob);
+  var img = new Image();
+  img.onload = function(){
+    snapshotState();
+    var id = nextId++;
+    var natW = norm.intrinsicW || img.naturalWidth || canvasW * 0.8;
+    var natH = norm.intrinsicH || img.naturalHeight || canvasH * 0.8;
+    var maxW = canvasW * 0.8, maxH = canvasH * 0.8;
+    var s = Math.min(maxW / natW, maxH / natH, 1);
+    var w = Math.round(natW * s), h = Math.round(natH * s);
+    layers.push({
+      id: id, type: 'svg',
+      name: (filename || 'SVG').replace(/\.svg$/i, ''),
+      img: img, svgText: svgText, url: url,
+      x: Math.round((canvasW - w) / 2), y: Math.round((canvasH - h) / 2),
+      w: w, h: h,
+      natW: natW, natH: natH,
+      opacity: 100, rotation: 0
+    });
+    selectLayer(id); renderLayerList(); redraw();
+  };
+  img.onerror = function(){
+    alert('Could not render this SVG. The file may be malformed.');
+  };
+  img.src = url;
+}
+
 function addSvgLayer(){
-  var input=document.createElement('input');input.type='file';input.accept='.svg,image/svg+xml';
-  input.onchange=function(e){
-    var file=e.target.files[0];if(!file)return;
-    var reader=new FileReader();
-    reader.onload=function(ev){
-      var raw=ev.target.result;
-      var norm=normalizeSvgDimensions(raw);
-      var svgText=norm.svgText;
-      // create an image from the SVG blob for canvas rendering
-      var blob=new Blob([svgText],{type:'image/svg+xml'});
-      var url=URL.createObjectURL(blob);
-      var img=new Image();
-      img.onload=function(){
-        snapshotState();
-        var id=nextId++;
-        // Prefer the parsed viewBox dimensions, then naturalWidth/Height, then a sensible default.
-        var natW = norm.intrinsicW || img.naturalWidth || canvasW*0.8;
-        var natH = norm.intrinsicH || img.naturalHeight || canvasH*0.8;
-        // Fit to canvas while preserving aspect ratio.
-        var maxW = canvasW*0.8, maxH = canvasH*0.8;
-        var s = Math.min(maxW/natW, maxH/natH, 1);
-        var w = Math.round(natW * s), h = Math.round(natH * s);
-        layers.push({
-          id:id,type:'svg',name:file.name.replace('.svg',''),
-          img:img,svgText:svgText,url:url,
-          x:Math.round((canvasW-w)/2),y:Math.round((canvasH-h)/2),
-          w:w, h:h,
-          natW: natW, natH: natH,
-          opacity:100,rotation:0,
-        });
-        selectLayer(id);renderLayerList();redraw();
-      };
-      img.onerror=function(){
-        alert('Could not render this SVG. The file may be malformed.');
-      };
-      img.src=url;
-    };
+  var input = document.createElement('input');
+  input.type = 'file'; input.accept = '.svg,image/svg+xml';
+  input.onchange = function(e){
+    var file = e.target.files[0]; if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){ createSvgLayerFromText(ev.target.result, file.name); };
     reader.readAsText(file);
   };
   input.click();
@@ -3799,11 +3952,52 @@ function buildSprinkleProps(l){
 
 function buildSvgProps(l){
   var hasCrop=(l.cropX!=null&&(l.cropX>0||l.cropY>0||(l.img&&(l.cropW<l.img.naturalWidth||l.cropH<l.img.naturalHeight))));
+  // Build the recolor swatch UI from the layer's current svgText. Each swatch is a <input type=color>
+  // input with its data-key set to the swatch's stable identifier; the input handler maps it back
+  // to the right substring in the SVG and rebuilds the layer's image.
+  var recolorHtml = '';
+  if(l.svgText){
+    var swatches = extractSvgSwatches(l.svgText);
+    if(swatches.length){
+      // Group swatches by groupLabel — direct fills first (no group), then per-gradient sections
+      var groups = {};
+      var ungrouped = [];
+      swatches.forEach(function(sw){
+        if(sw.groupLabel){
+          if(!groups[sw.groupLabel]) groups[sw.groupLabel] = [];
+          groups[sw.groupLabel].push(sw);
+        } else {
+          ungrouped.push(sw);
+        }
+      });
+      recolorHtml = '<div class="prop-section" style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;">'
+        + '<label style="font-size:11px;color:var(--muted);font-weight:600;">Recolor</label>'
+        + '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Click a swatch to change that color.</div>';
+      function swatchRow(sw){
+        // Each swatch: little color preview (clickable color input) + label
+        return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
+          + '<input type="color" class="psvg-swatch" data-key="' + escAttr(sw.key) + '" value="' + sw.currentHex + '" '
+          +     'style="width:28px;height:22px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:transparent;">'
+          + '<span style="font-size:10px;color:#444;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escAttr(sw.label) + '</span>'
+          + '</div>';
+      }
+      ungrouped.forEach(function(sw){ recolorHtml += swatchRow(sw); });
+      Object.keys(groups).forEach(function(gLabel){
+        recolorHtml += '<div style="font-size:10px;color:var(--muted);margin-top:6px;margin-bottom:2px;font-style:italic;">' + escAttr(gLabel) + '</div>';
+        groups[gLabel].forEach(function(sw){ recolorHtml += swatchRow(sw); });
+      });
+      recolorHtml += '</div>';
+    }
+  }
   return '<div class="prop-section">'
     +'<button class="btn-add" onclick="addSvgLayer()">📁 Replace SVG…</button>'
     +'<div class="col2" style="gap:5px;margin-top:5px;">'
     +'<button class="btn-add" onclick="enterCropMode('+l.id+')">✂ Crop</button>'
     +(hasCrop?'<button class="btn-add" onclick="clearCrop('+l.id+')">Reset Crop</button>':'<button class="btn-add" disabled style="opacity:0.4;">No crop</button>')
+    +'</div>'
+    +'<div class="col2" style="gap:5px;margin-top:5px;">'
+    +'<button class="btn-add" onclick="toggleSvgFlip('+l.id+',\'h\')"'+(l.flipH?' style="background:var(--green);color:#fff;"':'')+'>↔ Flip H</button>'
+    +'<button class="btn-add" onclick="toggleSvgFlip('+l.id+',\'v\')"'+(l.flipV?' style="background:var(--green);color:#fff;"':'')+'>↕ Flip V</button>'
     +'</div>'
     +NUMPAIR('X (px)','nsvgx',l.x,'Y (px)','nsvgy',l.y)
     +NUMPAIR('W (px)','nsvgw',l.w,'H (px)','nsvgh',l.h)
@@ -3814,7 +4008,18 @@ function buildSvgProps(l){
     +R('Rotation','svgrotation',l.rotation,-180,180,1)
     +R('Opacity','svgopacity',l.opacity,0,100,1)
     +shadowUI('psvg_', l)
-    +moveBtns(l.id)+'</div>';
+    +moveBtns(l.id)+'</div>'
+    +recolorHtml;
+}
+
+// Toggle horizontal/vertical flip on an SVG layer.
+function toggleSvgFlip(layerId, axis){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l) return;
+  snapshotState();
+  if(axis === 'h') l.flipH = !l.flipH;
+  else if(axis === 'v') l.flipV = !l.flipV;
+  renderProps(); redraw();
 }
 
 // ── TEXT LAYER PROPERTIES PANEL ──
@@ -4197,6 +4402,35 @@ function bindPropEvents(layer){
     rng('svgrotation',function(v){layer.rotation=v;redraw();});
     rng('svgopacity',function(v){layer.opacity=v;redraw();});
     bindShadowEvents('psvg_', layer);
+    // Recolor swatches: when the user picks a new color for a swatch, update the SVG text,
+    // rebuild the blob URL, and reload the image. We use 'change' (fires on close of the picker)
+    // rather than 'input' (fires continuously while the picker is open) to avoid generating
+    // dozens of intermediate blob URLs as the user drags through the color spectrum.
+    document.querySelectorAll('.psvg-swatch').forEach(function(input){
+      input.addEventListener('change', function(){
+        var key = input.getAttribute('data-key');
+        var newHex = input.value;
+        // Re-extract on each change so we use the freshest svgText (in case multiple swatches
+        // were already changed in this session). Find the matching swatch by its stable key.
+        var swatches = extractSvgSwatches(layer.svgText);
+        var sw = swatches.find(function(s){ return s.key === key; });
+        if(!sw) return;
+        snapshotState();
+        layer.svgText = replaceSvgSwatchColor(layer.svgText, sw, newHex);
+        // Rebuild blob URL — the old one is now stale. Revoke the old one so its memory is freed.
+        if(layer.url) URL.revokeObjectURL(layer.url);
+        var blob = new Blob([layer.svgText], {type:'image/svg+xml'});
+        layer.url = URL.createObjectURL(blob);
+        var newImg = new Image();
+        newImg.onload = function(){ layer.img = newImg; redraw(); };
+        newImg.onerror = function(){
+          console.error('[svg recolor] failed to reload image after color change');
+        };
+        newImg.src = layer.url;
+        // Don't rebuild the property panel here — the user might be picking another swatch and a
+        // panel rebuild would close the still-open native color picker on some browsers.
+      });
+    });
   } else if(layer.type==='video'){
     // Trim sliders: clamp so start <= end and keep the playhead inside the clip range
     rng('pvid_trimStart', function(v){
@@ -4450,18 +4684,13 @@ function bindDrop(){
     e.preventDefault();wrap.classList.remove('drag-over');
     Array.from(e.dataTransfer.files).forEach(function(file){
       if(file.type==='image/svg+xml'||file.name.endsWith('.svg')){
+        // Use the shared helper so dropped SVGs get the same normalization (viewBox-based sizing,
+        // style-class inlining) and full layer properties (svgText/natW/natH for save-load) as
+        // SVGs added via the "+ SVG" button. Without this, AI-exported SVGs with class-based
+        // fills would render blank when dropped, even though they worked via the file picker.
         var reader=new FileReader();
-        reader.onload=function(ev){
-          var blob=new Blob([ev.target.result],{type:'image/svg+xml'});
-          var url=URL.createObjectURL(blob);
-          var img=new Image();img.onload=function(){
-            var id=nextId++;
-            layers.push({id:id,type:'svg',name:file.name.replace('.svg',''),img:img,url:url,
-              x:canvasW*0.1,y:canvasH*0.1,w:img.naturalWidth||canvasW*0.8,h:img.naturalHeight||canvasH*0.8,
-              opacity:100,rotation:0});
-            selectLayer(id);renderLayerList();redraw();
-          };img.src=url;
-        };reader.readAsText(file);
+        reader.onload=function(ev){ createSvgLayerFromText(ev.target.result, file.name); };
+        reader.readAsText(file);
       } else if(file.type.startsWith('image/')){
         var reader=new FileReader();
         reader.onload=function(ev){
@@ -5923,11 +6152,27 @@ function drawSvgLayer(ctx,layer){
     var sy=(layer.cropY!=null)?layer.cropY:0;
     var sw=(layer.cropW!=null)?layer.cropW:(img.naturalWidth||layer.natW||1);
     var sh=(layer.cropH!=null)?layer.cropH:(img.naturalHeight||layer.natH||1);
+    // Apply flips by translating to the far edge and scaling negatively. We do this within a
+    // save/restore so the flip transform doesn't bleed into other layers (and so the silhouette
+    // shadow paint below uses the same flipped output).
+    var fh = !!layer.flipH, fv = !!layer.flipV;
+    var drawImg = function(c){
+      if(fh || fv){
+        c.save();
+        c.translate(fh ? x + w : 0, fv ? y + h : 0);
+        c.scale(fh ? -1 : 1, fv ? -1 : 1);
+        c.drawImage(img, sx, sy, sw, sh,
+          fh ? -x - w : x,
+          fv ? -y - h : y,
+          w, h);
+        c.restore();
+      } else {
+        c.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+      }
+    };
     // Silhouette-shaped drop shadow (follows the SVG's actual rendered alpha, not just a rect)
-    paintImageShadow(ctx, layer, function(c){
-      c.drawImage(img,sx,sy,sw,sh,x,y,w,h);
-    });
-    ctx.drawImage(img,sx,sy,sw,sh,x,y,w,h);
+    paintImageShadow(ctx, layer, drawImg);
+    drawImg(ctx);
   });
 }
 
