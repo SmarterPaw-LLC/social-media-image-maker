@@ -131,7 +131,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v109</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v111</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1022,13 +1022,14 @@ function switchBoard(id){
   currentBoardId = id;
   // Update all UI that depends on current board
   var b = getBoard();
-  var c = document.getElementById('mainCanvas');
-  c.width = b.canvasW; c.height = b.canvasH;
-  if(document.getElementById('customW')) document.getElementById('customW').value = b.canvasW;
-  if(document.getElementById('customH')) document.getElementById('customH').value = b.canvasH;
+  // Use setCanvasSize (rather than poking canvas.width directly) so the overscan state is
+  // applied correctly. Without this, switching boards while overscan is on would leave the
+  // canvas pixel buffer at canvasW × canvasH (no overscan) while applyZoom sized the CSS for
+  // the overscanned dimensions — resulting in distorted, squished, or shifted-looking content.
   cropState = null; rotateState = null; dragState = null; resizeState = null;
+  setCanvasSize(b.canvasW, b.canvasH);
   renderBoardTabs(); renderLayerList(); renderProps(); renderPresets();
-  applyZoom(); redraw(); updateExportInfo();
+  updateExportInfo();
 }
 
 function createNewBoard(){
@@ -1285,59 +1286,124 @@ function serializeLayers(){
   }));
 }
 
+// Lightweight serialization for the UNDO STACK. Omits image/video src data — those are large
+// (multi-MB base64 strings for uploaded images) and rarely change across an undo sequence. The
+// undo machinery re-attaches live img/video elements by layer id when restoring, so this is safe
+// for transformations (move, resize, rotate, recolor, etc.) but loses image references for
+// undo-of-delete on a layer not in the current state. That's an acceptable tradeoff for the
+// 90%+ memory reduction this provides.
+function serializeForUndo(){
+  return JSON.stringify(layers.map(function(l){
+    var out = {};
+    for(var k in l){
+      if(k==='img') continue;
+      if(k==='_img') continue;
+      if(k==='_video') continue;
+      if(k==='_playing') continue;
+      if(k==='_editingInline') continue;
+      if(k==='_imgSrc') continue;       // omit — restored from live cache by id
+      if(k==='videoSrc') continue;      // omit — restored from live cache by id
+      if(l.type==='svg' && k==='url') continue;
+      // Skip svgText too: it's potentially large for complex SVGs and rarely changes during
+      // a sequence of transforms. We restore it from the live layer by id (like image src).
+      if(l.type==='svg' && k==='svgText') continue;
+      out[k] = l[k];
+    }
+    return out;
+  }));
+}
+
 function deserializeLayers(json){
   var raw = JSON.parse(json);
+  // Build a lookup of currently-live layers by id so we can copy image/video references that
+  // weren't serialized (in undo snapshots).
+  var liveById = {};
+  layers.forEach(function(l){ liveById[l.id] = l; });
+
   var restored = [];
   raw.forEach(function(o){
+    var live = liveById[o.id];   // matching live layer, if this is an undo restore
     // SVG rehydration: rebuild the blob URL from svgText so rendering works after a save/load
     // round-trip. The previous blob URL (if any) is gone, so always regenerate.
     // We re-run normalizeSvgDimensions defensively so designs saved before v58 (which may contain
     // viewBox-only SVGs) still render correctly after loading.
-    if(o.type === 'svg' && o.svgText){
-      var norm = normalizeSvgDimensions(o.svgText);
-      o.svgText = norm.svgText;
-      if(!o.natW && norm.intrinsicW) o.natW = norm.intrinsicW;
-      if(!o.natH && norm.intrinsicH) o.natH = norm.intrinsicH;
-      var blob = new Blob([o.svgText], {type:'image/svg+xml'});
-      o.url = URL.createObjectURL(blob);
-      var simg = new Image();
-      simg.onload = function(){ redraw(); };
-      simg.src = o.url;
-      o.img = simg;
+    if(o.type === 'svg'){
+      // Undo case: svgText may have been omitted. Copy from live layer.
+      if(!o.svgText && live && live.svgText) o.svgText = live.svgText;
+      if(o.svgText){
+        var norm = normalizeSvgDimensions(o.svgText);
+        o.svgText = norm.svgText;
+        if(!o.natW && norm.intrinsicW) o.natW = norm.intrinsicW;
+        if(!o.natH && norm.intrinsicH) o.natH = norm.intrinsicH;
+        // If the live layer has the same svgText, reuse its img/url to avoid rebuilding the blob.
+        if(live && live.svgText === o.svgText && live.img && live.url){
+          o.img = live.img; o.url = live.url;
+        } else {
+          var blob = new Blob([o.svgText], {type:'image/svg+xml'});
+          o.url = URL.createObjectURL(blob);
+          var simg = new Image();
+          simg.onload = function(){ redraw(); };
+          simg.src = o.url;
+          o.img = simg;
+        }
+      }
     }
-    // Regular image layer rehydration: _imgSrc → img, then strip _imgSrc.
-    // BUT skip this for framedImage and svg — those have their own paths above.
-    else if(o._imgSrc && o.type !== 'framedImage'){
-      var img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = function(){ redraw(); };
-      img.src = o._imgSrc;
-      o.img = img;
-      delete o._imgSrc;
+    // Regular image layer rehydration: prefer _imgSrc when present, otherwise copy the live img.
+    // Skip framedImage and svg (handled above / below).
+    else if(o.type !== 'framedImage'){
+      if(o._imgSrc){
+        var img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function(){ redraw(); };
+        img.src = o._imgSrc;
+        o.img = img;
+        delete o._imgSrc;
+      } else if(live && live.img){
+        // Undo path: copy the live image reference; src wasn't in the snapshot.
+        o.img = live.img;
+        if(live.src && !o.src) o.src = live.src;
+      }
     }
-    // Framed image rehydration: _imgSrc stays, but we recreate the HTMLImageElement at _img
-    if(o.type === 'framedImage' && o._imgSrc){
-      var fimg = new Image();
-      fimg.crossOrigin = 'anonymous';
-      fimg.onload = function(){ redraw(); };
-      fimg.src = o._imgSrc;
-      o._img = fimg;
+    // Framed image rehydration: _imgSrc stays, but we recreate the HTMLImageElement at _img.
+    // Undo path also: copy live _img / _imgSrc if missing.
+    if(o.type === 'framedImage'){
+      if(!o._imgSrc && live && live._imgSrc) o._imgSrc = live._imgSrc;
+      if(o._imgSrc){
+        if(live && live._img && live._imgSrc === o._imgSrc){
+          o._img = live._img;
+        } else {
+          var fimg = new Image();
+          fimg.crossOrigin = 'anonymous';
+          fimg.onload = function(){ redraw(); };
+          fimg.src = o._imgSrc;
+          o._img = fimg;
+        }
+      }
     }
     // Video: rehydrate the HTMLVideoElement from videoSrc. Runtime `_video` was stripped during serialization.
-    if(o.type === 'video' && o.videoSrc){
-      var v = document.createElement('video');
-      v.crossOrigin = 'anonymous';
-      v.muted = true;
-      v.playsInline = true;
-      v.preload = 'auto';
-      v.src = o.videoSrc;
-      v.addEventListener('loadedmetadata', function(){
-        try { v.currentTime = o.trimStart || 0; } catch(e){}
-      });
-      v.addEventListener('loadeddata', function(){ redraw(); });
-      v.addEventListener('seeked',     function(){ redraw(); });
-      o._video = v;
-      o._playing = false;
+    // Undo path: copy live videoSrc + _video if missing.
+    if(o.type === 'video'){
+      if(!o.videoSrc && live && live.videoSrc) o.videoSrc = live.videoSrc;
+      if(o.videoSrc){
+        if(live && live._video && live.videoSrc === o.videoSrc){
+          o._video = live._video;
+          o._playing = live._playing || false;
+        } else {
+          var v = document.createElement('video');
+          v.crossOrigin = 'anonymous';
+          v.muted = true;
+          v.playsInline = true;
+          v.preload = 'auto';
+          v.src = o.videoSrc;
+          v.addEventListener('loadedmetadata', function(){
+            try { v.currentTime = o.trimStart || 0; } catch(e){}
+          });
+          v.addEventListener('loadeddata', function(){ redraw(); });
+          v.addEventListener('seeked',     function(){ redraw(); });
+          o._video = v;
+          o._playing = false;
+        }
+      }
     }
     restored.push(o);
   });
@@ -1346,7 +1412,7 @@ function deserializeLayers(json){
 
 function snapshotState(){
   if(_undoSuppressed) return;
-  var snap = serializeLayers();
+  var snap = serializeForUndo();
   // Don't push consecutive duplicates
   if(undoStack.length && undoStack[undoStack.length-1] === snap) return;
   undoStack.push(snap);
@@ -1357,8 +1423,8 @@ function snapshotState(){
 
 function undo(){
   if(!undoStack.length) return;
-  // Capture the CURRENT state so redo can get back to it
-  redoStack.push(serializeLayers());
+  // Capture the CURRENT state so redo can get back to it (lightweight too)
+  redoStack.push(serializeForUndo());
   // Pop the most recent snapshot (which is the state BEFORE the most recent change) and restore it
   var prior = undoStack.pop();
   _undoSuppressed = true;
@@ -1372,8 +1438,8 @@ function undo(){
 
 function redo(){
   if(!redoStack.length) return;
-  // Current state goes back onto undo stack
-  undoStack.push(serializeLayers());
+  // Current state goes back onto undo stack (lightweight)
+  undoStack.push(serializeForUndo());
   var next = redoStack.pop();
   _undoSuppressed = true;
   layers = deserializeLayers(next);
@@ -1477,7 +1543,17 @@ function promptSaveDesign(){
     saveAsNewBtn.classList.add('hidden');
     confirmBtn.textContent = 'Save';
   }
-  document.getElementById('saveDesignName').value = _lastDesignName || ('Design ' + new Date().toLocaleDateString());
+  // Default name priority:
+  //   1. _lastDesignName (this design was already saved or loaded with a name)
+  //   2. Active board's name, if user has renamed it (not the default "Board N")
+  //   3. Fallback: "Design YYYY-MM-DD"
+  var defaultName = _lastDesignName;
+  if(!defaultName){
+    var cur = getBoard();
+    if(cur && cur.name && !/^Board \d+$/.test(cur.name)) defaultName = cur.name;
+  }
+  if(!defaultName) defaultName = 'Design ' + new Date().toLocaleDateString();
+  document.getElementById('saveDesignName').value = defaultName;
   document.getElementById('saveModal').classList.remove('hidden');
   setTimeout(function(){ document.getElementById('saveDesignName').focus(); document.getElementById('saveDesignName').select(); }, 50);
 }
@@ -1489,6 +1565,14 @@ function confirmSaveDesign(forceNew){
   var name = document.getElementById('saveDesignName').value.trim();
   if(!name){ alert('Please enter a name.'); return; }
   _lastDesignName = name;
+  // If the active board still has the default "Board N" name, adopt the design name so the tab
+  // matches. (Vice-versa to "use board name when save name is blank" — this propagates the user's
+  // typed name back to the board so the two stay in sync after the first save.)
+  var cur = getBoard();
+  if(cur && cur.name && /^Board \d+$/.test(cur.name)){
+    cur.name = name;
+    renderBoardTabs();
+  }
   var state = gatherDesignState();
   state.name = name;
   // 1. Download as file
@@ -3282,6 +3366,12 @@ function ensureChromeVisible(){
   }
 }
 function deleteLayer(id){
+  // Free any blob URL the layer owns (SVG blob, framed-image blob). Without revocation, blob
+  // URLs accumulate over the session and contribute to memory pressure / browser crashes.
+  var l = layers.find(function(x){return x.id===id;});
+  if(l && l.url && typeof URL.revokeObjectURL === 'function'){
+    try { URL.revokeObjectURL(l.url); } catch(e){}
+  }
   layers=layers.filter(function(l){return l.id!==id;});
   if(selectedId===id)selectedId=layers.length?layers[layers.length-1].id:null;
   if(selectedIds) selectedIds = selectedIds.filter(function(x){return x!==id;});
@@ -3321,8 +3411,8 @@ function renderLayerList(){
         if(e.target.classList.contains('layer-del')){ if(layer.locked){alert('Unlock the layer first to delete it.');return;} deleteLayer(layer.id);return;}
         if(e.target.classList.contains('layer-vis')){ layer.hidden=!layer.hidden; renderLayerList(); redraw(); return; }
         if(e.target.classList.contains('layer-lock')){ layer.locked=!layer.locked; renderLayerList(); renderProps(); return; }
-        // Shift-click toggles selection (multi-select). Plain click replaces selection.
-        selectLayer(layer.id, {shift: e.shiftKey});
+        // Shift- or Ctrl/Cmd-click toggles selection (multi-select). Plain click replaces selection.
+        selectLayer(layer.id, {shift: e.shiftKey || e.ctrlKey || e.metaKey});
       };
       item.addEventListener('dragstart',function(e){
         e.dataTransfer.effectAllowed='move';
@@ -4807,6 +4897,31 @@ function bindCanvasEvents(){
       if(Math.abs(lcx-shx)<hitR && Math.abs(lcy-shy)<hitR){
         snapshotState();
         resizeState={layerId:selLayer.id,startX:e.clientX,startY:e.clientY,origW:sbds.w,origH:sbds.h,aspect:sbds.w/sbds.h,origScale:selLayer.scale||1};
+        // If we're in a multi-selection, capture each selected layer's original geometry so we
+        // can scale the whole group proportionally. Anchor: top-left of the combined bounding
+        // box — that point stays put while everything scales toward/away from the BR handle.
+        if(selectedIds && selectedIds.length > 1 && selectedIds.indexOf(selLayer.id) >= 0){
+          var group = [];
+          var minX = Infinity, minY = Infinity;
+          selectedIds.forEach(function(id){
+            var l = layers.find(function(x){return x.id===id;});
+            if(!l || l.locked) return;
+            // Only layers with w/h are group-resizable (skip stickers — they use scale instead,
+            // and skip anything without numeric x/y/w/h like text-without-explicit-size).
+            if(typeof l.w !== 'number' || typeof l.h !== 'number') return;
+            if(typeof l.x !== 'number' || typeof l.y !== 'number') return;
+            group.push({id: id, origX: l.x, origY: l.y, origW: l.w, origH: l.h});
+            if(l.x < minX) minX = l.x;
+            if(l.y < minY) minY = l.y;
+          });
+          if(group.length > 1){
+            resizeState.groupIds = group.map(function(g){return g.id;});
+            resizeState.groupOrig = {};
+            group.forEach(function(g){ resizeState.groupOrig[g.id] = g; });
+            resizeState.groupAnchorX = minX;
+            resizeState.groupAnchorY = minY;
+          }
+        }
         e.preventDefault();
         return;
       }
@@ -4817,6 +4932,14 @@ function bindCanvasEvents(){
       marqueeState={startX:cx, startY:cy, curX:cx, curY:cy, shift:!!e.shiftKey, origSelection: (selectedIds||[]).slice()};
       // Don't clear selection yet — wait for mouseup. Empty marquee (just a click) clears.
       e.preventDefault();
+      return;
+    }
+    // Shift- or Ctrl/Cmd-click on a layer: TOGGLE it in/out of selectedIds. Don't start a drag —
+    // multi-select adjustments should be a pure selection action, not a drag-initiation.
+    var multiKey = !!(e.shiftKey || e.ctrlKey || e.metaKey);
+    if(multiKey){
+      e.preventDefault();
+      selectLayer(layer.id, {shift: true});
       return;
     }
     // If the clicked layer is part of the current multi-selection, keep the whole group selected
@@ -4942,6 +5065,25 @@ function bindCanvasEvents(){
         var nh=e.shiftKey?nw/resizeState.aspect:Math.max(10,resizeState.origH+dh);
         layer.w=Math.round(nw);layer.h=Math.round(nh);
         syncPropWH(layer);
+        // Group resize: scale every other selected layer proportionally around the group anchor.
+        // sx/sy are the horizontal/vertical scale factors derived from the primary layer's change;
+        // each other layer's offset from the anchor and its own size both scale by that factor.
+        if(resizeState.groupIds && resizeState.groupIds.length > 1){
+          var sx = nw / resizeState.origW;
+          var sy = nh / resizeState.origH;
+          var ax = resizeState.groupAnchorX, ay = resizeState.groupAnchorY;
+          resizeState.groupIds.forEach(function(id){
+            if(id === resizeState.layerId) return;   // primary already updated
+            var l = layers.find(function(x){return x.id===id;});
+            if(!l) return;
+            var o = resizeState.groupOrig[id];
+            if(!o) return;
+            l.x = Math.round(ax + (o.origX - ax) * sx);
+            l.y = Math.round(ay + (o.origY - ay) * sy);
+            l.w = Math.round(o.origW * sx);
+            l.h = Math.round(o.origH * sy);
+          });
+        }
       }
       redrawSoon();
     }
