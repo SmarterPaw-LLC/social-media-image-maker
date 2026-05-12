@@ -119,6 +119,9 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .modal-btns{display:flex;gap:8px;margin-top:16px;justify-content:flex-end;}
 .btn-primary{padding:9px 20px;background:linear-gradient(135deg,var(--green),var(--green-dark));color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;}
 .btn-cancel{padding:9px 16px;background:#fafafa;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;}
+/* Toast — transient confirmation pill at bottom-right. Auto-dismisses via showToast(). */
+.toast{position:fixed;bottom:24px;right:24px;background:var(--green-dark);color:#fff;padding:11px 18px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.2);font-size:13px;font-weight:600;z-index:2000;opacity:0;transform:translateY(12px);transition:opacity 0.2s ease, transform 0.2s ease;pointer-events:none;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.toast.show{opacity:1;transform:translateY(0);}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -133,7 +136,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v122</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v123</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -354,6 +357,9 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
   </div>
 </div>
+
+<!-- Toast (v123+) — transient confirmation message, populated and shown via showToast() -->
+<div class="toast" id="appToast"></div>
 
 <!-- Sign In modal — gates the editor behind Supabase auth (v112+).
      Default state is visible. Auth init hides it if there's an existing session.
@@ -1715,6 +1721,21 @@ var _lastDesignName = '';
 //
 // Shared helper builds the state object + applies board-name sync, then each path commits.
 
+// Transient toast — for save confirmations and other "did something" feedback. Single shared
+// element; rapid successive calls reset the timer instead of stacking. ms defaults to 2500.
+var _toastTimer = null;
+function showToast(msg, ms){
+  var el = document.getElementById('appToast');
+  if(!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+  if(_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){
+    el.classList.remove('show');
+    _toastTimer = null;
+  }, ms || 2500);
+}
+
 function _gatherSaveStateAndName(){
   var name = document.getElementById('saveDesignName').value.trim();
   if(!name){ alert('Please enter a name.'); return null; }
@@ -1757,6 +1778,7 @@ function saveToComputer(){
   idbSaveDesign(idbTargetId, state).then(function(idbId){
     _currentDesignId = idbId;
     closeSaveModal();
+    showToast('💾 Saved to Computer · ' + name);
   }).catch(function(e){
     console.error('[save:computer] IDB error:', e);
     alert('Downloaded the file OK, but couldn\'t save to My Designs on this browser:\n\n' + (e.message || e));
@@ -1791,6 +1813,7 @@ function saveToCloud(){
     });
   }).then(function(){
     closeSaveModal();
+    showToast('☁ Saved to Cloud · ' + name);
   }).catch(function(e){
     console.error('[save:cloud] error:', e);
     alert('Cloud save failed:\n\n' + (e.message || e) + '\n\nNothing was saved. Try again, or use 💾 Save to Computer to keep a local copy in the meantime.');
