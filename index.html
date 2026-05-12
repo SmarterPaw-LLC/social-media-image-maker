@@ -130,10 +130,11 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .account-item{display:block;width:100%;padding:9px 14px;font-size:13px;color:var(--text);background:none;border:none;text-align:left;cursor:pointer;font-weight:600;font-family:inherit;}
 .account-item:hover{background:#f4faf4;color:var(--green-dark);}
 .account-item.danger:hover{background:#fef2f0;color:#e53;}
-/* Image Library (v126) — split button + thumbnail grid */
-.btn-add-split{display:flex;}
-.btn-add-split > button:first-child{flex:1;border-top-right-radius:0;border-bottom-right-radius:0;}
-.btn-add-split > button:last-child{padding-left:8px;padding-right:8px;border-top-left-radius:0;border-bottom-left-radius:0;border-left-width:0;flex:0 0 auto;}
+/* Image Library (v126) — split button + thumbnail grid. v128 uses gap instead of border
+   tricks because .btn-add has a dashed border that was bleeding into the adjacent button cell. */
+.btn-add-split{display:flex;gap:4px;}
+.btn-add-split > button:first-child{flex:1;min-width:0;}
+.btn-add-split > button:last-child{padding-left:8px;padding-right:8px;flex:0 0 auto;}
 .lib-item{position:relative;border:1.5px solid var(--border);border-radius:7px;background:#fafafa;padding:6px;cursor:pointer;transition:border-color 0.15s, box-shadow 0.15s, transform 0.15s;}
 .lib-item:hover{border-color:var(--green);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,0.08);}
 .lib-item img{width:100%;height:96px;object-fit:cover;border-radius:5px;background:#eee;display:block;}
@@ -156,7 +157,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v127</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v128</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8753,18 +8754,21 @@ function cloudUploadLibraryItem(file, categoryId, displayName){
       var ext = extMatch ? extMatch[1].toLowerCase() : 'bin';
       var path = hash + '.' + ext;
 
+      // v128: removed the "skip-on-duplicate-error" logic that was masking real upload failures
+      //       and letting an orphan image_library_items row get inserted even when the bytes
+      //       never made it to Storage. With upsert:true a real duplicate isn't an error at
+      //       all — Storage overwrites silently — so any error here is a true failure.
       return sb.storage.from('image-library').upload(path, file, {
         upsert: true,
         contentType: file.type || 'application/octet-stream',
         cacheControl: '31536000'  // 1 year — content-addressable, immutable
       }).then(function(res){
         if(res.error){
-          var msg = (res.error.message || '').toLowerCase();
-          // Duplicate on upsert is fine — same bytes at same path
-          if(msg.indexOf('duplicate') < 0 && msg.indexOf('already exists') < 0){
-            throw new Error(res.error.message || 'Storage upload failed');
-          }
+          console.error('[lib] storage upload error:', res.error);
+          var statusInfo = res.error.statusCode ? ' (HTTP ' + res.error.statusCode + ')' : '';
+          throw new Error('Storage upload failed' + statusInfo + ': ' + (res.error.message || 'unknown'));
         }
+        // Only proceed to row insert if storage upload succeeded
         return sb.from('image_library_items').insert({
           name: displayName || file.name || 'Untitled',
           storage_path: path,
