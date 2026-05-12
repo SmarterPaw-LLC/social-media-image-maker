@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v116</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v117</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -325,7 +325,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       </div>
       <div>
         <label>Design name</label>
-        <input type="text" id="saveDesignName" placeholder="e.g. Fall launch hero" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+        <input type="text" id="saveDesignName" placeholder="e.g. Fall launch hero" autocomplete="off" data-form-type="other" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
       </div>
       <div>
         <label>Folder <span style="font-weight:400;color:var(--muted);font-size:11px;">(optional — cloud only)</span></label>
@@ -355,27 +355,30 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 </div>
 
 <!-- Sign In modal — gates the editor behind Supabase auth (v112+).
-     Default state is visible. Auth init hides it if there's an existing session. -->
+     Default state is visible. Auth init hides it if there's an existing session.
+     v117: wrapped in <form> with proper autocomplete attributes so Chrome's password manager
+     recognizes THIS as the only login form on the page (was misattributing the Save Design
+     name field as a "username" and offering to save weird credentials). -->
 <div class="modal-overlay" id="signInModal">
   <div class="modal">
     <h2>🔐 Sign In</h2>
-    <div style="display:flex;flex-direction:column;gap:10px;">
+    <form id="signInForm" onsubmit="event.preventDefault(); doSignIn(); return false;" autocomplete="on" style="display:flex;flex-direction:column;gap:10px;">
       <div>
         <label>Email</label>
-        <input type="email" id="signInEmail" placeholder="you@example.com" autocomplete="email" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+        <input type="email" id="signInEmail" name="email" placeholder="you@example.com" autocomplete="username" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
       </div>
       <div>
         <label>Password</label>
-        <input type="password" id="signInPassword" placeholder="••••••••" autocomplete="current-password" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter') doSignIn()">
+        <input type="password" id="signInPassword" name="password" placeholder="••••••••" autocomplete="current-password" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
       </div>
       <div id="signInError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
       <div style="font-size:11px;color:var(--muted);">
         Designs are synced to your account. To reset a password or invite users, use the Supabase dashboard.
       </div>
-    </div>
-    <div class="modal-btns">
-      <button class="btn-primary" onclick="doSignIn()">Sign In</button>
-    </div>
+      <div class="modal-btns">
+        <button type="submit" class="btn-primary">Sign In</button>
+      </div>
+    </form>
   </div>
 </div>
 
