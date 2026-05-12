@@ -125,13 +125,15 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Fraunces:wght@100;200;300;400;500;600;700;800;900&family=Ultra&family=Nunito:wght@200;300;400;500;600;700;800;900&family=Barlow+Condensed:wght@100;200;300;400;500;600;700;800;900&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=DM+Sans:wght@100;200;300;400;500;600;700;800;900&family=Fredoka+One&family=Chewy&family=Kalam:wght@300;400;700&display=swap" rel="stylesheet">
 <!-- gif.js: animated GIF encoder. Worker URL passed at GIF construction time. -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<!-- Supabase JS client — used for cloud-sync of designs (v112+). See CLAUDE.md. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v111</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v112</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -142,6 +144,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <button class="btn-hdr" onclick="openMyDesignsModal()" title="Load a saved design">📂 My Designs</button>
     <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
+    <button class="btn-hdr" id="signOutBtn" onclick="doSignOut()" title="Sign out" style="display:none;">🚪 Sign Out</button>
   </div>
 </header>
 
@@ -333,6 +336,31 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <!-- "Save as new" button shown only when updating existing — gives the user an escape hatch -->
       <button class="btn-sm hidden" id="saveAsNewBtn" onclick="confirmSaveDesign(true)" title="Save as a separate copy instead of updating">Save as new</button>
       <button class="btn-primary" id="confirmSaveBtn" onclick="confirmSaveDesign(false)">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sign In modal — gates the editor behind Supabase auth (v112+).
+     Default state is visible. Auth init hides it if there's an existing session. -->
+<div class="modal-overlay" id="signInModal">
+  <div class="modal">
+    <h2>🔐 Sign In</h2>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label>Email</label>
+        <input type="email" id="signInEmail" placeholder="you@example.com" autocomplete="email" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+      </div>
+      <div>
+        <label>Password</label>
+        <input type="password" id="signInPassword" placeholder="••••••••" autocomplete="current-password" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter') doSignIn()">
+      </div>
+      <div id="signInError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
+      <div style="font-size:11px;color:var(--muted);">
+        Designs are synced to your account. To reset a password or invite users, use the Supabase dashboard.
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-primary" onclick="doSignIn()">Sign In</button>
     </div>
   </div>
 </div>
@@ -7690,6 +7718,99 @@ function doGifExport(){
     alert('GIF encoder setup failed: ' + e.message + '\n\nThis usually means the gif.worker.js file could not be loaded from the CDN. Check your network connection.');
   });
 }
+
+// ── SUPABASE AUTH (v112) ──
+// Cloud sign-in gates the editor. Without a session, the Sign In modal blocks
+// interaction (it's the default-visible state in the HTML). With a session,
+// the modal is hidden and a Sign Out button appears in the header.
+//
+// Phase 1: auth only — design cloud-save/load lands in a follow-up. The
+// `currentUser` var is what later phases will read to scope queries to the
+// signed-in user. Until then it's just gating UI visibility.
+var SUPABASE_URL = 'https://ttyxodttyeykjijffgql.supabase.co';
+var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0eXhvZHR0eWV5a2ppamZmZ3FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1ODM5MjcsImV4cCI6MjA5NDE1OTkyN30.784lD_-utaZc9-0m1GMH37AGyjcCa7RApYI2ZNE97Do';
+var sb = null;
+var currentUser = null;
+
+(function initSupabase(){
+  if(typeof supabase === 'undefined' || !supabase.createClient){
+    // Library failed to load (e.g. blocked CDN, offline). Surface to the user
+    // rather than silently breaking sign-in.
+    console.error('[auth] supabase-js failed to load. Sign-in unavailable.');
+    showSignInError('Supabase library failed to load. Refresh the page or check your network.');
+    return;
+  }
+  sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  // Returning visit: pick up the existing session from localStorage (default
+  // storage for supabase-js). If none, the sign-in modal stays as-is (visible).
+  sb.auth.getSession().then(function(res){
+    var session = res && res.data && res.data.session;
+    if(session && session.user){ onSignedIn(session.user); }
+  }).catch(function(e){
+    console.error('[auth] getSession failed:', e);
+  });
+  // React to auth events so we don't have to thread state-update calls through
+  // sign-in / sign-out paths individually.
+  sb.auth.onAuthStateChange(function(event, session){
+    if(event === 'SIGNED_IN' && session && session.user){ onSignedIn(session.user); }
+    else if(event === 'SIGNED_OUT'){ onSignedOut(); }
+  });
+})();
+
+function onSignedIn(user){
+  currentUser = user;
+  document.getElementById('signInModal').classList.add('hidden');
+  document.getElementById('signOutBtn').style.display = '';
+  hideSignInError();
+  console.log('[auth] signed in as', user.email);
+}
+
+function onSignedOut(){
+  currentUser = null;
+  document.getElementById('signInModal').classList.remove('hidden');
+  document.getElementById('signOutBtn').style.display = 'none';
+  // Clear password field for safety; keep email so re-sign-in is one fewer keystroke
+  var pw = document.getElementById('signInPassword'); if(pw) pw.value = '';
+}
+
+function showSignInError(msg){
+  var el = document.getElementById('signInError');
+  if(!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function hideSignInError(){
+  var el = document.getElementById('signInError');
+  if(el) el.classList.add('hidden');
+}
+
+function doSignIn(){
+  if(!sb){ showSignInError('Auth not initialized. Refresh the page.'); return; }
+  var email = (document.getElementById('signInEmail').value || '').trim();
+  var password = document.getElementById('signInPassword').value || '';
+  if(!email || !password){ showSignInError('Email and password are both required.'); return; }
+  hideSignInError();
+  sb.auth.signInWithPassword({email: email, password: password}).then(function(res){
+    if(res.error){
+      showSignInError(res.error.message || 'Sign-in failed.');
+      return;
+    }
+    // onAuthStateChange will fire SIGNED_IN and call onSignedIn — no further work here.
+  }).catch(function(e){
+    console.error('[auth] signIn exception:', e);
+    showSignInError('Sign-in failed: ' + (e.message || e));
+  });
+}
+
+function doSignOut(){
+  if(!sb) return;
+  sb.auth.signOut().catch(function(e){
+    console.error('[auth] signOut failed:', e);
+  });
+  // onAuthStateChange will fire SIGNED_OUT and call onSignedOut.
+}
+
 </script>
 </body>
 </html>
