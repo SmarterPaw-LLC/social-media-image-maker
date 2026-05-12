@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v119</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v120</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -344,7 +344,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         <label for="saveAsNewChk" style="margin:0;font-weight:600;cursor:pointer;">Save as a new copy (don't overwrite the existing entry)</label>
       </div>
       <div style="font-size:11px;color:var(--muted);">
-        <b>💾 Save to Computer</b> writes a <code>.spdesign.json</code> download and a copy in this browser's My Designs. <b>☁ Save to Cloud</b> syncs to your account; the design follows you across devices.
+        <b>💾 Save to Computer</b> writes a <code>.spdesign.json</code> download and a copy in this browser's My Designs (no cloud). <b>☁ Save to Cloud</b> does all of that <i>and</i> syncs to your account so the design follows you across devices.
       </div>
     </div>
     <div class="modal-btns">
@@ -1774,14 +1774,21 @@ function saveToCloud(){
   var name = prep.name, state = prep.state;
   var forceNew = _isSaveAsNewChecked();
 
-  // 1. Cloud save (insert or update depending on forceNew + existing _currentCloudId)
+  // v120: "Save to Cloud" is the "save everywhere" path — file + IDB + cloud, matching the
+  // single-button behavior from pre-v115. File download runs first as the safest leg so the
+  // user has a local backup even if the cloud step fails. IDB writes after cloud so we can
+  // stamp the cloud_id back into the local cache for the synced badge in My Designs.
+
+  // 1. File download — instant; runs first so a network failure later doesn't lose the design
+  downloadDesignFile(state, name);
+
+  // 2. Cloud save (insert or update depending on forceNew + existing _currentCloudId)
   var cloudTargetId = (!forceNew && _currentCloudId != null) ? _currentCloudId : null;
   cloudSaveDesign(cloudTargetId, state, name).then(function(cloudId){
     _currentCloudId = cloudId;
     _currentFolderIdForSave = state.folder_id != null ? state.folder_id : null;
     state.cloud_id = cloudId;
-    // 2. IDB cache — so the design appears as ☁📄 synced in My Designs and loads instantly
-    //    next time. Honors forceNew the same way the cloud side does.
+    // 3. IDB cache — so the design appears as ☁📄 synced in My Designs and loads instantly next time
     var idbTargetId = (!forceNew && _currentDesignId != null) ? _currentDesignId : null;
     return idbSaveDesign(idbTargetId, state).then(function(idbId){
       _currentDesignId = idbId;
@@ -1790,7 +1797,7 @@ function saveToCloud(){
     closeSaveModal();
   }).catch(function(e){
     console.error('[save:cloud] error:', e);
-    alert('Cloud save failed:\n\n' + (e.message || e) + '\n\nNothing was saved. Try again, or use 💾 Save to Computer to keep a local copy in the meantime.');
+    alert('Cloud save failed:\n\n' + (e.message || e) + '\n\nThe .spdesign.json file did download to your computer, but the cloud copy and local My Designs entry were NOT updated. Try again, or use 💾 Save to Computer to keep just a local copy.');
   });
 }
 
