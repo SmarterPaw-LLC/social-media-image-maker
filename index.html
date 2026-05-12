@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v112</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v113</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -328,7 +328,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         <input type="text" id="saveDesignName" placeholder="e.g. Fall launch hero" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
       </div>
       <div style="font-size:11px;color:var(--muted);">
-        Saved to this browser (accessible from My Designs) AND downloaded as a <code>.spdesign.json</code> file you can load on any device or share with teammates.
+        Saved to this browser (accessible from My Designs), downloaded as a <code>.spdesign.json</code> file, AND — when signed in — synced to your account so it follows you across devices.
       </div>
     </div>
     <div class="modal-btns">
@@ -1496,6 +1496,11 @@ var _autosaveTimer = null;
 // My Designs, set when saving for the first time. null means "this is a new unsaved design".
 // When non-null, the Save button defaults to UPDATING that record instead of creating a new one.
 var _currentDesignId = null;
+// Sibling of _currentDesignId for the Supabase social_designs row id (v113+). The IDB record
+// stores this as `cloud_id` so a reload from My Designs can re-set it. Saving while signed in
+// keeps both ids in sync; offline / signed-out saves leave _currentCloudId null until the next
+// signed-in save.
+var _currentCloudId = null;
 
 // Capture the full current design state as a plain JS object (JSON-safe).
 function gatherDesignState(){
@@ -1603,13 +1608,40 @@ function confirmSaveDesign(forceNew){
   }
   var state = gatherDesignState();
   state.name = name;
-  // 1. Download as file
+  // Carry the current cloud_id forward in the state so the IDB record's cloud_id field stays
+  // accurate after the save. Overwritten below once the cloud insert returns a real id.
+  if(_currentCloudId != null) state.cloud_id = _currentCloudId;
+  else delete state.cloud_id;
+
+  // 1. Download as file (instant — safest leg, runs first so even if IDB+cloud both fail the user has the JSON)
   downloadDesignFile(state, name);
+
   // 2. Save to IndexedDB. Pass the existing id to update in place; null to create new.
-  var targetId = (!forceNew && _currentDesignId != null) ? _currentDesignId : null;
-  idbSaveDesign(targetId, state).then(function(id){
-    // Track the record so subsequent saves keep updating it
-    _currentDesignId = id;
+  var idbTargetId = (!forceNew && _currentDesignId != null) ? _currentDesignId : null;
+  idbSaveDesign(idbTargetId, state).then(function(idbId){
+    _currentDesignId = idbId;
+
+    // 3. Cloud save (only when signed in). On success, write the cloud id back into the IDB
+    //    record so a future load can re-link. On failure, alert but don't roll back IDB — the
+    //    local copy is still good and the user can try again later.
+    if(currentUser && sb){
+      var cloudTargetId = (!forceNew && _currentCloudId != null) ? _currentCloudId : null;
+      return cloudSaveDesign(cloudTargetId, state, name).then(function(cloudId){
+        _currentCloudId = cloudId;
+        // Re-stamp the IDB record with the now-known cloud_id (no-op if it was already set
+        // and the cloud update reused the same id).
+        if(state.cloud_id !== cloudId){
+          state.cloud_id = cloudId;
+          return idbSaveDesign(idbId, state);
+        }
+      }).then(function(){
+        closeSaveModal();
+      }).catch(function(e){
+        console.error('[save] cloud error:', e);
+        alert('Saved locally + downloaded OK, but cloud sync failed:\n\n' + (e.message || e) + '\n\nYour design is safe in this browser; try saving again later to push to the cloud.');
+        closeSaveModal();
+      });
+    }
     closeSaveModal();
   }).catch(function(e){
     console.error('[save] IDB error:', e);
@@ -1644,6 +1676,7 @@ function loadFromFileInput(event){
       if(restoreDesignState(state)){
         _lastDesignName = state.name || '';
         _currentDesignId = null; // file load isn't tied to an IDB record; next save creates new
+        _currentCloudId = null;  // file's cloud_id (if any) belongs to the original uploader's account — ignore
         closeMyDesignsModal();
       }
     } catch(err){
@@ -1789,66 +1822,128 @@ function openMyDesignsModal(){
 function closeMyDesignsModal(){
   document.getElementById('myDesignsModal').classList.add('hidden');
 }
+// v113: merged IDB + Supabase list. Two sources are joined by IDB record's `cloud_id` ↔ cloud
+// row's `id`. Each row shows where it lives (📄 local, ☁ cloud, ☁📄 synced). Cloud-only rows
+// are designs saved on another device — clicking Load fetches state from cloud and caches to IDB.
 function renderMyDesigns(){
   var container = document.getElementById('myDesignsList');
   container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px;">Loading…</div>';
-  idbListDesigns().then(function(designs){
-    if(!designs.length){
-      container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px;">No saved designs yet. Save one to see it here.</div>';
+
+  Promise.all([
+    idbListDesigns().catch(function(e){ console.warn('[my-designs] IDB list failed:', e); return []; }),
+    cloudListDesigns().catch(function(e){ console.warn('[my-designs] cloud list failed:', e); return []; })
+  ]).then(function(results){
+    var idbList = results[0] || [];
+    var cloudList = results[1] || [];
+
+    // Index cloud rows by id for the merge join
+    var cloudById = {};
+    cloudList.forEach(function(c){ cloudById[c.id] = c; });
+
+    var merged = [];
+    var consumedCloudIds = {};
+    idbList.forEach(function(idb){
+      var cloudRow = (idb.cloud_id != null && cloudById[idb.cloud_id]) || null;
+      if(cloudRow) consumedCloudIds[cloudRow.id] = true;
+      merged.push({
+        idb: idb,
+        cloud: cloudRow,
+        isAutosave: !!idb.isAutosave,
+        // Sort by the most recent timestamp from whichever source has fresher metadata
+        sortAt: (cloudRow && cloudRow.updated_at) || idb.savedAt || ''
+      });
+    });
+    cloudList.forEach(function(c){
+      if(consumedCloudIds[c.id]) return;
+      merged.push({ idb: null, cloud: c, isAutosave: false, sortAt: c.updated_at || '' });
+    });
+
+    container.innerHTML = '';
+
+    // Status note: signed-out users still see local designs, but with a nudge to sign in
+    if(!currentUser){
+      var note = document.createElement('div');
+      note.style.cssText = 'padding:8px 10px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;font-size:11px;color:#664d03;margin-bottom:8px;';
+      note.textContent = 'Not signed in. Local designs are visible; sign in to sync designs to the cloud and access them from other devices.';
+      container.appendChild(note);
+    }
+
+    if(!merged.length){
+      var empty = document.createElement('div');
+      empty.style.cssText = 'text-align:center;padding:20px;color:var(--muted);font-size:12px;';
+      empty.textContent = 'No saved designs yet. Save one to see it here.';
+      container.appendChild(empty);
       return;
     }
-    // Sort: autosave first, then newest → oldest by savedAt
-    designs.sort(function(a,b){
+
+    // Sort: autosave first, then newest → oldest
+    merged.sort(function(a,b){
       if(a.isAutosave && !b.isAutosave) return -1;
       if(!a.isAutosave && b.isAutosave) return 1;
-      return (b.savedAt||'').localeCompare(a.savedAt||'');
+      return (b.sortAt || '').localeCompare(a.sortAt || '');
     });
-    container.innerHTML = '';
-    designs.forEach(function(d){
+
+    merged.forEach(function(m){
+      // Prefer cloud metadata for synced rows (more authoritative across devices); IDB for autosave + local-only
+      var displayName = (m.cloud && m.cloud.name) || (m.idb && m.idb.name) || 'Untitled';
+      var displayTime = (m.cloud && m.cloud.updated_at)
+        ? new Date(m.cloud.updated_at).toLocaleString()
+        : (m.idb && m.idb.savedAt ? new Date(m.idb.savedAt).toLocaleString() : '—');
+      var cw = (m.cloud && m.cloud.canvas_w) || (m.idb && m.idb.canvasW) || '?';
+      var ch = (m.cloud && m.cloud.canvas_h) || (m.idb && m.idb.canvasH) || '?';
+      // Cloud list doesn't fetch state (bandwidth), so layer count is only known for IDB-present rows
+      var layerCount = m.idb ? ((m.idb.layers || []).length) : null;
+
+      var srcBadge, srcTitle;
+      if(m.isAutosave){ srcBadge = '⟳'; srcTitle = 'Autosave — local only'; }
+      else if(m.idb && m.cloud){ srcBadge = '☁📄'; srcTitle = 'Synced (cloud + local)'; }
+      else if(m.cloud){ srcBadge = '☁'; srcTitle = 'Cloud only — not yet cached on this device'; }
+      else { srcBadge = '📄'; srcTitle = 'Local only — sign in and re-save to sync to cloud'; }
+
       var row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:7px;background:#fafafa;';
-      var when = d.savedAt ? new Date(d.savedAt).toLocaleString() : '—';
-      var layerCount = (d.layers||[]).length;
-      var icon = d.isAutosave ? '⟳' : '📄';
-      var nameHtml = d.isAutosave
-        ? '<b style="color:var(--muted);">' + icon + ' Autosave</b>'
-        : '<b>' + icon + ' ' + escAttr(d.name||'Untitled') + '</b>';
+      var nameHtml = m.isAutosave
+        ? '<b style="color:var(--muted);"><span title="' + srcTitle + '">' + srcBadge + '</span> Autosave</b>'
+        : '<b><span title="' + srcTitle + '" style="font-size:11px;">' + srcBadge + '</span> ' + escAttr(displayName) + '</b>';
+      var metaParts = [];
+      if(layerCount != null) metaParts.push(layerCount + ' layer' + (layerCount===1?'':'s'));
+      metaParts.push(cw + '×' + ch);
+      metaParts.push(displayTime);
       row.innerHTML =
         '<div style="flex:1;min-width:0;overflow:hidden;">'
           + nameHtml
-          + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">'
-            + layerCount + ' layer' + (layerCount===1?'':'s') + ' · ' + (d.canvasW||'?') + '×' + (d.canvasH||'?') + ' · ' + when
-          + '</div>'
+          + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">' + metaParts.join(' · ') + '</div>'
         + '</div>'
         + '<button class="btn-sm" data-action="load" title="Load this design">Load</button>'
-        + '<button class="btn-sm" data-action="download" title="Download as .json file">⬇</button>'
-        + (d.isAutosave ? '' : '<button class="btn-sm danger" data-action="delete" title="Delete">✕</button>');
+        + (m.idb && !m.isAutosave ? '<button class="btn-sm" data-action="download" title="Download as .json file">⬇</button>' : '')
+        + (m.isAutosave ? '' : '<button class="btn-sm danger" data-action="delete" title="Delete">✕</button>');
+
       row.querySelector('[data-action="load"]').onclick = function(){
-        if(restoreDesignState(d)){
-          _lastDesignName = d.name || '';
-          // Track this as the open record. Don't track the autosave entry — it's a special
-          // "always-overwrite" slot that shouldn't become the user's default save target.
-          _currentDesignId = d.isAutosave ? null : (d.id != null ? d.id : null);
-          closeMyDesignsModal();
-        }
+        loadMergedDesign(m);
       };
-      row.querySelector('[data-action="download"]').onclick = function(){
-        downloadDesignFile(d, d.name || 'design');
-      };
+      var dlBtn = row.querySelector('[data-action="download"]');
+      if(dlBtn){
+        dlBtn.onclick = function(){ downloadDesignFile(m.idb, m.idb.name || 'design'); };
+      }
       var delBtn = row.querySelector('[data-action="delete"]');
       if(delBtn){
         delBtn.onclick = function(){
-          if(!confirm('Delete "' + (d.name||'Untitled') + '"? This cannot be undone.')) return;
-          // If they deleted the open record, reset so next Save creates a new one rather than
-          // trying to update a non-existent id.
-          if(_currentDesignId === d.id) _currentDesignId = null;
-          idbDeleteDesign(d.id).then(renderMyDesigns);
+          var what;
+          if(m.idb && m.cloud) what = 'Delete "' + displayName + '" from BOTH the cloud and this browser?';
+          else if(m.cloud) what = 'Delete "' + displayName + '" from the cloud?';
+          else what = 'Delete "' + displayName + '" from this browser?';
+          if(!confirm(what + ' This cannot be undone.')) return;
+          deleteMergedDesign(m).then(renderMyDesigns).catch(function(e){
+            console.error('[my-designs] delete error:', e);
+            alert('Delete failed: ' + (e.message || e));
+          });
         };
       }
       container.appendChild(row);
     });
   }).catch(function(e){
-    container.innerHTML = '<div style="color:#a00;font-size:12px;">Error: ' + e.message + '</div>';
+    console.error('[my-designs] render error:', e);
+    container.innerHTML = '<div style="color:#a00;font-size:12px;">Error loading designs: ' + (e.message || e) + '</div>';
   });
 }
 
@@ -7717,6 +7812,126 @@ function doGifExport(){
     console.error('[gif] worker setup failed:', e);
     alert('GIF encoder setup failed: ' + e.message + '\n\nThis usually means the gif.worker.js file could not be loaded from the CDN. Check your network connection.');
   });
+}
+
+// ── CLOUD DESIGN STORE (v113) ──
+// Wrappers around the `social_designs` Supabase table. All helpers no-op (resolve empty / reject)
+// when the user is signed out, so callers don't need to guard. Real security is enforced by RLS
+// at the DB layer: `auth.uid() = user_id` on every policy.
+//
+// Schema mapping vs. the in-memory state object:
+//   state.canvasW       → social_designs.canvas_w
+//   state.canvasH       → social_designs.canvas_h
+//   state.schema        → social_designs.schema_version
+//   state.appVersion    → social_designs.app_version
+//   state.currentBrand  → social_designs.brand
+//   state (whole obj)   → social_designs.state (jsonb — full payload for restore)
+//
+// The cloud row's `id` (bigserial) is the canonical link; IDB records store it as `cloud_id`.
+
+function cloudSaveDesign(id, state, name){
+  // id=null → INSERT a new row; id=<number> → UPDATE that row.
+  // Returns a Promise<number> with the row's id on success.
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  var row = {
+    user_id: currentUser.id,
+    name: name,
+    brand: state.currentBrand || null,
+    canvas_w: state.canvasW || null,
+    canvas_h: state.canvasH || null,
+    schema_version: state.schema || 1,
+    app_version: state.appVersion || null,
+    state: state,
+    is_autosave: false
+  };
+  var q;
+  if(id != null){
+    q = sb.from('social_designs').update(row).eq('id', id).select('id').single();
+  } else {
+    q = sb.from('social_designs').insert(row).select('id').single();
+  }
+  return q.then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Cloud save failed');
+    if(!res.data || res.data.id == null) throw new Error('Cloud save returned no id (RLS denial?)');
+    return res.data.id;
+  });
+}
+
+function cloudListDesigns(){
+  // Returns metadata only (no `state`) — fetching state for every row would be wasteful for users
+  // with many designs. State is fetched on-demand in cloudGetDesign when a row is opened.
+  if(!sb || !currentUser) return Promise.resolve([]);
+  return sb.from('social_designs')
+    .select('id, name, brand, canvas_w, canvas_h, schema_version, app_version, is_autosave, created_at, updated_at')
+    .eq('user_id', currentUser.id)
+    .eq('is_autosave', false)
+    .order('updated_at', {ascending: false})
+    .then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Cloud list failed');
+      return res.data || [];
+    });
+}
+
+function cloudGetDesign(id){
+  // Returns the full state JSON for one design.
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  return sb.from('social_designs').select('state').eq('id', id).single().then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Cloud fetch failed');
+    if(!res.data || !res.data.state) throw new Error('Cloud row has no state payload');
+    return res.data.state;
+  });
+}
+
+function cloudDeleteDesign(id){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  return sb.from('social_designs').delete().eq('id', id).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Cloud delete failed');
+  });
+}
+
+// Load a merged row (one of {idb-only, cloud-only, synced}) into the editor.
+// If IDB has the record, restore directly (faster — layers already in memory). Otherwise fetch
+// state from the cloud and opportunistically cache it to IDB so subsequent loads are instant.
+function loadMergedDesign(m){
+  if(m.idb){
+    if(restoreDesignState(m.idb)){
+      _lastDesignName = m.idb.name || '';
+      _currentDesignId = m.isAutosave ? null : (m.idb.id != null ? m.idb.id : null);
+      _currentCloudId = m.idb.cloud_id != null ? m.idb.cloud_id : null;
+      closeMyDesignsModal();
+    }
+    return;
+  }
+  // Cloud-only path
+  cloudGetDesign(m.cloud.id).then(function(state){
+    if(!state) throw new Error('Cloud returned empty state');
+    if(!restoreDesignState(state)) throw new Error('Could not restore design');
+    _lastDesignName = state.name || m.cloud.name || '';
+    _currentCloudId = m.cloud.id;
+    // Cache to IDB so next time it shows as "synced" rather than "cloud-only"
+    state.cloud_id = m.cloud.id;
+    return idbSaveDesign(null, state).then(function(idbId){
+      _currentDesignId = idbId;
+    });
+  }).then(function(){
+    closeMyDesignsModal();
+  }).catch(function(e){
+    console.error('[my-designs] cloud load error:', e);
+    alert('Failed to load from cloud: ' + (e.message || e));
+  });
+}
+
+function deleteMergedDesign(m){
+  var ps = [];
+  if(m.idb){
+    if(_currentDesignId === m.idb.id) _currentDesignId = null;
+    ps.push(idbDeleteDesign(m.idb.id));
+  }
+  if(m.cloud){
+    if(_currentCloudId === m.cloud.id) _currentCloudId = null;
+    ps.push(cloudDeleteDesign(m.cloud.id));
+  }
+  return Promise.all(ps);
 }
 
 // ── SUPABASE AUTH (v112) ──
