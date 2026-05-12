@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v117</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v118</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -144,6 +144,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <button class="btn-hdr" onclick="openMyDesignsModal()" title="Load a saved design">📂 My Designs</button>
     <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
+    <button class="btn-hdr" id="addUserBtn" onclick="openAddUserModal()" title="Invite a new user to this tool" style="display:none;">👥 Add User</button>
     <button class="btn-hdr" id="signOutBtn" onclick="doSignOut()" title="Sign out" style="display:none;">🚪 Sign Out</button>
   </div>
 </header>
@@ -398,6 +399,52 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMyDesignsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add User modal (v118+) — invites a new user via sb.auth.signUp.
+     Confirm-email setting in Supabase determines whether the new user must click a link before
+     they can sign in (default ON) vs auto-signed-in immediately (OFF — replaces admin's session). -->
+<div class="modal-overlay hidden" id="addUserModal">
+  <div class="modal" style="max-width:480px;">
+    <h2>👥 Add User</h2>
+    <!-- Form view: visible by default, hidden after a successful create -->
+    <form id="addUserForm" onsubmit="event.preventDefault(); submitAddUser(); return false;" autocomplete="off" style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label>Email</label>
+        <input type="email" id="addUserEmail" placeholder="newuser@example.com" autocomplete="off" data-form-type="other" required style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+      </div>
+      <div>
+        <label>Temp Password <span style="font-weight:400;color:var(--muted);font-size:11px;">(min 6 chars — user can change later)</span></label>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="addUserPassword" placeholder="••••••••" autocomplete="off" data-form-type="other" required style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;font-family:monospace;">
+          <button type="button" class="btn-cancel" style="padding:6px 10px;font-size:12px;" onclick="generateRandomPassword()" title="Generate a strong random password">🎲 Generate</button>
+        </div>
+      </div>
+      <div id="addUserError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
+      <div style="font-size:11px;color:var(--muted);">
+        The new user will be created in Supabase Auth. By default they'll receive a confirmation email and must click the link before they can sign in. Share these credentials with them via Slack / email / 1Password.
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-cancel" onclick="closeAddUserModal()">Cancel</button>
+        <button type="submit" class="btn-primary" id="addUserSubmitBtn">Create User</button>
+      </div>
+    </form>
+    <!-- Success view: shown after sign-up succeeds, swaps in for the form -->
+    <div id="addUserSuccess" class="hidden" style="display:flex;flex-direction:column;gap:12px;">
+      <div style="padding:10px 12px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:12px;color:#3a5e10;">
+        <div id="addUserSuccessHeader" style="font-weight:700;margin-bottom:6px;"></div>
+        <div id="addUserSuccessNote" style="font-size:11px;"></div>
+      </div>
+      <div>
+        <label>Credentials (copy and share)</label>
+        <textarea id="addUserCredsBlob" readonly style="width:100%;height:60px;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;resize:none;background:#fafafa;"></textarea>
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-cancel" onclick="copyAddUserCreds()">📋 Copy</button>
+        <button type="button" class="btn-primary" onclick="closeAddUserModal()">Done</button>
+      </div>
     </div>
   </div>
 </div>
@@ -8366,6 +8413,8 @@ function onSignedIn(user){
   currentUser = user;
   document.getElementById('signInModal').classList.add('hidden');
   document.getElementById('signOutBtn').style.display = '';
+  var addUserBtn = document.getElementById('addUserBtn');
+  if(addUserBtn) addUserBtn.style.display = '';
   hideSignInError();
   console.log('[auth] signed in as', user.email);
 }
@@ -8374,6 +8423,8 @@ function onSignedOut(){
   currentUser = null;
   document.getElementById('signInModal').classList.remove('hidden');
   document.getElementById('signOutBtn').style.display = 'none';
+  var addUserBtn = document.getElementById('addUserBtn');
+  if(addUserBtn) addUserBtn.style.display = 'none';
   // Clear password field for safety; keep email so re-sign-in is one fewer keystroke
   var pw = document.getElementById('signInPassword'); if(pw) pw.value = '';
 }
@@ -8414,6 +8465,120 @@ function doSignOut(){
     console.error('[auth] signOut failed:', e);
   });
   // onAuthStateChange will fire SIGNED_OUT and call onSignedOut.
+}
+
+// ── ADD USER (v118) ──
+// Invites a new user via sb.auth.signUp from the browser. We can't use the proper admin invite
+// API (auth.admin.inviteUserByEmail) because that requires the service_role key, which would be
+// catastrophic to expose client-side. signUp is the closest browser-safe equivalent.
+//
+// Behavior depends on the project's "Confirm email" auth setting:
+//   - ENABLED (Supabase default): user gets a confirmation email + can't sign in until they click
+//     the link. Admin's session stays intact. ← intended path
+//   - DISABLED: signUp auto-signs in the new user, REPLACING the admin's session. We detect this
+//     (newSession.user.id !== currentUser.id) and prompt the admin to sign back in after closing
+//     the success modal.
+
+var _addUserNeedsAdminResign = false;
+
+function openAddUserModal(){
+  if(!currentUser){ alert('Sign in to add users.'); return; }
+  // Reset to the form view (in case it was closed during a success state)
+  document.getElementById('addUserForm').style.display = '';
+  document.getElementById('addUserSuccess').classList.add('hidden');
+  document.getElementById('addUserError').classList.add('hidden');
+  document.getElementById('addUserEmail').value = '';
+  document.getElementById('addUserPassword').value = '';
+  document.getElementById('addUserSubmitBtn').disabled = false;
+  document.getElementById('addUserSubmitBtn').textContent = 'Create User';
+  document.getElementById('addUserModal').classList.remove('hidden');
+  setTimeout(function(){ document.getElementById('addUserEmail').focus(); }, 50);
+}
+
+function closeAddUserModal(){
+  document.getElementById('addUserModal').classList.add('hidden');
+  if(_addUserNeedsAdminResign){
+    _addUserNeedsAdminResign = false;
+    // Sign out so the admin's sign-in modal reappears and they can re-authenticate
+    sb.auth.signOut();
+  }
+}
+
+function generateRandomPassword(){
+  // Skip easily-confused chars (0/O, 1/l/I) so the temp password is easier to share verbally if needed.
+  var chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  var pw = '';
+  for(var i = 0; i < 14; i++) pw += chars.charAt(Math.floor(Math.random() * chars.length));
+  document.getElementById('addUserPassword').value = pw;
+}
+
+function showAddUserError(msg){
+  var el = document.getElementById('addUserError');
+  if(!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function copyAddUserCreds(){
+  var ta = document.getElementById('addUserCredsBlob');
+  if(!ta) return;
+  ta.select();
+  try {
+    document.execCommand('copy');
+    // Brief visual confirm via the textarea border
+    ta.style.borderColor = 'var(--green)';
+    setTimeout(function(){ ta.style.borderColor = ''; }, 800);
+  } catch(e){
+    console.warn('[add-user] copy failed:', e);
+    alert('Copy failed — please select the text manually.');
+  }
+}
+
+function submitAddUser(){
+  if(!sb || !currentUser){ showAddUserError('Sign in to add users.'); return; }
+  var email = document.getElementById('addUserEmail').value.trim();
+  var password = document.getElementById('addUserPassword').value;
+  if(!email){ showAddUserError('Email required.'); return; }
+  if(!password || password.length < 6){ showAddUserError('Password must be at least 6 characters.'); return; }
+  document.getElementById('addUserError').classList.add('hidden');
+
+  var btn = document.getElementById('addUserSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  var adminId = currentUser.id;
+  var adminEmail = currentUser.email;
+
+  sb.auth.signUp({email: email, password: password}).then(function(res){
+    btn.disabled = false;
+    btn.textContent = 'Create User';
+    if(res.error){
+      showAddUserError(res.error.message || 'Sign-up failed.');
+      return;
+    }
+    var newSession = res.data && res.data.session;
+    var newUser = res.data && res.data.user;
+    var sessionReplaced = !!(newSession && newSession.user && newSession.user.id !== adminId);
+    // Swap to success view
+    document.getElementById('addUserForm').style.display = 'none';
+    document.getElementById('addUserSuccess').classList.remove('hidden');
+    var hdr = document.getElementById('addUserSuccessHeader');
+    var note = document.getElementById('addUserSuccessNote');
+    if(sessionReplaced){
+      hdr.textContent = '✓ User ' + email + ' created — but your session was replaced.';
+      note.innerHTML = 'This project has email confirmation <b>disabled</b>, so the new user was auto-signed-in and your admin session (' + escAttr(adminEmail) + ') was bumped. After you click Done, you\'ll be returned to the Sign In screen — sign in again as yourself.';
+      _addUserNeedsAdminResign = true;
+    } else {
+      hdr.textContent = '✓ User ' + email + ' created.';
+      note.innerHTML = 'Supabase sent a confirmation email to <b>' + escAttr(email) + '</b>. Once they click the link, they can sign in with the credentials below. Your admin session is unaffected.';
+      _addUserNeedsAdminResign = false;
+    }
+    document.getElementById('addUserCredsBlob').value = 'Email: ' + email + '\nPassword: ' + password;
+  }).catch(function(e){
+    btn.disabled = false;
+    btn.textContent = 'Create User';
+    console.error('[add-user] signUp exception:', e);
+    showAddUserError('Error: ' + (e.message || e));
+  });
 }
 
 </script>
