@@ -122,6 +122,14 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 /* Toast — transient confirmation pill at bottom-right. Auto-dismisses via showToast(). */
 .toast{position:fixed;bottom:24px;right:24px;background:var(--green-dark);color:#fff;padding:11px 18px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.2);font-size:13px;font-weight:600;z-index:2000;opacity:0;transform:translateY(12px);transition:opacity 0.2s ease, transform 0.2s ease;pointer-events:none;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .toast.show{opacity:1;transform:translateY(0);}
+/* Account dropdown (v127) — header profile/settings menu */
+.account-menu{position:relative;display:inline-block;}
+.account-panel{position:absolute;top:calc(100% + 6px);right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);min-width:240px;padding:6px 0;z-index:1500;display:none;}
+.account-panel.open{display:block;}
+.account-email{padding:10px 14px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);margin-bottom:4px;word-break:break-all;font-weight:600;}
+.account-item{display:block;width:100%;padding:9px 14px;font-size:13px;color:var(--text);background:none;border:none;text-align:left;cursor:pointer;font-weight:600;font-family:inherit;}
+.account-item:hover{background:#f4faf4;color:var(--green-dark);}
+.account-item.danger:hover{background:#fef2f0;color:#e53;}
 /* Image Library (v126) — split button + thumbnail grid */
 .btn-add-split{display:flex;}
 .btn-add-split > button:first-child{flex:1;border-top-right-radius:0;border-bottom-right-radius:0;}
@@ -148,7 +156,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v126</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v127</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -159,9 +167,18 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <button class="btn-hdr" onclick="openMyDesignsModal()" title="Load a saved design">📂 My Designs</button>
     <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
-    <button class="btn-hdr" id="addUserBtn" onclick="openAddUserModal()" title="Invite a new user to this tool" style="display:none;">👥 Add User</button>
-    <button class="btn-hdr" id="changePasswordBtn" onclick="openChangePasswordModal()" title="Change your password" style="display:none;">🔑 Password</button>
-    <button class="btn-hdr" id="signOutBtn" onclick="doSignOut()" title="Sign out" style="display:none;">🚪 Sign Out</button>
+    <!-- v127: Account dropdown — collapses Add User / Change Password / Sign Out under one menu.
+         Hidden when signed out; shown by onSignedIn / hidden by onSignedOut. -->
+    <div class="account-menu" id="accountMenu" style="display:none;">
+      <button class="btn-hdr" id="accountTrigger" onclick="toggleAccountMenu()" title="Account menu">👤 Account ▾</button>
+      <div class="account-panel" id="accountPanel">
+        <div class="account-email" id="accountEmail">—</div>
+        <button type="button" class="account-item" onclick="closeAccountMenu(); openAddUserModal();">👥 Add User…</button>
+        <button type="button" class="account-item" onclick="closeAccountMenu(); openChangePasswordModal();">🔑 Change Password…</button>
+        <div style="border-top:1px solid var(--border);margin:4px 0;"></div>
+        <button type="button" class="account-item danger" onclick="closeAccountMenu(); doSignOut();">🚪 Sign Out</button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -8992,11 +9009,10 @@ var currentUser = null;
 function onSignedIn(user){
   currentUser = user;
   document.getElementById('signInModal').classList.add('hidden');
-  document.getElementById('signOutBtn').style.display = '';
-  var addUserBtn = document.getElementById('addUserBtn');
-  if(addUserBtn) addUserBtn.style.display = '';
-  var cpBtn = document.getElementById('changePasswordBtn');
-  if(cpBtn) cpBtn.style.display = '';
+  var accountMenu = document.getElementById('accountMenu');
+  if(accountMenu) accountMenu.style.display = '';
+  var emailEl = document.getElementById('accountEmail');
+  if(emailEl) emailEl.textContent = user.email || '—';
   hideSignInError();
   console.log('[auth] signed in as', user.email);
 }
@@ -9004,13 +9020,59 @@ function onSignedIn(user){
 function onSignedOut(){
   currentUser = null;
   document.getElementById('signInModal').classList.remove('hidden');
-  document.getElementById('signOutBtn').style.display = 'none';
-  var addUserBtn = document.getElementById('addUserBtn');
-  if(addUserBtn) addUserBtn.style.display = 'none';
-  var cpBtn = document.getElementById('changePasswordBtn');
-  if(cpBtn) cpBtn.style.display = 'none';
+  var accountMenu = document.getElementById('accountMenu');
+  if(accountMenu) accountMenu.style.display = 'none';
+  closeAccountMenu(); // dismiss the dropdown if it's open at sign-out time
   // Clear password field for safety; keep email so re-sign-in is one fewer keystroke
   var pw = document.getElementById('signInPassword'); if(pw) pw.value = '';
+}
+
+// ── ACCOUNT DROPDOWN (v127) ──
+// Collapses Add User / Change Password / Sign Out under a single Account ▾ button so the header
+// doesn't keep growing with every auth-related feature. Click outside or Esc to close.
+
+var _accountMenuClickListener = null;
+var _accountMenuKeyListener = null;
+
+function toggleAccountMenu(){
+  var panel = document.getElementById('accountPanel');
+  if(!panel) return;
+  if(panel.classList.contains('open')) closeAccountMenu();
+  else openAccountMenu();
+}
+
+function openAccountMenu(){
+  var panel = document.getElementById('accountPanel');
+  if(!panel) return;
+  panel.classList.add('open');
+  // Refresh the displayed email in case it changed after sign-in
+  var emailEl = document.getElementById('accountEmail');
+  if(emailEl) emailEl.textContent = (currentUser && currentUser.email) || '—';
+  // Defer listener registration to next tick so the click that opened doesn't immediately close
+  setTimeout(function(){
+    _accountMenuClickListener = function(e){
+      var menu = document.getElementById('accountMenu');
+      if(menu && !menu.contains(e.target)) closeAccountMenu();
+    };
+    _accountMenuKeyListener = function(e){
+      if(e.key === 'Escape') closeAccountMenu();
+    };
+    document.addEventListener('click', _accountMenuClickListener);
+    document.addEventListener('keydown', _accountMenuKeyListener);
+  }, 0);
+}
+
+function closeAccountMenu(){
+  var panel = document.getElementById('accountPanel');
+  if(panel) panel.classList.remove('open');
+  if(_accountMenuClickListener){
+    document.removeEventListener('click', _accountMenuClickListener);
+    _accountMenuClickListener = null;
+  }
+  if(_accountMenuKeyListener){
+    document.removeEventListener('keydown', _accountMenuKeyListener);
+    _accountMenuKeyListener = null;
+  }
 }
 
 function showSignInError(msg){
