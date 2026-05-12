@@ -144,15 +144,23 @@ URLs are version-pinned. If a logo updates, the `?v=` query string changes — u
   - `schema_version` int, `app_version` text
   - `state` jsonb — full `gatherDesignState()` payload (layers + meta), same shape as the `.spdesign.json` file
   - `thumbnail` text (optional data URI), `is_autosave` bool
+  - `folder_id` bigint nullable → social_folders.id (on delete set null — designs orphan to root, never cascade-deleted) [v114+]
   - `created_at`, `updated_at` (auto-touched)
   - RLS: each user reads/writes their own rows only (`auth.uid() = user_id`)
   - Unique partial index: one autosave row per user (`where is_autosave = true`)
+- **social_folders** [v114+] — hierarchical organization for designs.
+  - `id` bigserial PK, `user_id` uuid, `name` text, `parent_folder_id` bigint nullable self-ref (null = root)
+  - On delete cascade: subfolders cascade-delete with the parent. Designs in deleted folders orphan to `folder_id = null` (not deleted).
+  - Unique index: `(user_id, coalesce(parent_folder_id, 0), lower(name))` — can't have two "Promos" in the same parent.
+  - RLS: per-user same as social_designs.
+  - Cycle prevention (moving a folder into its descendants) is enforced in the JS UI, not the DB.
 
 ### Setup — run on a fresh Supabase project, in order
 1. `supabase_auth_setup.sql` — user_profiles, audit_log, log_action RPC, role grants. Verify: `select count(*) from user_profiles;` matches auth.users count.
 2. `supabase_social_designs_setup.sql` — the designs table. Verify: `select count(*) from public.social_designs;` (0 on fresh install).
+3. `supabase_add_folders.sql` [v114+] — folders table + folder_id column on designs. Verify: `select count(*) from public.social_folders;` (0 on fresh install).
 
-Both are idempotent (`create ... if not exists`, `drop policy if exists`) — safe to re-run.
+All are idempotent (`create ... if not exists`, `drop policy if exists`) — safe to re-run.
 
 ### TODO — wire Supabase into index.html
 Not yet wired (v111 is pre-cloud). Plan mirrors the forecast project's v4.100 saved-views migration:

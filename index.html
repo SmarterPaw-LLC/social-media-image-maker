@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v113</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v114</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -327,6 +327,15 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         <label>Design name</label>
         <input type="text" id="saveDesignName" placeholder="e.g. Fall launch hero" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
       </div>
+      <div>
+        <label>Folder <span style="font-weight:400;color:var(--muted);font-size:11px;">(optional — cloud only)</span></label>
+        <div style="display:flex;gap:6px;">
+          <select id="saveDesignFolder" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+            <option value="">📁 (Root)</option>
+          </select>
+          <button type="button" class="btn-cancel" style="padding:6px 10px;font-size:12px;" onclick="promptCreateFolderInSaveModal()" title="Create a new folder inside the currently-selected one (or at root)">+ Folder</button>
+        </div>
+      </div>
       <div style="font-size:11px;color:var(--muted);">
         Saved to this browser (accessible from My Designs), downloaded as a <code>.spdesign.json</code> file, AND — when signed in — synced to your account so it follows you across devices.
       </div>
@@ -367,17 +376,40 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 
 <!-- My Designs modal -->
 <div class="modal-overlay hidden" id="myDesignsModal">
-  <div class="modal" style="max-width:580px;">
+  <div class="modal" style="max-width:640px;">
     <h2>📂 My Designs</h2>
-    <div style="display:flex;gap:8px;margin-bottom:12px;">
+    <div style="display:flex;gap:8px;margin-bottom:8px;">
       <input type="file" id="loadFileInput" accept=".json,application/json" style="display:none;" onchange="loadFromFileInput(event)">
       <button class="btn-hdr" onclick="document.getElementById('loadFileInput').click()" style="flex:1;">📁 Load from file…</button>
+      <button class="btn-hdr" id="myDesignsNewFolderBtn" onclick="promptCreateFolderInMyDesigns()" title="Create a folder inside the current location">+ New Folder</button>
     </div>
+    <!-- Breadcrumb header — set by renderMyDesigns to show current folder path -->
+    <div id="myDesignsBreadcrumb" style="font-size:12px;color:var(--muted);padding:6px 2px;border-bottom:1px solid var(--border);margin-bottom:8px;"></div>
     <div id="myDesignsList" style="display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto;">
       <!-- populated by renderMyDesigns() -->
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMyDesignsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move-to-folder modal — small chooser modal shown when the user clicks 🗂 on a design row in My Designs -->
+<div class="modal-overlay hidden" id="moveFolderModal">
+  <div class="modal">
+    <h2>🗂 Move design</h2>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label>Move "<span id="moveFolderDesignName" style="font-weight:600;"></span>" to:</label>
+        <select id="moveFolderTarget" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
+          <option value="">📁 (Root)</option>
+        </select>
+      </div>
+      <div id="moveFolderError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeMoveFolderModal()">Cancel</button>
+      <button class="btn-primary" onclick="confirmMoveFolder()">Move</button>
     </div>
   </div>
 </div>
@@ -1587,6 +1619,14 @@ function promptSaveDesign(){
   }
   if(!defaultName) defaultName = 'Design ' + new Date().toLocaleDateString();
   document.getElementById('saveDesignName').value = defaultName;
+  // Populate the folder dropdown from the cloud-side folder list. Default-selected value is:
+  //   - the design's currently-known folder_id (if loaded from a synced row), else
+  //   - the My Designs current folder (if the user just navigated there), else
+  //   - root.
+  var preselectId = (typeof _currentFolderIdForSave === 'number' && _currentFolderIdForSave) ? _currentFolderIdForSave
+                  : (typeof _myDesignsCurrentFolderId === 'number' && _myDesignsCurrentFolderId) ? _myDesignsCurrentFolderId
+                  : '';
+  populateFolderSelect('saveDesignFolder', preselectId);
   document.getElementById('saveModal').classList.remove('hidden');
   setTimeout(function(){ document.getElementById('saveDesignName').focus(); document.getElementById('saveDesignName').select(); }, 50);
 }
@@ -1612,6 +1652,10 @@ function confirmSaveDesign(forceNew){
   // accurate after the save. Overwritten below once the cloud insert returns a real id.
   if(_currentCloudId != null) state.cloud_id = _currentCloudId;
   else delete state.cloud_id;
+  // Read folder selection from the save dropdown (v114+). Empty string = root.
+  var folderSel = document.getElementById('saveDesignFolder');
+  var folderVal = folderSel ? folderSel.value : '';
+  state.folder_id = folderVal === '' ? null : (parseInt(folderVal, 10) || null);
 
   // 1. Download as file (instant — safest leg, runs first so even if IDB+cloud both fail the user has the JSON)
   downloadDesignFile(state, name);
@@ -1822,21 +1866,106 @@ function openMyDesignsModal(){
 function closeMyDesignsModal(){
   document.getElementById('myDesignsModal').classList.add('hidden');
 }
-// v113: merged IDB + Supabase list. Two sources are joined by IDB record's `cloud_id` ↔ cloud
-// row's `id`. Each row shows where it lives (📄 local, ☁ cloud, ☁📄 synced). Cloud-only rows
-// are designs saved on another device — clicking Load fetches state from cloud and caches to IDB.
+// v114: merged IDB + Supabase list with folder navigation. Three data sources:
+//   - IDB designs (local cache, may include offline-saved records with no cloud counterpart)
+//   - Cloud designs (social_designs, scoped to current user via RLS)
+//   - Cloud folders (social_folders, hierarchical via parent_folder_id)
+//
+// IDB designs are joined to cloud designs by IDB record's `cloud_id` ↔ cloud row's `id`.
+// Designs are filtered to the currently-navigated folder (`_myDesignsCurrentFolderId`):
+//   - Folder rows: where parent_folder_id === currentFolderId
+//   - Design rows: where the effective folder_id === currentFolderId (or where idb-only sees null at root)
+// Source badge per design: ☁📄 synced, ☁ cloud-only, 📄 local-only, ⟳ autosave (root only)
 function renderMyDesigns(){
   var container = document.getElementById('myDesignsList');
+  var breadcrumb = document.getElementById('myDesignsBreadcrumb');
+  var newFolderBtn = document.getElementById('myDesignsNewFolderBtn');
   container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px;">Loading…</div>';
+
+  // Disable folder controls if not signed in (folders are cloud-only)
+  if(newFolderBtn) newFolderBtn.style.opacity = currentUser ? '1' : '0.4';
+  if(newFolderBtn) newFolderBtn.title = currentUser ? 'Create a folder inside the current location' : 'Sign in to create folders';
 
   Promise.all([
     idbListDesigns().catch(function(e){ console.warn('[my-designs] IDB list failed:', e); return []; }),
-    cloudListDesigns().catch(function(e){ console.warn('[my-designs] cloud list failed:', e); return []; })
+    cloudListDesigns().catch(function(e){ console.warn('[my-designs] cloud list failed:', e); return []; }),
+    cloudListFolders().catch(function(e){ console.warn('[my-designs] folder list failed:', e); return []; })
   ]).then(function(results){
     var idbList = results[0] || [];
     var cloudList = results[1] || [];
+    var folders = results[2] || [];
+    _cachedFolders = folders;
 
-    // Index cloud rows by id for the merge join
+    // If we navigated INTO a folder that no longer exists (e.g. deleted from another device),
+    // bounce back to root so the user isn't stuck on an empty view.
+    if(_myDesignsCurrentFolderId != null){
+      var stillExists = folders.some(function(f){ return f.id === _myDesignsCurrentFolderId; });
+      if(!stillExists) _myDesignsCurrentFolderId = null;
+    }
+
+    // Render breadcrumb header
+    breadcrumb.innerHTML = '';
+    var chain = getFolderAncestry(_myDesignsCurrentFolderId, folders);
+    var rootLink = document.createElement('a');
+    rootLink.href = '#';
+    rootLink.style.cssText = 'color:' + (_myDesignsCurrentFolderId == null ? 'var(--text)' : 'var(--green-dark)') + ';font-weight:' + (_myDesignsCurrentFolderId == null ? '700' : '600') + ';text-decoration:none;';
+    rootLink.textContent = '🏠 Root';
+    rootLink.onclick = function(e){ e.preventDefault(); _myDesignsCurrentFolderId = null; renderMyDesigns(); };
+    breadcrumb.appendChild(rootLink);
+    chain.forEach(function(seg, i){
+      var sep = document.createElement('span'); sep.textContent = ' › '; sep.style.color = 'var(--muted)';
+      breadcrumb.appendChild(sep);
+      var isLast = i === chain.length - 1;
+      var link = document.createElement('a');
+      link.href = '#';
+      link.style.cssText = 'color:' + (isLast ? 'var(--text)' : 'var(--green-dark)') + ';font-weight:' + (isLast ? '700' : '600') + ';text-decoration:none;';
+      link.textContent = seg.name;
+      link.onclick = function(e){ e.preventDefault(); _myDesignsCurrentFolderId = seg.id; renderMyDesigns(); };
+      breadcrumb.appendChild(link);
+    });
+
+    container.innerHTML = '';
+
+    // Signed-out nudge
+    if(!currentUser){
+      var note = document.createElement('div');
+      note.style.cssText = 'padding:8px 10px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;font-size:11px;color:#664d03;margin-bottom:8px;';
+      note.textContent = 'Not signed in. Local designs are visible; sign in to use folders and sync across devices.';
+      container.appendChild(note);
+    }
+
+    // ── Subfolder rows for the current folder ──
+    var subfolders = folders.filter(function(f){
+      var p = f.parent_folder_id != null ? f.parent_folder_id : null;
+      return p === _myDesignsCurrentFolderId;
+    }).sort(function(a,b){ return a.name.localeCompare(b.name); });
+
+    subfolders.forEach(function(f){
+      var fRow = document.createElement('div');
+      fRow.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:7px;background:#f4faf4;cursor:pointer;';
+      fRow.innerHTML =
+        '<div style="flex:1;min-width:0;overflow:hidden;">'
+          + '<b>📁 ' + escAttr(f.name) + '</b>'
+        + '</div>'
+        + '<button class="btn-sm danger" data-action="delete-folder" title="Delete folder (designs inside move to parent)">✕</button>';
+      // Click anywhere on the row except the delete button to enter the folder
+      fRow.onclick = function(e){
+        if(e.target.dataset.action === 'delete-folder') return;
+        _myDesignsCurrentFolderId = f.id;
+        renderMyDesigns();
+      };
+      fRow.querySelector('[data-action="delete-folder"]').onclick = function(e){
+        e.stopPropagation();
+        if(!confirm('Delete folder "' + f.name + '"? Designs inside will move to the parent folder (not deleted). Subfolders WILL be deleted.')) return;
+        cloudDeleteFolder(f.id).then(renderMyDesigns).catch(function(e){
+          alert('Could not delete folder: ' + (e.message || e));
+        });
+      };
+      container.appendChild(fRow);
+    });
+
+    // ── Design rows for the current folder ──
+    // Merge IDB ↔ cloud as before
     var cloudById = {};
     cloudList.forEach(function(c){ cloudById[c.id] = c; });
 
@@ -1849,49 +1978,53 @@ function renderMyDesigns(){
         idb: idb,
         cloud: cloudRow,
         isAutosave: !!idb.isAutosave,
-        // Sort by the most recent timestamp from whichever source has fresher metadata
-        sortAt: (cloudRow && cloudRow.updated_at) || idb.savedAt || ''
+        sortAt: (cloudRow && cloudRow.updated_at) || idb.savedAt || '',
+        // Effective folder_id: prefer cloud (authoritative), fall back to IDB cache
+        effFolderId: cloudRow ? (cloudRow.folder_id != null ? cloudRow.folder_id : null)
+                              : (idb.folder_id != null ? idb.folder_id : null)
       });
     });
     cloudList.forEach(function(c){
       if(consumedCloudIds[c.id]) return;
-      merged.push({ idb: null, cloud: c, isAutosave: false, sortAt: c.updated_at || '' });
+      merged.push({
+        idb: null,
+        cloud: c,
+        isAutosave: false,
+        sortAt: c.updated_at || '',
+        effFolderId: c.folder_id != null ? c.folder_id : null
+      });
     });
 
-    container.innerHTML = '';
-
-    // Status note: signed-out users still see local designs, but with a nudge to sign in
-    if(!currentUser){
-      var note = document.createElement('div');
-      note.style.cssText = 'padding:8px 10px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;font-size:11px;color:#664d03;margin-bottom:8px;';
-      note.textContent = 'Not signed in. Local designs are visible; sign in to sync designs to the cloud and access them from other devices.';
-      container.appendChild(note);
-    }
-
-    if(!merged.length){
-      var empty = document.createElement('div');
-      empty.style.cssText = 'text-align:center;padding:20px;color:var(--muted);font-size:12px;';
-      empty.textContent = 'No saved designs yet. Save one to see it here.';
-      container.appendChild(empty);
-      return;
-    }
+    // Filter to current folder. Autosave always shows at root only.
+    var visibleDesigns = merged.filter(function(m){
+      if(m.isAutosave) return _myDesignsCurrentFolderId == null;
+      return m.effFolderId === _myDesignsCurrentFolderId;
+    });
 
     // Sort: autosave first, then newest → oldest
-    merged.sort(function(a,b){
+    visibleDesigns.sort(function(a,b){
       if(a.isAutosave && !b.isAutosave) return -1;
       if(!a.isAutosave && b.isAutosave) return 1;
       return (b.sortAt || '').localeCompare(a.sortAt || '');
     });
 
-    merged.forEach(function(m){
-      // Prefer cloud metadata for synced rows (more authoritative across devices); IDB for autosave + local-only
+    if(!visibleDesigns.length && !subfolders.length){
+      var empty = document.createElement('div');
+      empty.style.cssText = 'text-align:center;padding:20px;color:var(--muted);font-size:12px;';
+      empty.textContent = _myDesignsCurrentFolderId == null
+        ? 'No saved designs yet. Save one to see it here.'
+        : 'This folder is empty. Save a design while it\'s selected, or use 🗂 to move an existing design in.';
+      container.appendChild(empty);
+      return;
+    }
+
+    visibleDesigns.forEach(function(m){
       var displayName = (m.cloud && m.cloud.name) || (m.idb && m.idb.name) || 'Untitled';
       var displayTime = (m.cloud && m.cloud.updated_at)
         ? new Date(m.cloud.updated_at).toLocaleString()
         : (m.idb && m.idb.savedAt ? new Date(m.idb.savedAt).toLocaleString() : '—');
       var cw = (m.cloud && m.cloud.canvas_w) || (m.idb && m.idb.canvasW) || '?';
       var ch = (m.cloud && m.cloud.canvas_h) || (m.idb && m.idb.canvasH) || '?';
-      // Cloud list doesn't fetch state (bandwidth), so layer count is only known for IDB-present rows
       var layerCount = m.idb ? ((m.idb.layers || []).length) : null;
 
       var srcBadge, srcTitle;
@@ -1916,15 +2049,14 @@ function renderMyDesigns(){
         + '</div>'
         + '<button class="btn-sm" data-action="load" title="Load this design">Load</button>'
         + (m.idb && !m.isAutosave ? '<button class="btn-sm" data-action="download" title="Download as .json file">⬇</button>' : '')
+        + (m.cloud && !m.isAutosave ? '<button class="btn-sm" data-action="move" title="Move to a different folder">🗂</button>' : '')
         + (m.isAutosave ? '' : '<button class="btn-sm danger" data-action="delete" title="Delete">✕</button>');
 
-      row.querySelector('[data-action="load"]').onclick = function(){
-        loadMergedDesign(m);
-      };
+      row.querySelector('[data-action="load"]').onclick = function(){ loadMergedDesign(m); };
       var dlBtn = row.querySelector('[data-action="download"]');
-      if(dlBtn){
-        dlBtn.onclick = function(){ downloadDesignFile(m.idb, m.idb.name || 'design'); };
-      }
+      if(dlBtn) dlBtn.onclick = function(){ downloadDesignFile(m.idb, m.idb.name || 'design'); };
+      var mvBtn = row.querySelector('[data-action="move"]');
+      if(mvBtn) mvBtn.onclick = function(){ openMoveFolderModal(m); };
       var delBtn = row.querySelector('[data-action="delete"]');
       if(delBtn){
         delBtn.onclick = function(){
@@ -7842,7 +7974,8 @@ function cloudSaveDesign(id, state, name){
     schema_version: state.schema || 1,
     app_version: state.appVersion || null,
     state: state,
-    is_autosave: false
+    is_autosave: false,
+    folder_id: (state.folder_id != null ? state.folder_id : null)  // v114: nullable FK to social_folders.id
   };
   var q;
   if(id != null){
@@ -7862,7 +7995,7 @@ function cloudListDesigns(){
   // with many designs. State is fetched on-demand in cloudGetDesign when a row is opened.
   if(!sb || !currentUser) return Promise.resolve([]);
   return sb.from('social_designs')
-    .select('id, name, brand, canvas_w, canvas_h, schema_version, app_version, is_autosave, created_at, updated_at')
+    .select('id, name, brand, canvas_w, canvas_h, schema_version, app_version, is_autosave, folder_id, created_at, updated_at')
     .eq('user_id', currentUser.id)
     .eq('is_autosave', false)
     .order('updated_at', {ascending: false})
@@ -7898,6 +8031,9 @@ function loadMergedDesign(m){
       _lastDesignName = m.idb.name || '';
       _currentDesignId = m.isAutosave ? null : (m.idb.id != null ? m.idb.id : null);
       _currentCloudId = m.idb.cloud_id != null ? m.idb.cloud_id : null;
+      // v114: remember which folder this design lived in, so next Save defaults to it
+      _currentFolderIdForSave = (m.cloud && m.cloud.folder_id != null) ? m.cloud.folder_id
+                              : (m.idb.folder_id != null ? m.idb.folder_id : null);
       closeMyDesignsModal();
     }
     return;
@@ -7908,8 +8044,10 @@ function loadMergedDesign(m){
     if(!restoreDesignState(state)) throw new Error('Could not restore design');
     _lastDesignName = state.name || m.cloud.name || '';
     _currentCloudId = m.cloud.id;
+    _currentFolderIdForSave = m.cloud.folder_id != null ? m.cloud.folder_id : null;
     // Cache to IDB so next time it shows as "synced" rather than "cloud-only"
     state.cloud_id = m.cloud.id;
+    state.folder_id = m.cloud.folder_id;
     return idbSaveDesign(null, state).then(function(idbId){
       _currentDesignId = idbId;
     });
@@ -7932,6 +8070,206 @@ function deleteMergedDesign(m){
     ps.push(cloudDeleteDesign(m.cloud.id));
   }
   return Promise.all(ps);
+}
+
+// ── FOLDERS (v114) ──
+// Folders are a cloud-only concept (no IDB mirror). The IDB caches the design's folder_id so
+// the local copy knows where it lived, but folder names + the parent/child tree only exist in
+// social_folders. Cycle prevention (no moving a folder into its own descendants) is enforced
+// in the UI; the DB accepts any non-self reference.
+//
+// On folder delete: designs in that folder orphan to root (folder_id = null), not cascade-deleted.
+
+var _myDesignsCurrentFolderId = null;  // null = root; bigint when navigated into a folder
+var _currentFolderIdForSave = null;    // last-known folder_id of the open design (for Save defaults)
+var _cachedFolders = [];               // last-fetched folder list, populated by renderMyDesigns + Save modal
+var _pendingMoveContext = null;        // { m: <mergedRow> } populated when the Move modal opens
+
+function cloudListFolders(){
+  if(!sb || !currentUser) return Promise.resolve([]);
+  return sb.from('social_folders')
+    .select('id, name, parent_folder_id, created_at, updated_at')
+    .eq('user_id', currentUser.id)
+    .order('name', {ascending: true})
+    .then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Folder list failed');
+      return res.data || [];
+    });
+}
+
+function cloudCreateFolder(name, parentFolderId){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in to create folders.'));
+  if(!name || !name.trim()) return Promise.reject(new Error('Folder name required.'));
+  return sb.from('social_folders').insert({
+    user_id: currentUser.id,
+    name: name.trim(),
+    parent_folder_id: (parentFolderId != null ? parentFolderId : null)
+  }).select('id, name, parent_folder_id').single().then(function(res){
+    if(res.error){
+      // Friendlier message for the unique-name-per-parent collision
+      if(res.error.code === '23505') throw new Error('A folder named "' + name + '" already exists here.');
+      throw new Error(res.error.message || 'Folder create failed');
+    }
+    return res.data;
+  });
+}
+
+function cloudDeleteFolder(id){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  // Designs in the folder cascade to folder_id=null via the FK's ON DELETE SET NULL.
+  // Subfolders cascade-delete via parent_folder_id's ON DELETE CASCADE.
+  return sb.from('social_folders').delete().eq('id', id).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Folder delete failed');
+  });
+}
+
+function cloudMoveDesignToFolder(cloudDesignId, folderId){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  return sb.from('social_designs').update({
+    folder_id: folderId != null ? folderId : null
+  }).eq('id', cloudDesignId).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Move failed');
+  });
+}
+
+// ── FOLDER UI HELPERS ──
+
+// Walk up parent_folder_id chain to build the breadcrumb path. Returns array of {id, name}.
+function getFolderAncestry(folderId, folders){
+  if(folderId == null) return [];
+  var byId = {};
+  folders.forEach(function(f){ byId[f.id] = f; });
+  var chain = [];
+  var cur = byId[folderId];
+  var guard = 0;
+  while(cur && guard++ < 100){  // guard against cycles
+    chain.unshift({id: cur.id, name: cur.name});
+    cur = cur.parent_folder_id != null ? byId[cur.parent_folder_id] : null;
+  }
+  return chain;
+}
+
+// Pretty path string: "Promos › Summer › Cinco" (or "(Root)" if empty)
+function formatFolderPath(folderId, folders){
+  var chain = getFolderAncestry(folderId, folders);
+  if(!chain.length) return '(Root)';
+  return chain.map(function(c){ return c.name; }).join(' › ');
+}
+
+// Returns the set of folder ids that are descendants of (or equal to) the given folder id —
+// used to prevent moving a folder INTO itself or any of its descendants.
+function getFolderDescendants(folderId, folders){
+  var byParent = {};
+  folders.forEach(function(f){
+    var p = f.parent_folder_id != null ? f.parent_folder_id : 'root';
+    (byParent[p] = byParent[p] || []).push(f);
+  });
+  var out = {};
+  function walk(id){
+    if(out[id]) return;
+    out[id] = true;
+    (byParent[id] || []).forEach(function(c){ walk(c.id); });
+  }
+  walk(folderId);
+  return out;
+}
+
+// Populate a <select> with the folder hierarchy. Each option's value is the folder id (or '' for root).
+// excludeIds (optional): map of ids to skip (used by the Move modal to block self/descendant moves).
+function populateFolderSelect(selectId, preselectId, excludeIds){
+  var sel = document.getElementById(selectId);
+  if(!sel) return;
+  sel.innerHTML = '<option value="">📁 (Root)</option>';
+  // Build hierarchical option list via DFS. Indent depth = ancestry length.
+  var byParent = {};
+  _cachedFolders.forEach(function(f){
+    var p = f.parent_folder_id != null ? f.parent_folder_id : 'root';
+    (byParent[p] = byParent[p] || []).push(f);
+  });
+  function addLevel(parentKey, depth){
+    var kids = (byParent[parentKey] || []).slice().sort(function(a,b){ return a.name.localeCompare(b.name); });
+    kids.forEach(function(f){
+      if(excludeIds && excludeIds[f.id]) return;
+      var opt = document.createElement('option');
+      opt.value = String(f.id);
+      opt.textContent = (depth ? '— '.repeat(depth) : '') + '📁 ' + f.name;
+      if(preselectId != null && String(preselectId) === String(f.id)) opt.selected = true;
+      sel.appendChild(opt);
+      addLevel(f.id, depth + 1);
+    });
+  }
+  addLevel('root', 0);
+}
+
+// Called from the "+ Folder" button in the Save modal. Prompts for a name and creates the folder
+// as a child of the currently-selected option (if any) or root. On success, refreshes the dropdown
+// and selects the new folder.
+function promptCreateFolderInSaveModal(){
+  if(!currentUser){ alert('Sign in to create folders.'); return; }
+  var sel = document.getElementById('saveDesignFolder');
+  var parentVal = sel ? sel.value : '';
+  var parentId = parentVal === '' ? null : parseInt(parentVal, 10);
+  var name = prompt('New folder name' + (parentId != null ? ' (inside the currently-selected folder):' : ' (at the root):'));
+  if(!name) return;
+  cloudCreateFolder(name, parentId).then(function(newFolder){
+    return cloudListFolders().then(function(folders){
+      _cachedFolders = folders;
+      populateFolderSelect('saveDesignFolder', newFolder.id);
+    });
+  }).catch(function(e){
+    alert('Could not create folder: ' + (e.message || e));
+  });
+}
+
+// Called from the "+ New Folder" button in My Designs. Creates a folder as a child of the
+// currently-viewed folder.
+function promptCreateFolderInMyDesigns(){
+  if(!currentUser){ alert('Sign in to create folders.'); return; }
+  var name = prompt('New folder name (inside ' + formatFolderPath(_myDesignsCurrentFolderId, _cachedFolders) + '):');
+  if(!name) return;
+  cloudCreateFolder(name, _myDesignsCurrentFolderId).then(function(){
+    renderMyDesigns();
+  }).catch(function(e){
+    alert('Could not create folder: ' + (e.message || e));
+  });
+}
+
+// Called when the user clicks the 🗂 button on a design row in My Designs.
+function openMoveFolderModal(m){
+  if(!currentUser){ alert('Sign in to move designs between folders.'); return; }
+  if(!m.cloud){ alert('This design is local-only — save it while signed in to push to cloud first, then move.'); return; }
+  _pendingMoveContext = { m: m };
+  document.getElementById('moveFolderDesignName').textContent = (m.cloud && m.cloud.name) || (m.idb && m.idb.name) || 'Untitled';
+  populateFolderSelect('moveFolderTarget', m.cloud.folder_id);
+  document.getElementById('moveFolderError').classList.add('hidden');
+  document.getElementById('moveFolderModal').classList.remove('hidden');
+}
+
+function closeMoveFolderModal(){
+  document.getElementById('moveFolderModal').classList.add('hidden');
+  _pendingMoveContext = null;
+}
+
+function confirmMoveFolder(){
+  if(!_pendingMoveContext){ closeMoveFolderModal(); return; }
+  var m = _pendingMoveContext.m;
+  var sel = document.getElementById('moveFolderTarget');
+  var targetVal = sel.value;
+  var targetFolderId = targetVal === '' ? null : parseInt(targetVal, 10);
+  cloudMoveDesignToFolder(m.cloud.id, targetFolderId).then(function(){
+    // Also update the IDB cache so the merged view stays consistent
+    if(m.idb){
+      m.idb.folder_id = targetFolderId;
+      return idbSaveDesign(m.idb.id, m.idb);
+    }
+  }).then(function(){
+    closeMoveFolderModal();
+    renderMyDesigns();
+  }).catch(function(e){
+    var err = document.getElementById('moveFolderError');
+    err.textContent = 'Move failed: ' + (e.message || e);
+    err.classList.remove('hidden');
+  });
 }
 
 // ── SUPABASE AUTH (v112) ──
