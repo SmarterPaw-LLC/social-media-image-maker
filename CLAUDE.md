@@ -129,9 +129,11 @@ URLs are version-pinned. If a logo updates, the `?v=` query string changes — u
 
 **Dedicated project** for this app (separate from forecast). Free tier — 2nd of 2 free projects under the SmarterPaw-LLC org. Auto-pauses after 7 days of inactivity; restored manually from the Supabase dashboard.
 
-- URL: `TBD — fill in after creating project (Settings → API → Project URL)`
-- Anon key: `TBD — fill in after creating project (Settings → API → anon public)`
+- URL: `https://ttyxodttyeykjijffgql.supabase.co`
+- Anon key (JWT): `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0eXhvZHR0eWV5a2ppamZmZ3FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1ODM5MjcsImV4cCI6MjA5NDE1OTkyN30.784lD_-utaZc9-0m1GMH37AGyjcCa7RApYI2ZNE97Do`
+- Publishable key (newer format, equivalent purpose): `sb_publishable_yhwf6AeM6nYDe_cmEQt6RQ_b531DdxP` — either key works with supabase-js; use the JWT anon key for consistency with the forecast project.
 - Sign-in: separate from the forecast project. Add user via Authentication → Users → Add user.
+- Both anon/publishable keys are safe to commit (designed for client-side use; real security is enforced by RLS). The `service_role` key and DB password must NEVER be committed.
 
 ### Database tables
 - **user_profiles** — per-user meta (email, full_name, role). Auto-created on signup via `handle_new_user()` trigger.
