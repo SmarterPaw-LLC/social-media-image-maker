@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v115</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v116</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -402,7 +402,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <!-- Move-to-folder modal — small chooser modal shown when the user clicks 🗂 on a design row in My Designs -->
 <div class="modal-overlay hidden" id="moveFolderModal">
   <div class="modal">
-    <h2>🗂 Move design</h2>
+    <h2>↪ Move design</h2>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <div>
         <label>Move "<span id="moveFolderDesignName" style="font-weight:600;"></span>" to:</label>
@@ -2098,7 +2098,7 @@ function renderMyDesigns(){
         + '</div>'
         + '<button class="btn-sm" data-action="load" title="Load this design">Load</button>'
         + (m.idb && !m.isAutosave ? '<button class="btn-sm" data-action="download" title="Download as .json file">⬇</button>' : '')
-        + (m.cloud && !m.isAutosave ? '<button class="btn-sm" data-action="move" title="Move to a different folder">🗂</button>' : '')
+        + (m.cloud && !m.isAutosave ? '<button class="btn-sm" data-action="move" title="Move to a different folder">↪</button>' : '')
         + (m.isAutosave ? '' : '<button class="btn-sm danger" data-action="delete" title="Delete">✕</button>');
 
       row.querySelector('[data-action="load"]').onclick = function(){ loadMergedDesign(m); };
