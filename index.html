@@ -136,7 +136,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v123</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v125</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -148,6 +148,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
     <button class="btn-hdr" id="addUserBtn" onclick="openAddUserModal()" title="Invite a new user to this tool" style="display:none;">👥 Add User</button>
+    <button class="btn-hdr" id="changePasswordBtn" onclick="openChangePasswordModal()" title="Change your password" style="display:none;">🔑 Password</button>
     <button class="btn-hdr" id="signOutBtn" onclick="doSignOut()" title="Sign out" style="display:none;">🚪 Sign Out</button>
   </div>
 </header>
@@ -406,6 +407,32 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMyDesignsModal()">Close</button>
     </div>
+  </div>
+</div>
+
+<!-- Change Password modal (v125+) — signed-in users can update their own password via sb.auth.updateUser.
+     Wrapped in a <form> so browser/1Password recognizes the change-password pattern. -->
+<div class="modal-overlay hidden" id="changePasswordModal">
+  <div class="modal">
+    <h2>🔑 Change Password</h2>
+    <form id="changePasswordForm" onsubmit="event.preventDefault(); submitChangePassword(); return false;" autocomplete="on" style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label>New Password</label>
+        <input type="password" id="newPassword" name="new-password" autocomplete="new-password" placeholder="••••••••" required style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+      </div>
+      <div>
+        <label>Confirm Password</label>
+        <input type="password" id="confirmPassword" name="confirm-password" autocomplete="new-password" placeholder="••••••••" required style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter') submitChangePassword()">
+      </div>
+      <div id="changePasswordError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
+      <div style="font-size:11px;color:var(--muted);">
+        Minimum 6 characters. Pick something memorable — this is what protects your designs.
+      </div>
+      <div class="modal-btns">
+        <button type="button" class="btn-cancel" onclick="closeChangePasswordModal()">Cancel</button>
+        <button type="submit" class="btn-primary" id="changePasswordSubmitBtn">Update Password</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -8641,6 +8668,8 @@ function onSignedIn(user){
   document.getElementById('signOutBtn').style.display = '';
   var addUserBtn = document.getElementById('addUserBtn');
   if(addUserBtn) addUserBtn.style.display = '';
+  var cpBtn = document.getElementById('changePasswordBtn');
+  if(cpBtn) cpBtn.style.display = '';
   hideSignInError();
   console.log('[auth] signed in as', user.email);
 }
@@ -8651,6 +8680,8 @@ function onSignedOut(){
   document.getElementById('signOutBtn').style.display = 'none';
   var addUserBtn = document.getElementById('addUserBtn');
   if(addUserBtn) addUserBtn.style.display = 'none';
+  var cpBtn = document.getElementById('changePasswordBtn');
+  if(cpBtn) cpBtn.style.display = 'none';
   // Clear password field for safety; keep email so re-sign-in is one fewer keystroke
   var pw = document.getElementById('signInPassword'); if(pw) pw.value = '';
 }
@@ -8691,6 +8722,62 @@ function doSignOut(){
     console.error('[auth] signOut failed:', e);
   });
   // onAuthStateChange will fire SIGNED_OUT and call onSignedOut.
+}
+
+// ── CHANGE PASSWORD (v125) ──
+// Signed-in users can update their own password via sb.auth.updateUser. Supabase doesn't
+// require the current password (the JWT session is the auth proof). For an internal tool this
+// is acceptable; if the threat model changes later, add a current-password verification step.
+
+function openChangePasswordModal(){
+  if(!currentUser){ alert('Sign in to change your password.'); return; }
+  document.getElementById('newPassword').value = '';
+  document.getElementById('confirmPassword').value = '';
+  document.getElementById('changePasswordError').classList.add('hidden');
+  document.getElementById('changePasswordSubmitBtn').disabled = false;
+  document.getElementById('changePasswordSubmitBtn').textContent = 'Update Password';
+  document.getElementById('changePasswordModal').classList.remove('hidden');
+  setTimeout(function(){ document.getElementById('newPassword').focus(); }, 50);
+}
+
+function closeChangePasswordModal(){
+  document.getElementById('changePasswordModal').classList.add('hidden');
+}
+
+function _showChangePasswordError(msg){
+  var el = document.getElementById('changePasswordError');
+  if(!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function submitChangePassword(){
+  if(!sb || !currentUser){ _showChangePasswordError('Sign in first.'); return; }
+  var newPw = document.getElementById('newPassword').value;
+  var confirmPw = document.getElementById('confirmPassword').value;
+  if(!newPw || newPw.length < 6){ _showChangePasswordError('Password must be at least 6 characters.'); return; }
+  if(newPw !== confirmPw){ _showChangePasswordError('Passwords do not match.'); return; }
+  document.getElementById('changePasswordError').classList.add('hidden');
+
+  var btn = document.getElementById('changePasswordSubmitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Updating…';
+
+  sb.auth.updateUser({password: newPw}).then(function(res){
+    btn.disabled = false;
+    btn.textContent = 'Update Password';
+    if(res.error){
+      _showChangePasswordError(res.error.message || 'Password update failed.');
+      return;
+    }
+    closeChangePasswordModal();
+    showToast('🔑 Password updated');
+  }).catch(function(e){
+    btn.disabled = false;
+    btn.textContent = 'Update Password';
+    console.error('[change-password] exception:', e);
+    _showChangePasswordError('Error: ' + (e.message || e));
+  });
 }
 
 // ── ADD USER (v118) ──
@@ -8774,7 +8861,15 @@ function submitAddUser(){
   var adminId = currentUser.id;
   var adminEmail = currentUser.email;
 
-  sb.auth.signUp({email: email, password: password}).then(function(res){
+  // v124: explicit emailRedirectTo so the confirmation link in the email goes to the live Pages
+  // URL, not the project's default Site URL (which defaults to localhost during dev). The same
+  // URL must also be in the Authentication → URL Configuration → Redirect URLs allowlist; once
+  // it is, this serves as a per-signup override and a guard against future Site URL drift.
+  sb.auth.signUp({
+    email: email,
+    password: password,
+    options: { emailRedirectTo: window.location.origin + window.location.pathname }
+  }).then(function(res){
     btn.disabled = false;
     btn.textContent = 'Create User';
     if(res.error){
