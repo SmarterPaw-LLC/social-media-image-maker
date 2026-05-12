@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v114</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v115</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -336,15 +336,20 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
           <button type="button" class="btn-cancel" style="padding:6px 10px;font-size:12px;" onclick="promptCreateFolderInSaveModal()" title="Create a new folder inside the currently-selected one (or at root)">+ Folder</button>
         </div>
       </div>
+      <!-- v115: "Save as new copy" toggle — applies to whichever destination button is clicked.
+           Shown only when updating an existing design (set by promptSaveDesign). -->
+      <div id="saveAsNewWrap" class="hidden" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);">
+        <input type="checkbox" id="saveAsNewChk" style="margin:0;">
+        <label for="saveAsNewChk" style="margin:0;font-weight:600;cursor:pointer;">Save as a new copy (don't overwrite the existing entry)</label>
+      </div>
       <div style="font-size:11px;color:var(--muted);">
-        Saved to this browser (accessible from My Designs), downloaded as a <code>.spdesign.json</code> file, AND — when signed in — synced to your account so it follows you across devices.
+        <b>💾 Save to Computer</b> writes a <code>.spdesign.json</code> download and a copy in this browser's My Designs. <b>☁ Save to Cloud</b> syncs to your account; the design follows you across devices.
       </div>
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeSaveModal()">Cancel</button>
-      <!-- "Save as new" button shown only when updating existing — gives the user an escape hatch -->
-      <button class="btn-sm hidden" id="saveAsNewBtn" onclick="confirmSaveDesign(true)" title="Save as a separate copy instead of updating">Save as new</button>
-      <button class="btn-primary" id="confirmSaveBtn" onclick="confirmSaveDesign(false)">Save</button>
+      <button class="btn-primary" id="saveToComputerBtn" onclick="saveToComputer()" title="Download as a .json file and save in this browser's My Designs">💾 Save to Computer</button>
+      <button class="btn-primary" id="saveToCloudBtn" onclick="saveToCloud()" title="Sync this design to your account so it follows you across devices">☁ Save to Cloud</button>
     </div>
   </div>
 </div>
@@ -1594,19 +1599,36 @@ function restoreDesignState(state){
 // "Updating existing design" banner and a "Save as new" escape hatch. Default Save updates
 // the open record. Otherwise, default Save creates a new record.
 function promptSaveDesign(){
-  var updating = _currentDesignId != null;
+  // v115: "updating" means EITHER the IDB record or the cloud row is currently linked to this
+  // design. The single "Save as new copy" checkbox applies to whichever destination the user
+  // clicks; the per-destination Save functions decide independently whether to insert or update
+  // based on _currentDesignId (computer) or _currentCloudId (cloud) and the checkbox state.
+  var updating = (_currentDesignId != null) || (_currentCloudId != null);
   var banner = document.getElementById('saveModalUpdateBanner');
-  var saveAsNewBtn = document.getElementById('saveAsNewBtn');
-  var confirmBtn = document.getElementById('confirmSaveBtn');
+  var saveAsNewWrap = document.getElementById('saveAsNewWrap');
+  var saveAsNewChk = document.getElementById('saveAsNewChk');
+  var cloudBtn = document.getElementById('saveToCloudBtn');
   if(updating){
     banner.classList.remove('hidden');
-    saveAsNewBtn.classList.remove('hidden');
+    saveAsNewWrap.classList.remove('hidden');
     document.getElementById('saveModalUpdateName').textContent = _lastDesignName || '(unnamed)';
-    confirmBtn.textContent = 'Update';
   } else {
     banner.classList.add('hidden');
-    saveAsNewBtn.classList.add('hidden');
-    confirmBtn.textContent = 'Save';
+    saveAsNewWrap.classList.add('hidden');
+  }
+  // Always reset the checkbox between opens so it doesn't surprise the user with a stale state
+  if(saveAsNewChk) saveAsNewChk.checked = false;
+  // Cloud button: disable when not signed in, with a tooltip explaining
+  if(cloudBtn){
+    if(currentUser){
+      cloudBtn.disabled = false;
+      cloudBtn.style.opacity = '';
+      cloudBtn.title = 'Sync this design to your account so it follows you across devices';
+    } else {
+      cloudBtn.disabled = true;
+      cloudBtn.style.opacity = '0.4';
+      cloudBtn.title = 'Sign in to save designs to the cloud';
+    }
   }
   // Default name priority:
   //   1. _lastDesignName (this design was already saved or loaded with a name)
@@ -1632,15 +1654,23 @@ function promptSaveDesign(){
 }
 function closeSaveModal(){ document.getElementById('saveModal').classList.add('hidden'); }
 var _lastDesignName = '';
-// confirmSaveDesign(forceNew): if forceNew is true OR there's no current design id, creates a
-// new IDB record. Otherwise updates the open record in place.
-function confirmSaveDesign(forceNew){
+// v115: Save was split into two destinations — Save to Computer and Save to Cloud — so the user
+// can pick where the design goes instead of always doing all of {file, IDB, cloud} at once.
+// Both honor the "Save as new copy" checkbox: when checked, they create a new entry regardless
+// of whether _currentDesignId / _currentCloudId is set.
+//
+// Save to Computer = file download + IDB write. Never touches the cloud.
+// Save to Cloud    = cloud row write + IDB cache write (so future loads on this device are fast
+//                    and the design appears as ☁📄 synced in My Designs). No file download.
+//
+// Shared helper builds the state object + applies board-name sync, then each path commits.
+
+function _gatherSaveStateAndName(){
   var name = document.getElementById('saveDesignName').value.trim();
-  if(!name){ alert('Please enter a name.'); return; }
+  if(!name){ alert('Please enter a name.'); return null; }
   _lastDesignName = name;
   // If the active board still has the default "Board N" name, adopt the design name so the tab
-  // matches. (Vice-versa to "use board name when save name is blank" — this propagates the user's
-  // typed name back to the board so the two stay in sync after the first save.)
+  // matches. Propagates the typed name back to the board so the two stay in sync after first save.
   var cur = getBoard();
   if(cur && cur.name && /^Board \d+$/.test(cur.name)){
     cur.name = name;
@@ -1648,50 +1678,69 @@ function confirmSaveDesign(forceNew){
   }
   var state = gatherDesignState();
   state.name = name;
-  // Carry the current cloud_id forward in the state so the IDB record's cloud_id field stays
-  // accurate after the save. Overwritten below once the cloud insert returns a real id.
+  // Carry current cloud_id and folder selection into the state. cloud_id may be overwritten by
+  // the cloud-save path once an insert returns the real id.
   if(_currentCloudId != null) state.cloud_id = _currentCloudId;
   else delete state.cloud_id;
-  // Read folder selection from the save dropdown (v114+). Empty string = root.
   var folderSel = document.getElementById('saveDesignFolder');
   var folderVal = folderSel ? folderSel.value : '';
   state.folder_id = folderVal === '' ? null : (parseInt(folderVal, 10) || null);
+  return { name: name, state: state };
+}
 
-  // 1. Download as file (instant — safest leg, runs first so even if IDB+cloud both fail the user has the JSON)
+function _isSaveAsNewChecked(){
+  var chk = document.getElementById('saveAsNewChk');
+  return !!(chk && chk.checked);
+}
+
+function saveToComputer(){
+  var prep = _gatherSaveStateAndName();
+  if(!prep) return;
+  var name = prep.name, state = prep.state;
+  var forceNew = _isSaveAsNewChecked();
+
+  // 1. File download — instant; runs first so even if IDB fails, the user has the JSON
   downloadDesignFile(state, name);
 
-  // 2. Save to IndexedDB. Pass the existing id to update in place; null to create new.
+  // 2. IDB save. Pass the existing id to update in place; null to create new.
   var idbTargetId = (!forceNew && _currentDesignId != null) ? _currentDesignId : null;
   idbSaveDesign(idbTargetId, state).then(function(idbId){
     _currentDesignId = idbId;
-
-    // 3. Cloud save (only when signed in). On success, write the cloud id back into the IDB
-    //    record so a future load can re-link. On failure, alert but don't roll back IDB — the
-    //    local copy is still good and the user can try again later.
-    if(currentUser && sb){
-      var cloudTargetId = (!forceNew && _currentCloudId != null) ? _currentCloudId : null;
-      return cloudSaveDesign(cloudTargetId, state, name).then(function(cloudId){
-        _currentCloudId = cloudId;
-        // Re-stamp the IDB record with the now-known cloud_id (no-op if it was already set
-        // and the cloud update reused the same id).
-        if(state.cloud_id !== cloudId){
-          state.cloud_id = cloudId;
-          return idbSaveDesign(idbId, state);
-        }
-      }).then(function(){
-        closeSaveModal();
-      }).catch(function(e){
-        console.error('[save] cloud error:', e);
-        alert('Saved locally + downloaded OK, but cloud sync failed:\n\n' + (e.message || e) + '\n\nYour design is safe in this browser; try saving again later to push to the cloud.');
-        closeSaveModal();
-      });
-    }
     closeSaveModal();
   }).catch(function(e){
-    console.error('[save] IDB error:', e);
-    // File download still succeeded — just warn about the local save
-    alert('Downloaded file saved, but couldn\'t save to My Designs: ' + e.message);
+    console.error('[save:computer] IDB error:', e);
+    alert('Downloaded the file OK, but couldn\'t save to My Designs on this browser:\n\n' + (e.message || e));
     closeSaveModal();
+  });
+}
+
+function saveToCloud(){
+  if(!currentUser || !sb){
+    alert('Sign in to save to the cloud. Use the 🚪 Sign In button to authenticate.');
+    return;
+  }
+  var prep = _gatherSaveStateAndName();
+  if(!prep) return;
+  var name = prep.name, state = prep.state;
+  var forceNew = _isSaveAsNewChecked();
+
+  // 1. Cloud save (insert or update depending on forceNew + existing _currentCloudId)
+  var cloudTargetId = (!forceNew && _currentCloudId != null) ? _currentCloudId : null;
+  cloudSaveDesign(cloudTargetId, state, name).then(function(cloudId){
+    _currentCloudId = cloudId;
+    _currentFolderIdForSave = state.folder_id != null ? state.folder_id : null;
+    state.cloud_id = cloudId;
+    // 2. IDB cache — so the design appears as ☁📄 synced in My Designs and loads instantly
+    //    next time. Honors forceNew the same way the cloud side does.
+    var idbTargetId = (!forceNew && _currentDesignId != null) ? _currentDesignId : null;
+    return idbSaveDesign(idbTargetId, state).then(function(idbId){
+      _currentDesignId = idbId;
+    });
+  }).then(function(){
+    closeSaveModal();
+  }).catch(function(e){
+    console.error('[save:cloud] error:', e);
+    alert('Cloud save failed:\n\n' + (e.message || e) + '\n\nNothing was saved. Try again, or use 💾 Save to Computer to keep a local copy in the meantime.');
   });
 }
 
