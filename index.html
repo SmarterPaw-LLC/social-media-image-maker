@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v118</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v119</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8060,9 +8060,20 @@ function doGifExport(){
 //
 // The cloud row's `id` (bigserial) is the canonical link; IDB records store it as `cloud_id`.
 
+// v119: state payload moved to Supabase Storage. social_designs.state jsonb is left NULL on
+// new saves; the JSON payload is uploaded to bucket `design-states` at path `{user_id}/{id}.json`.
+// Avoids Cloudflare gateway timeouts (520/502) that hit when state was 10+ MB with embedded
+// image data URIs and tried to round-trip through PostgREST + Postgres jsonb. Storage uploads
+// bypass that pipeline entirely.
+//
+// Order of operations matters for correctness:
+//   INSERT — write row first (need the bigserial id), THEN upload state. If upload fails,
+//            roll back the row delete (otherwise we'd leave a "broken" design — listed but
+//            with no state file to load).
+//   UPDATE — upload state FIRST (overwrites existing file), THEN update row metadata. If
+//            upload fails, row metadata stays unchanged so the listed name/folder/etc stay
+//            consistent with the still-loadable state in storage.
 function cloudSaveDesign(id, state, name){
-  // id=null → INSERT a new row; id=<number> → UPDATE that row.
-  // Returns a Promise<number> with the row's id on success.
   if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
   var row = {
     user_id: currentUser.id,
@@ -8072,20 +8083,53 @@ function cloudSaveDesign(id, state, name){
     canvas_h: state.canvasH || null,
     schema_version: state.schema || 1,
     app_version: state.appVersion || null,
-    state: state,
+    state: null,  // v119: state lives in Storage now, not in the jsonb column
     is_autosave: false,
-    folder_id: (state.folder_id != null ? state.folder_id : null)  // v114: nullable FK to social_folders.id
+    folder_id: (state.folder_id != null ? state.folder_id : null)
   };
-  var q;
+
   if(id != null){
-    q = sb.from('social_designs').update(row).eq('id', id).select('id').single();
-  } else {
-    q = sb.from('social_designs').insert(row).select('id').single();
+    // UPDATE flow — id known, upload state first so a failure doesn't desync metadata from payload
+    return _cloudUploadState(id, state).then(function(){
+      return sb.from('social_designs').update(row).eq('id', id).select('id').single();
+    }).then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Cloud save failed');
+      if(!res.data || res.data.id == null) throw new Error('Cloud save returned no id (RLS denial?)');
+      return res.data.id;
+    });
   }
-  return q.then(function(res){
+
+  // INSERT flow — need the bigserial id before we can name the storage path, so row insert first
+  return sb.from('social_designs').insert(row).select('id').single().then(function(res){
     if(res.error) throw new Error(res.error.message || 'Cloud save failed');
     if(!res.data || res.data.id == null) throw new Error('Cloud save returned no id (RLS denial?)');
-    return res.data.id;
+    var newId = res.data.id;
+    return _cloudUploadState(newId, state).then(function(){
+      return newId;
+    }, function(uploadErr){
+      // Upload failed AFTER row insert — roll back the row so we don't leave a broken listing.
+      // Fire-and-forget the delete; the original upload error is what the caller cares about.
+      sb.from('social_designs').delete().eq('id', newId).then(function(){
+        console.warn('[cloud-save] rolled back row ' + newId + ' after upload failure');
+      });
+      throw uploadErr;
+    });
+  });
+}
+
+// Upload a design state to the `design-states` storage bucket at `{user_id}/{designId}.json`.
+// Returns a Promise that resolves on success and rejects with a clear message on failure.
+function _cloudUploadState(designId, state){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  var path = currentUser.id + '/' + designId + '.json';
+  var json = JSON.stringify(state);
+  var blob = new Blob([json], {type: 'application/json'});
+  return sb.storage.from('design-states').upload(path, blob, {
+    upsert: true,                  // overwrite previous version of this design's state
+    contentType: 'application/json',
+    cacheControl: '0'              // skip caching so subsequent loads see the latest save
+  }).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'State upload failed');
   });
 }
 
@@ -8105,18 +8149,39 @@ function cloudListDesigns(){
 }
 
 function cloudGetDesign(id){
-  // Returns the full state JSON for one design.
+  // Returns the full state JSON for one design. v119: state may live in two places:
+  //   - state jsonb column (legacy rows saved pre-v119)
+  //   - Storage bucket `design-states` at `{user_id}/{id}.json` (new rows)
+  // Read whichever is populated. Storage path is computed from the row's user_id (not
+  // currentUser.id — they're the same under RLS, but using the row's value is more honest).
   if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
-  return sb.from('social_designs').select('state').eq('id', id).single().then(function(res){
+  return sb.from('social_designs').select('state, user_id').eq('id', id).single().then(function(res){
     if(res.error) throw new Error(res.error.message || 'Cloud fetch failed');
-    if(!res.data || !res.data.state) throw new Error('Cloud row has no state payload');
-    return res.data.state;
+    if(!res.data) throw new Error('Cloud row not found');
+    // Legacy path: state in jsonb
+    if(res.data.state) return res.data.state;
+    // v119+ path: fetch from Storage
+    var path = res.data.user_id + '/' + id + '.json';
+    return sb.storage.from('design-states').download(path).then(function(dl){
+      if(dl.error) throw new Error('Could not load state from storage: ' + (dl.error.message || dl.error));
+      if(!dl.data) throw new Error('Storage returned empty state');
+      return dl.data.text().then(function(text){
+        return JSON.parse(text);
+      });
+    });
   });
 }
 
 function cloudDeleteDesign(id){
   if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
-  return sb.from('social_designs').delete().eq('id', id).then(function(res){
+  var path = currentUser.id + '/' + id + '.json';
+  // Best-effort storage cleanup — legacy rows (pre-v119) don't have a file, and orphan blobs
+  // are harmless if this fails. Always proceed to row delete regardless.
+  return sb.storage.from('design-states').remove([path]).catch(function(e){
+    console.warn('[cloud-delete] storage remove failed (continuing):', e);
+  }).then(function(){
+    return sb.from('social_designs').delete().eq('id', id);
+  }).then(function(res){
     if(res.error) throw new Error(res.error.message || 'Cloud delete failed');
   });
 }

@@ -142,12 +142,20 @@ URLs are version-pinned. If a logo updates, the `?v=` query string changes — u
   - `id` bigserial PK, `user_id` uuid (auth.users), `name` text
   - `brand` text ('meowi' | 'kkz'), `canvas_w` int, `canvas_h` int
   - `schema_version` int, `app_version` text
-  - `state` jsonb — full `gatherDesignState()` payload (layers + meta), same shape as the `.spdesign.json` file
+  - `state` jsonb — **nullable** as of v119. Legacy rows have the full state here; new rows leave this NULL and store the payload in Storage instead. Same shape as the `.spdesign.json` file when populated.
   - `thumbnail` text (optional data URI), `is_autosave` bool
   - `folder_id` bigint nullable → social_folders.id (on delete set null — designs orphan to root, never cascade-deleted) [v114+]
   - `created_at`, `updated_at` (auto-touched)
   - RLS: each user reads/writes their own rows only (`auth.uid() = user_id`)
   - Unique partial index: one autosave row per user (`where is_autosave = true`)
+
+### Storage buckets
+- **design-states** [v119+] — private bucket holding the full design payload as one JSON file per row.
+  - Path convention: `{user_id}/{design_id}.json`
+  - RLS via `storage.objects`: users can only read/write their own folder. Policy: `(storage.foldername(name))[1] = auth.uid()::text`.
+  - Why this exists: when state was a multi-MB jsonb on `social_designs`, INSERT/UPDATE round-trips through PostgREST + Cloudflare were timing out (520/502 gateway errors at 30-60s) for image-heavy designs. Storage uploads bypass that pipeline.
+  - JS save order: INSERT row → upload state to Storage → if upload fails, roll back the row. UPDATE: upload first, then update row metadata.
+  - JS load order: fetch row → if `state` jsonb is populated, use it (legacy); else download from `design-states/{user_id}/{id}.json` and parse.
 - **social_folders** [v114+] — hierarchical organization for designs.
   - `id` bigserial PK, `user_id` uuid, `name` text, `parent_folder_id` bigint nullable self-ref (null = root)
   - On delete cascade: subfolders cascade-delete with the parent. Designs in deleted folders orphan to `folder_id = null` (not deleted).
@@ -159,8 +167,9 @@ URLs are version-pinned. If a logo updates, the `?v=` query string changes — u
 1. `supabase_auth_setup.sql` — user_profiles, audit_log, log_action RPC, role grants. Verify: `select count(*) from user_profiles;` matches auth.users count.
 2. `supabase_social_designs_setup.sql` — the designs table. Verify: `select count(*) from public.social_designs;` (0 on fresh install).
 3. `supabase_add_folders.sql` [v114+] — folders table + folder_id column on designs. Verify: `select count(*) from public.social_folders;` (0 on fresh install).
+4. `supabase_add_storage.sql` [v119+] — design-states storage bucket + RLS, makes social_designs.state nullable. Verify: `select id, public from storage.buckets where id = 'design-states';` returns one row, public=false.
 
-All are idempotent (`create ... if not exists`, `drop policy if exists`) — safe to re-run.
+All are idempotent (`create ... if not exists`, `drop policy if exists`, `on conflict do nothing`) — safe to re-run.
 
 ### TODO — wire Supabase into index.html
 Not yet wired (v111 is pre-cloud). Plan mirrors the forecast project's v4.100 saved-views migration:
