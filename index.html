@@ -133,7 +133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v121</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v122</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8091,31 +8091,36 @@ function cloudSaveDesign(id, state, name){
     folder_id: (state.folder_id != null ? state.folder_id : null)
   };
 
-  if(id != null){
-    // UPDATE flow — id known, upload state first so a failure doesn't desync metadata from payload
-    return _cloudUploadState(id, state).then(function(){
-      return sb.from('social_designs').update(row).eq('id', id).select('id').single();
-    }).then(function(res){
+  // v122: clone state and externalize image data URIs to design-images bucket BEFORE uploading
+  // state to design-states. The clone insulates the in-memory state (and the IDB cache that runs
+  // after this) from being mutated — they keep full data URIs for offline use.
+  var cloneState = JSON.parse(JSON.stringify(state));
+
+  return _externalizeStateImages(cloneState).then(function(){
+    if(id != null){
+      // UPDATE flow — id known, upload state first so a failure doesn't desync metadata from payload
+      return _cloudUploadState(id, cloneState).then(function(){
+        return sb.from('social_designs').update(row).eq('id', id).select('id').single();
+      }).then(function(res){
+        if(res.error) throw new Error(res.error.message || 'Cloud save failed');
+        if(!res.data || res.data.id == null) throw new Error('Cloud save returned no id (RLS denial?)');
+        return res.data.id;
+      });
+    }
+    // INSERT flow — need the bigserial id before we can name the storage path, so row insert first
+    return sb.from('social_designs').insert(row).select('id').single().then(function(res){
       if(res.error) throw new Error(res.error.message || 'Cloud save failed');
       if(!res.data || res.data.id == null) throw new Error('Cloud save returned no id (RLS denial?)');
-      return res.data.id;
-    });
-  }
-
-  // INSERT flow — need the bigserial id before we can name the storage path, so row insert first
-  return sb.from('social_designs').insert(row).select('id').single().then(function(res){
-    if(res.error) throw new Error(res.error.message || 'Cloud save failed');
-    if(!res.data || res.data.id == null) throw new Error('Cloud save returned no id (RLS denial?)');
-    var newId = res.data.id;
-    return _cloudUploadState(newId, state).then(function(){
-      return newId;
-    }, function(uploadErr){
-      // Upload failed AFTER row insert — roll back the row so we don't leave a broken listing.
-      // Fire-and-forget the delete; the original upload error is what the caller cares about.
-      sb.from('social_designs').delete().eq('id', newId).then(function(){
-        console.warn('[cloud-save] rolled back row ' + newId + ' after upload failure');
+      var newId = res.data.id;
+      return _cloudUploadState(newId, cloneState).then(function(){
+        return newId;
+      }, function(uploadErr){
+        // Upload failed AFTER row insert — roll back the row so we don't leave a broken listing.
+        sb.from('social_designs').delete().eq('id', newId).then(function(){
+          console.warn('[cloud-save] rolled back row ' + newId + ' after upload failure');
+        });
+        throw uploadErr;
       });
-      throw uploadErr;
     });
   });
 }
@@ -8136,6 +8141,132 @@ function _cloudUploadState(designId, state){
   });
 }
 
+// ── PER-IMAGE STORAGE (v122) ──
+// Image layers (image, framedImage) carry their bytes as base64 `_imgSrc` data URIs which can be
+// multiple MB each. With 5 high-res images, the design state JSON balloons past Supabase free
+// tier's 50 MB per-Storage-file cap. v122 externalizes images to a separate `design-images`
+// bucket and replaces each data URI in the cloud copy of state with a tiny `sb-image:{path}`
+// marker — shrinking a 60 MB state down to ~2 KB.
+//
+// Content-addressable paths (sha256 of the base64) mean the same image used across designs
+// uploads only once and lives in one Storage slot. In-memory state, IDB cache, and file-saves
+// keep full data URIs so offline / portable workflows are unaffected.
+
+function _sha256Short(text){
+  // Short hex hash for content addressing — 32 chars (16 bytes) is plenty of collision space
+  // for one user's image library. Uses browser-native SubtleCrypto, no extra deps.
+  if(!window.crypto || !window.crypto.subtle){
+    return Promise.reject(new Error('SubtleCrypto not available — image upload requires HTTPS'));
+  }
+  var buf = new TextEncoder().encode(text);
+  return window.crypto.subtle.digest('SHA-256', buf).then(function(hashBuf){
+    var bytes = new Uint8Array(hashBuf);
+    var hex = '';
+    for(var i = 0; i < bytes.length; i++){
+      var h = bytes[i].toString(16);
+      hex += h.length === 1 ? '0' + h : h;
+    }
+    return hex.slice(0, 32);
+  });
+}
+
+// Upload a single image data URI to `design-images`. Returns the storage path.
+// On duplicate (same content already uploaded), upsert silently succeeds.
+function _cloudUploadImage(dataUri){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  var match = dataUri.match(/^data:([\w\/+\-.]+);base64,(.+)$/);
+  if(!match) return Promise.reject(new Error('Unsupported data URI format'));
+  var mime = match[1];
+  var b64 = match[2];
+  // Derive extension from MIME (e.g. image/png → png, image/svg+xml → svg)
+  var ext = (mime.split('/')[1] || 'bin').split('+')[0].toLowerCase();
+  return _sha256Short(b64).then(function(hash){
+    var path = currentUser.id + '/' + hash + '.' + ext;
+    // Decode base64 to bytes for the upload Blob
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for(var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var blob = new Blob([bytes], {type: mime});
+    return sb.storage.from('design-images').upload(path, blob, {
+      upsert: true,
+      contentType: mime,
+      cacheControl: '31536000'  // 1 year — content is immutable since path is content-addressed
+    }).then(function(res){
+      if(res.error){
+        // Duplicate-on-upsert isn't a real failure — same content, same path
+        if((res.error.message || '').toLowerCase().indexOf('duplicate') >= 0) return path;
+        throw new Error(res.error.message || 'Image upload failed');
+      }
+      return path;
+    });
+  });
+}
+
+// Download an image from `design-images` and convert it back to a data URI.
+function _cloudFetchImageAsDataUri(path){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  return sb.storage.from('design-images').download(path).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Image fetch failed');
+    if(!res.data) throw new Error('Image download returned no data');
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onload = function(){ resolve(reader.result); };
+      reader.onerror = function(){ reject(new Error('Failed to read image blob')); };
+      reader.readAsDataURL(res.data);
+    });
+  });
+}
+
+// Walk a state object's layers, upload each data-URI image to design-images, and replace
+// the data URI with a `sb-image:{path}` marker. Returns the modified state (caller should
+// pass a clone — this mutates).
+function _externalizeStateImages(state){
+  if(!state || !state.layers || !state.layers.length) return Promise.resolve(state);
+  var jobs = [];
+  state.layers.forEach(function(layer, i){
+    if(!layer) return;
+    var isImageType = layer.type === 'image' || layer.type === 'framedImage';
+    if(!isImageType) return;
+    var src = layer._imgSrc;
+    if(!src || typeof src !== 'string') return;
+    if(src.indexOf('data:image/') !== 0) return;  // already a marker or external URL — leave alone
+    jobs.push(
+      _cloudUploadImage(src).then(function(path){
+        layer._imgSrc = 'sb-image:' + path;
+      }).catch(function(e){
+        // Don't fail the whole save for one image — log and keep the data URI in place. The
+        // outer save may still succeed if the rest of the state fits under the size cap.
+        console.warn('[cloud-save] image upload failed for layer ' + i + ' (' + layer.type + '):', e);
+      })
+    );
+  });
+  return Promise.all(jobs).then(function(){ return state; });
+}
+
+// Walk a state object's layers, fetch each `sb-image:{path}` marker from design-images,
+// and replace it with the original data URI. Returns the modified state.
+function _internalizeStateImages(state){
+  if(!state || !state.layers || !state.layers.length) return Promise.resolve(state);
+  var jobs = [];
+  state.layers.forEach(function(layer, i){
+    if(!layer) return;
+    var src = layer._imgSrc;
+    if(!src || typeof src !== 'string') return;
+    if(src.indexOf('sb-image:') !== 0) return;
+    var path = src.slice('sb-image:'.length);
+    jobs.push(
+      _cloudFetchImageAsDataUri(path).then(function(dataUri){
+        layer._imgSrc = dataUri;
+      }).catch(function(e){
+        // Leave the marker in place if fetch fails. Canvas will show no image but the design
+        // remains otherwise functional. User can retry the load or re-save the design.
+        console.warn('[cloud-load] image fetch failed for layer ' + i + ' (path ' + path + '):', e);
+      })
+    );
+  });
+  return Promise.all(jobs).then(function(){ return state; });
+}
+
 function cloudListDesigns(){
   // Returns metadata only (no `state`) — fetching state for every row would be wasteful for users
   // with many designs. State is fetched on-demand in cloudGetDesign when a row is opened.
@@ -8152,18 +8283,19 @@ function cloudListDesigns(){
 }
 
 function cloudGetDesign(id){
-  // Returns the full state JSON for one design. v119: state may live in two places:
+  // Returns the full state JSON for one design. State location depends on version:
   //   - state jsonb column (legacy rows saved pre-v119)
-  //   - Storage bucket `design-states` at `{user_id}/{id}.json` (new rows)
-  // Read whichever is populated. Storage path is computed from the row's user_id (not
-  // currentUser.id — they're the same under RLS, but using the row's value is more honest).
+  //   - Storage bucket `design-states` at `{user_id}/{id}.json` (v119+ rows)
+  // v122+ rows also have image data URIs externalized to `design-images`; markers in state are
+  // resolved back to data URIs before returning so the caller (restoreDesignState) sees the same
+  // shape it always did.
   if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
   return sb.from('social_designs').select('state, user_id').eq('id', id).single().then(function(res){
     if(res.error) throw new Error(res.error.message || 'Cloud fetch failed');
     if(!res.data) throw new Error('Cloud row not found');
-    // Legacy path: state in jsonb
+    // Legacy path: state in jsonb (no image externalization possible — those rows are pre-v122)
     if(res.data.state) return res.data.state;
-    // v119+ path: fetch from Storage
+    // v119+ path: fetch from design-states Storage
     var path = res.data.user_id + '/' + id + '.json';
     return sb.storage.from('design-states').download(path).then(function(dl){
       if(dl.error) throw new Error('Could not load state from storage: ' + (dl.error.message || dl.error));
@@ -8172,6 +8304,9 @@ function cloudGetDesign(id){
         return JSON.parse(text);
       });
     });
+  }).then(function(state){
+    // v122+: resolve sb-image: markers to full data URIs (no-op on legacy rows since they have none)
+    return _internalizeStateImages(state);
   });
 }
 
