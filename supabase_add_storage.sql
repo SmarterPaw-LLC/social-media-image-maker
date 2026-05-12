@@ -25,11 +25,17 @@ alter table public.social_designs alter column state drop not null;
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- 2. Create the storage bucket (idempotent). Private — access only via the
---    authenticated client; not publicly downloadable.
+--    authenticated client; not publicly downloadable. file_size_limit raised
+--    from the 50 MB default to 200 MB so image-heavy design states (with
+--    base64 data URIs embedded) can fit.
+--    Note: each 100 MB design consumes 10% of the free tier's 1 GB total
+--    storage quota. The proper long-term fix is to move image data URIs out
+--    of state.json into separate Storage files referenced by URL, so design
+--    state stays under a few KB.
 -- ──────────────────────────────────────────────────────────────────────────
-insert into storage.buckets (id, name, public)
-  values ('design-states', 'design-states', false)
-  on conflict (id) do nothing;
+insert into storage.buckets (id, name, public, file_size_limit)
+  values ('design-states', 'design-states', false, 209715200)
+  on conflict (id) do update set file_size_limit = 209715200;
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- 3. Storage RLS — per-user isolation on storage.objects, scoped to this bucket.
