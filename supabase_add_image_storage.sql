@@ -36,24 +36,21 @@ insert into storage.buckets (id, name, public, file_size_limit)
 --    Paths look like `{user_id}/{sha256_short}.{ext}`, so the first folder
 --    segment must equal the caller's auth.uid().
 -- ──────────────────────────────────────────────────────────────────────────
-drop policy if exists "design-images: read own"   on storage.objects;
-drop policy if exists "design-images: insert own" on storage.objects;
-drop policy if exists "design-images: update own" on storage.objects;
-drop policy if exists "design-images: delete own" on storage.objects;
+-- v138: collapsed to a single `for all` policy. The previous split CRUD policies didn't cover
+-- the internal SELECT that `upsert: true` triggers to decide insert-vs-update, which caused
+-- silent image upload failures (designs would save with full data URIs still embedded, no
+-- size reduction). One policy covering all four ops fixes it cleanly while preserving the
+-- per-user isolation (path's first folder segment must equal auth.uid()).
+drop policy if exists "design-images: read own"        on storage.objects;
+drop policy if exists "design-images: insert own"      on storage.objects;
+drop policy if exists "design-images: update own"      on storage.objects;
+drop policy if exists "design-images: delete own"      on storage.objects;
+drop policy if exists "design-images: full access own" on storage.objects;
 
-create policy "design-images: read own" on storage.objects
-  for select to authenticated
-  using (bucket_id = 'design-images' and (storage.foldername(name))[1] = auth.uid()::text);
-create policy "design-images: insert own" on storage.objects
-  for insert to authenticated
-  with check (bucket_id = 'design-images' and (storage.foldername(name))[1] = auth.uid()::text);
-create policy "design-images: update own" on storage.objects
-  for update to authenticated
+create policy "design-images: full access own" on storage.objects
+  for all to authenticated
   using (bucket_id = 'design-images' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'design-images' and (storage.foldername(name))[1] = auth.uid()::text);
-create policy "design-images: delete own" on storage.objects
-  for delete to authenticated
-  using (bucket_id = 'design-images' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- Verify
