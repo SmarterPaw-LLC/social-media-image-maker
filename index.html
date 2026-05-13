@@ -185,7 +185,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v150</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v151</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -433,10 +433,14 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
      Library modal it's launched from. -->
 <div class="modal-overlay hidden" id="moveLibraryItemModal" style="z-index:1100;">
   <div class="modal">
-    <h2>✏ Edit Image</h2>
+    <h2>✏ Edit Image <span id="moveLibraryItemName" style="font-weight:400;color:var(--muted);font-size:13px;"></span></h2>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <div>
-        <label>"<span id="moveLibraryItemName" style="font-weight:600;"></span>" — Category:</label>
+        <label>Name</label>
+        <input type="text" id="moveLibraryItemNameInput" autocomplete="off" placeholder="Untitled" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
+      </div>
+      <div>
+        <label>Category</label>
         <div style="display:flex;gap:6px;margin-top:4px;">
           <select id="moveLibraryItemTarget" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
             <option value="">(Uncategorized)</option>
@@ -9697,7 +9701,11 @@ var _pendingLibraryMoveContext = null;
 function openMoveLibraryItemModal(item){
   if(!currentUser){ alert('Sign in.'); return; }
   _pendingLibraryMoveContext = { item: item };
-  document.getElementById('moveLibraryItemName').textContent = item.name || 'Untitled';
+  // v151: keep a small uneditable "original name" hint in the modal header for context, plus
+  // populate the editable Name input below with the current name.
+  document.getElementById('moveLibraryItemName').textContent = '— ' + (item.name || 'Untitled');
+  var nameInput = document.getElementById('moveLibraryItemNameInput');
+  if(nameInput) nameInput.value = item.name || '';
   var sel = document.getElementById('moveLibraryItemTarget');
   sel.innerHTML = '<option value="">(Uncategorized)</option>';
   _libraryCategoriesCache.forEach(function(c){
@@ -9759,7 +9767,12 @@ function confirmMoveLibraryItem(){
   var newCatId = val === '' ? null : parseInt(val, 10);
   // v148: pull tags from the chip-selector working set instead of parsing a text input
   var newTags = _editingTags.slice();
+  // v151: read the edited name; fall back to the item's existing name if blank so we never wipe it
+  var nameInput = document.getElementById('moveLibraryItemNameInput');
+  var newName = nameInput ? (nameInput.value || '').trim() : '';
+  if(!newName) newName = item.name || 'Untitled';
   cloudUpdateLibraryItem(item.id, {
+    name: newName,
     category_id: newCatId,
     tags: newTags
   }).then(function(){
