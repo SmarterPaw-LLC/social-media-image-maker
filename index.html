@@ -175,7 +175,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v142</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v143</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3699,7 +3699,10 @@ function buildFramedImageProps(l){
   }
   return '<div class="prop-section">'
     +'<div style="margin-bottom:8px;">'
-      +'<button class="btn-sm" style="width:100%;" onclick="replaceFramedImage('+l.id+')">📁 Replace Image…</button>'
+      +'<div style="display:flex;gap:4px;">'
+        +'<button class="btn-sm" style="flex:1;" onclick="replaceFramedImage('+l.id+')" title="Upload a new image from your computer">📁 From file…</button>'
+        +'<button class="btn-sm" style="flex:1;" onclick="replaceFramedImageFromLibrary('+l.id+')" title="Pick from the shared team library">📚 Library…</button>'
+      +'</div>'
     +'</div>'
     +'<label>Frame shape</label>'
     +'<select id="pfimg_shape" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:5px;font-size:12px;">'+shapeOpts+'</select>'
@@ -4202,7 +4205,8 @@ function textEffectsUI(l){
       ? '<div style="margin:0 0 8px 22px;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
         // Upload button + thumbnail of current image (if any)
         +'<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
-          +'<button class="btn-add" style="flex:1;" onclick="promptImageFillUpload('+l.id+')">📁 '+(hasFillImg?'Replace image…':'Upload image…')+'</button>'
+          +'<button class="btn-add" style="flex:1;" onclick="promptImageFillUpload('+l.id+')" title="Upload from your computer">📁 '+(hasFillImg?'Replace from file…':'Upload from file…')+'</button>'
+          +'<button class="btn-add" style="flex:1;" onclick="replaceImageFillFromLibrary('+l.id+')" title="Pick from the shared team library">📚 '+(hasFillImg?'From library…':'From library…')+'</button>'
           +(hasFillImg?'<button class="btn-sm danger" onclick="clearImageFill('+l.id+')" title="Remove uploaded image">✕</button>':'')
         +'</div>'
         +(hasFillImg
@@ -4411,7 +4415,10 @@ function buildImageProps(l){
   // of truth (height follows aspect ratio), so we display width-derived percent.
   var scalePct = Math.round((l.w / l._baseW) * 100);
   return '<div class="prop-section">'
-    +'<button class="btn-add" onclick="promptImageUpload('+l.id+')">📁 Replace Image…</button>'
+    +'<div style="display:flex;gap:4px;">'
+      +'<button class="btn-add" style="flex:1;" onclick="promptImageUpload('+l.id+')" title="Upload a new image from your computer">📁 From file…</button>'
+      +'<button class="btn-add" style="flex:1;" onclick="replaceImageLayerFromLibrary('+l.id+')" title="Pick from the shared team library">📚 Library…</button>'
+    +'</div>'
     +'<input type="file" id="fi_'+l.id+'" accept="image/*" style="display:none" onchange="handleFileInput(event,'+l.id+')">'
     +'<div class="col2" style="gap:5px;margin-top:5px;">'
     +'<button class="btn-add" onclick="enterCropMode('+l.id+')">✂ Crop</button>'
@@ -4574,7 +4581,8 @@ function buildSprinkleProps(l){
     + '<div style="margin:6px 0 6px 0;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
       + '<div style="font-size:10px;color:var(--muted);font-weight:700;margin-bottom:5px;">YOUR IMAGE</div>'
       + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
-          + '<button class="btn-add" style="flex:1;" onclick="promptSprinkleLayerUpload('+l.id+')">📁 '+(hasUpload?'Replace image…':'Upload image…')+'</button>'
+          + '<button class="btn-add" style="flex:1;" onclick="promptSprinkleLayerUpload('+l.id+')" title="Upload from your computer">📁 '+(hasUpload?'Replace from file…':'Upload from file…')+'</button>'
+          + '<button class="btn-add" style="flex:1;" onclick="replaceSprinkleLayerFromLibrary('+l.id+')" title="Pick from the shared team library">📚 From library…</button>'
           + (hasUpload?'<button class="btn-sm danger" onclick="clearSprinkleLayerUpload('+l.id+')" title="Remove uploaded image">✕</button>':'')
       + '</div>'
       + (hasUpload
@@ -8900,6 +8908,10 @@ var _libraryAllTagsCache = [];   // v142: unique sorted tag list for the filter 
 var _libraryCurrentFilter = '';  // '' = All; '0' = Uncategorized; otherwise category id as string
 var _libraryCurrentTagFilter = '';  // v142: '' = All; otherwise specific tag string
 var _libraryLastErrorText = '';  // v131: held for the [📋 Copy] button when an upload fails
+// v143: when set, the library modal is in "pick" mode — picking an item runs this callback
+// instead of adding a new image layer. Used by the per-layer Replace-image buttons so they
+// can route a library pick straight into the existing layer instead.
+var _libraryPickCallback = null;
 
 // v142: parse a comma-separated tags input into a deduped lowercase array
 function _parseTagsInput(str){
@@ -9154,8 +9166,11 @@ function cloudFetchLibraryItemAsDataUri(path){
 
 // ── IMAGE LIBRARY UI ──
 
-function openImageLibraryModal(){
+function openImageLibraryModal(pickCallback){
   if(!currentUser){ alert('Sign in to use the image library.'); return; }
+  // v143: optional pickCallback — when set, the next thumbnail click invokes this with
+  // (img, item) instead of the default addImageLayer flow. Used by per-layer Replace buttons.
+  _libraryPickCallback = (typeof pickCallback === 'function') ? pickCallback : null;
   document.getElementById('imageLibraryModal').classList.remove('hidden');
   document.getElementById('imageLibraryStatus').classList.add('hidden');
   // v141: clear search each time the modal opens
@@ -9173,6 +9188,8 @@ function openImageLibraryModal(){
 
 function closeImageLibraryModal(){
   document.getElementById('imageLibraryModal').classList.add('hidden');
+  // v143: ensure a leftover replace-callback doesn't persist if the user dismisses the modal
+  _libraryPickCallback = null;
 }
 
 function populateLibraryCategoryFilter(){
@@ -9388,6 +9405,16 @@ function pickLibraryItem(item){
   cloudFetchLibraryItemAsDataUri(item.storage_path).then(function(dataUri){
     var img = new Image();
     img.onload = function(){
+      // v143: callback mode — replace-image flows set _libraryPickCallback before opening the
+      // modal. The callback decides what to do with the picked image (and shows its own toast).
+      if(_libraryPickCallback){
+        var cb = _libraryPickCallback;
+        _libraryPickCallback = null;
+        try { cb(img, item); }
+        catch(e){ console.error('[lib] pick callback failed:', e); alert('Could not use this image: ' + (e.message || e)); }
+        closeImageLibraryModal();
+        return;
+      }
       addImageLayer(img, item.name);
       closeImageLibraryModal();
       showToast('📚 Added: ' + item.name);
@@ -9396,6 +9423,71 @@ function pickLibraryItem(item){
     img.src = dataUri;
   }).catch(function(e){
     alert('Failed to load from library: ' + (e.message || e));
+  });
+}
+
+// ── REPLACE-FROM-LIBRARY HELPERS (v143) ──
+// One per layer type. Each opens the library modal in callback mode; on pick, applies the image
+// to the layer using the same field shape that the corresponding file-upload handler uses.
+
+function replaceImageLayerFromLibrary(layerId){
+  openImageLibraryModal(function(img, item){
+    var l = layers.find(function(x){return x.id===layerId;});
+    if(!l) return;
+    snapshotState();
+    l.img = img;
+    l.name = item.name || l.name;
+    l.w = canvasW; l.h = canvasH; l.x = 0; l.y = 0;
+    renderLayerList(); renderProps(); redraw();
+    showToast('📚 Replaced: ' + (item.name || 'image'));
+  });
+}
+
+function replaceFramedImageFromLibrary(layerId){
+  openImageLibraryModal(function(img, item){
+    var l = layers.find(function(x){return x.id===layerId;});
+    if(!l) return;
+    snapshotState();
+    l._img = img;
+    l._imgSrc = img.src;
+    l.natW = img.naturalWidth;
+    l.natH = img.naturalHeight;
+    renderProps(); redraw();
+    showToast('📚 Replaced: ' + (item.name || 'image'));
+  });
+}
+
+function replaceImageFillFromLibrary(layerId){
+  openImageLibraryModal(function(img, item){
+    var layer = layers.find(function(l){return l.id===layerId;});
+    if(!layer) return;
+    snapshotState();
+    layer.effectImageFillSrc = img.src;
+    // Bust the in-memory fill cache so the new image picks up on next redraw
+    if(typeof _fillImageCache !== 'undefined') delete _fillImageCache[img.src];
+    layer._effectImageFillKeyedSrc = null;
+    if(layer.effectImageFillBgRemove && layer.effectImageFillBgRemove !== 'none' && typeof rekeyFillImage === 'function'){
+      rekeyFillImage(layer);
+    }
+    renderProps(); redraw();
+    showToast('📚 Fill: ' + (item.name || 'image'));
+  });
+}
+
+function replaceSprinkleLayerFromLibrary(layerId){
+  openImageLibraryModal(function(img, item){
+    var layer = layers.find(function(l){return l.id===layerId;});
+    if(!layer) return;
+    snapshotState();
+    layer.uploadSrc = img.src;
+    if(!layer.source || layer.source === 'builtin') layer.source = 'upload';
+    if(typeof _sprinkleLayerImageCache !== 'undefined') delete _sprinkleLayerImageCache[img.src];
+    layer._uploadKeyedSrc = null;
+    if(layer.bgRemove && layer.bgRemove !== 'none' && typeof rekeySprinkleLayer === 'function'){
+      rekeySprinkleLayer(layer);
+    }
+    renderProps(); redraw();
+    showToast('📚 Sprinkle: ' + (item.name || 'image'));
   });
 }
 
