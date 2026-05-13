@@ -173,7 +173,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v139</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v140</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8437,43 +8437,32 @@ function _cloudFetchImageAsDataUri(path){
 // the data URI with a `sb-image:{path}` marker. Returns the modified state (caller should
 // pass a clone — this mutates).
 function _externalizeStateImages(state){
-  // v138: verbose diagnostic logging because saves were reportedly not shrinking and no
-  // warnings showed up. This prints exactly what each layer looks like and whether it's
-  // eligible for externalization, so we can see which layers are being skipped and why.
-  console.log('[cloud-save] _externalizeStateImages called · layers=', state && state.layers ? state.layers.length : 'none');
+  // v140: drop the type whitelist (was 'image' / 'framedImage' only — missed `sprinkle` which
+  // can carry an 8+ MB custom source image). Now externalizes ANY layer whose _imgSrc is a
+  // `data:image/...` URI. Serialize/deserialize handle _imgSrc uniformly across types, so this
+  // is safe. Logging trimmed to a one-line summary; flip to verbose by setting the constant.
+  var VERBOSE = false;
   if(!state || !state.layers || !state.layers.length) return Promise.resolve(state);
   var jobs = [];
   var eligible = 0;
   state.layers.forEach(function(layer, i){
     if(!layer) return;
-    var isImageType = layer.type === 'image' || layer.type === 'framedImage';
     var src = layer._imgSrc;
-    var srcKind = !src ? 'none'
-                : typeof src !== 'string' ? '(non-string ' + typeof src + ')'
-                : src.indexOf('data:image/') === 0 ? 'data-uri:' + ((src.match(/^data:([\w\/+\-.]+);/) || [,'?'])[1]) + ' (' + src.length + ' chars)'
-                : src.indexOf('sb-image:') === 0 ? 'already-marker'
-                : src.indexOf('data:') === 0 ? 'data-uri-non-image:' + src.substring(5, 30)
-                : src.indexOf('blob:') === 0 ? 'blob-url'
-                : src.indexOf('http') === 0 ? 'http-url'
-                : 'other(' + src.substring(0, 30) + ')';
-    var willExternalize = isImageType && src && typeof src === 'string' && src.indexOf('data:image/') === 0;
-    console.log('[cloud-save] layer', i, '· type=', layer.type, '· name=', layer.name, '· _imgSrc=', srcKind, '· externalize?', willExternalize);
-    if(!willExternalize) return;
+    if(!src || typeof src !== 'string') return;
+    if(src.indexOf('data:image/') !== 0) return;  // not a data URI image — skip (already a marker, blob URL, etc)
     eligible++;
+    if(VERBOSE) console.log('[cloud-save] externalize layer', i, layer.type, layer.name, src.length, 'chars');
     jobs.push(
       _cloudUploadImage(src).then(function(path){
-        console.log('[cloud-save] ✓ uploaded layer', i, '→', path);
+        if(VERBOSE) console.log('[cloud-save] ✓ uploaded layer', i, '→', path);
         layer._imgSrc = 'sb-image:' + path;
       }).catch(function(e){
-        console.warn('[cloud-save] ✗ image upload failed for layer ' + i + ' (' + layer.type + '):', e);
+        console.warn('[cloud-save] image upload failed for layer ' + i + ' (' + layer.type + '):', e);
       })
     );
   });
-  console.log('[cloud-save] total layers:', state.layers.length, '· eligible for externalization:', eligible);
-  return Promise.all(jobs).then(function(){
-    console.log('[cloud-save] externalization complete · jobs ran:', jobs.length);
-    return state;
-  });
+  if(eligible) console.log('[cloud-save] externalizing ' + eligible + ' image' + (eligible === 1 ? '' : 's'));
+  return Promise.all(jobs).then(function(){ return state; });
 }
 
 // Walk a state object's layers, fetch each `sb-image:{path}` marker from design-images,
