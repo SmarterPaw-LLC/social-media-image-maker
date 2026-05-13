@@ -119,6 +119,9 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .modal-btns{display:flex;gap:8px;margin-top:16px;justify-content:flex-end;}
 .btn-primary{padding:9px 20px;background:linear-gradient(135deg,var(--green),var(--green-dark));color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;}
 .btn-cancel{padding:9px 16px;background:#fafafa;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;}
+/* Spinner (v137) — used inline in buttons while a save / upload is in flight */
+@keyframes sp-spin { to { transform: rotate(360deg); } }
+.spinner-inline { display: inline-block; animation: sp-spin 0.9s linear infinite; }
 /* Toast — transient confirmation pill at bottom-right. Auto-dismisses via showToast(). */
 .toast{position:fixed;bottom:24px;right:24px;background:var(--green-dark);color:#fff;padding:11px 18px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.2);font-size:13px;font-weight:600;z-index:2000;opacity:0;transform:translateY(12px);transition:opacity 0.2s ease, transform 0.2s ease;pointer-events:none;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .toast.show{opacity:1;transform:translateY(0);}
@@ -165,7 +168,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v136</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v137</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1888,6 +1891,9 @@ function saveToComputer(){
   var name = prep.name, state = prep.state;
   var forceNew = _isSaveAsNewChecked();
 
+  // v137: spinner + disable buttons so the user knows the save is in progress
+  var ctx = _saveModalBusy('saveToComputerBtn');
+
   // 1. File download — instant; runs first so even if IDB fails, the user has the JSON
   downloadDesignFile(state, name);
 
@@ -1901,7 +1907,7 @@ function saveToComputer(){
     console.error('[save:computer] IDB error:', e);
     alert('Downloaded the file OK, but couldn\'t save to My Designs on this browser:\n\n' + (e.message || e));
     closeSaveModal();
-  });
+  }).then(function(){ _saveModalDone(ctx); }, function(){ _saveModalDone(ctx); });
 }
 
 function saveToCloud(){
@@ -1914,9 +1920,9 @@ function saveToCloud(){
   var name = prep.name, state = prep.state;
   var forceNew = _isSaveAsNewChecked();
 
-  // v121: Save to Cloud is cloud-only (no file download) — the two buttons are intentionally
-  // distinct destinations, not "save everywhere" + "save just here". Use 💾 Save to Computer
-  // for the local-only path.
+  // v137: spinner + disable buttons; cloud save with image externalization can take 10-30s on
+  // image-heavy designs so visible progress feedback matters
+  var ctx = _saveModalBusy('saveToCloudBtn');
 
   // 1. Cloud save (insert or update depending on forceNew + existing _currentCloudId)
   var cloudTargetId = (!forceNew && _currentCloudId != null) ? _currentCloudId : null;
@@ -1935,7 +1941,38 @@ function saveToCloud(){
   }).catch(function(e){
     console.error('[save:cloud] error:', e);
     alert('Cloud save failed:\n\n' + (e.message || e) + '\n\nNothing was saved. Try again, or use 💾 Save to Computer to keep a local copy in the meantime.');
+  }).then(function(){ _saveModalDone(ctx); }, function(){ _saveModalDone(ctx); });
+}
+
+// v137 — Save modal busy/done helpers. Disables both Save buttons + Cancel, swaps the active
+// button's label to a spinning ⟳, and restores everything when the save finishes (whether it
+// succeeded, errored, or the modal already closed).
+function _saveModalBusy(activeBtnId){
+  var ids = ['saveToComputerBtn', 'saveToCloudBtn'];
+  var ctx = { activeId: activeBtnId, origHtml: {}, cancelBtn: null };
+  ids.forEach(function(id){
+    var el = document.getElementById(id);
+    if(!el) return;
+    ctx.origHtml[id] = el.innerHTML;
+    el.disabled = true;
+    if(id === activeBtnId){
+      el.innerHTML = '<span class="spinner-inline">⟳</span> Saving…';
+    }
   });
+  // Disable Cancel too so the user can't dismiss mid-save and end up wondering what happened
+  ctx.cancelBtn = document.querySelector('#saveModal .btn-cancel');
+  if(ctx.cancelBtn) ctx.cancelBtn.disabled = true;
+  return ctx;
+}
+function _saveModalDone(ctx){
+  if(!ctx) return;
+  Object.keys(ctx.origHtml).forEach(function(id){
+    var el = document.getElementById(id);
+    if(!el) return;
+    el.innerHTML = ctx.origHtml[id];
+    el.disabled = false;
+  });
+  if(ctx.cancelBtn) ctx.cancelBtn.disabled = false;
 }
 
 // Serialize state → JSON file → trigger download
