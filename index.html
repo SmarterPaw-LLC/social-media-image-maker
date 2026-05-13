@@ -154,6 +154,11 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .lib-item .lib-cat{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 /* v142: tag pill row on library thumbnails */
 .lib-item .lib-tags{font-size:9px;color:var(--green-dark);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;}
+/* v148: tag chips for the Edit Image modal (click to toggle selected/unselected) */
+.tag-chip{display:inline-flex;align-items:center;gap:3px;padding:3px 9px;font-size:11px;border:1.5px solid var(--border);border-radius:12px;background:#fafafa;cursor:pointer;color:var(--text);font-weight:600;transition:all 0.12s;user-select:none;}
+.tag-chip:hover{border-color:var(--green);color:var(--green-dark);}
+.tag-chip.selected{background:var(--green);color:#fff;border-color:var(--green-dark);}
+.tag-chip.selected:hover{background:var(--green-dark);color:#fff;}
 /* v144: AND/OR pill toggle for combining library filters */
 .match-toggle{display:inline-flex;border-radius:6px;overflow:hidden;border:1.5px solid var(--border);}
 .match-toggle button{padding:5px 12px;font-size:11px;font-weight:700;background:#fff;border:none;cursor:pointer;color:var(--muted);transition:all 0.15s;font-family:inherit;}
@@ -180,7 +185,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v147</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v148</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -437,8 +442,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         </select>
       </div>
       <div>
-        <label>Tags <span style="font-weight:400;color:var(--muted);font-size:11px;">(comma-separated, e.g. <code>logo, brand, 2024</code>)</span></label>
-        <input type="text" id="moveLibraryItemTags" placeholder="e.g. logo, brand, 2024" autocomplete="off" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
+        <label>Tags <span style="font-weight:400;color:var(--muted);font-size:11px;">(click to add/remove; type below for a new tag)</span></label>
+        <div id="editTagsChips" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1.5px solid var(--border);border-radius:6px;min-height:38px;max-height:140px;overflow-y:auto;margin-top:4px;background:#fff;"></div>
+        <div style="display:flex;gap:4px;margin-top:4px;">
+          <input type="text" id="editNewTagInput" placeholder="new tag…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();addNewTagFromInput();}" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+          <button type="button" class="btn-cancel" onclick="addNewTagFromInput()" style="padding:5px 12px;font-size:12px;">+ Add</button>
+        </div>
       </div>
       <div id="moveLibraryItemError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
     </div>
@@ -8967,6 +8976,55 @@ var _libraryPickCallback = null;
 // item passes 'manage').
 var _libraryMode = 'pick';
 
+// v148: working set of tags for the open Edit Image modal — populated from the item's tags on
+// open, mutated by chip clicks / + Add. Used at Save time instead of re-parsing the input.
+var _editingTags = [];
+
+function renderEditTagsChips(){
+  var container = document.getElementById('editTagsChips');
+  if(!container) return;
+  container.innerHTML = '';
+  // Show the union of all known tags + the current editing set (new tags added in this session
+  // aren't in _libraryAllTagsCache yet but should still show as chips)
+  var union = {};
+  _libraryAllTagsCache.forEach(function(t){ union[t] = true; });
+  _editingTags.forEach(function(t){ union[t] = true; });
+  var allTags = Object.keys(union).sort();
+  if(!allTags.length){
+    container.innerHTML = '<span style="font-size:11px;color:var(--muted);padding:4px;">No tags yet — type one below and click + Add.</span>';
+    return;
+  }
+  allTags.forEach(function(t){
+    var selected = _editingTags.indexOf(t) >= 0;
+    var chip = document.createElement('span');
+    chip.className = 'tag-chip' + (selected ? ' selected' : '');
+    chip.textContent = (selected ? '✓ ' : '') + t;
+    chip.title = selected ? 'Click to remove' : 'Click to add';
+    chip.onclick = function(){
+      var idx = _editingTags.indexOf(t);
+      if(idx >= 0) _editingTags.splice(idx, 1);
+      else _editingTags.push(t);
+      renderEditTagsChips();
+    };
+    container.appendChild(chip);
+  });
+}
+
+function addNewTagFromInput(){
+  var inp = document.getElementById('editNewTagInput');
+  if(!inp) return;
+  var v = (inp.value || '').trim().toLowerCase();
+  if(!v) return;
+  if(_editingTags.indexOf(v) < 0) _editingTags.push(v);
+  // Also add to the global cache so the new tag is immediately available for filtering etc
+  if(_libraryAllTagsCache.indexOf(v) < 0){
+    _libraryAllTagsCache.push(v);
+    _libraryAllTagsCache.sort();
+  }
+  inp.value = '';
+  renderEditTagsChips();
+}
+
 // v142: parse a comma-separated tags input into a deduped lowercase array
 function _parseTagsInput(str){
   if(!str) return [];
@@ -8995,6 +9053,18 @@ function _formatBytes(n){
   if(n < 1024) return n + ' B';
   if(n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
   return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+// v148: short uppercased file type label derived from a MIME string (e.g. image/png → PNG).
+function _formatMimeShort(mime){
+  if(!mime) return '';
+  var m = String(mime).toLowerCase();
+  if(m === 'image/jpeg' || m === 'image/jpg') return 'JPG';
+  if(m === 'image/png') return 'PNG';
+  if(m === 'image/webp') return 'WEBP';
+  if(m === 'image/svg+xml') return 'SVG';
+  if(m === 'image/gif') return 'GIF';
+  return m.replace('image/', '').toUpperCase();
 }
 
 function compressImageForLibrary(file){
@@ -9380,16 +9450,23 @@ function renderImageLibrary(){
         catName = cat ? cat.name : '';
       }
       // v142: show tag list inline below the category badge
+      // v148: meta line now also includes size + type
       var tagsLine = '';
       if(item.tags && item.tags.length){
         tagsLine = '<div class="lib-tags">🏷 ' + escAttr(item.tags.join(', ')) + '</div>';
       }
+      var metaParts = [];
+      if(catName) metaParts.push(catName);
+      if(item.file_size_bytes) metaParts.push(_formatBytes(item.file_size_bytes));
+      var typeShort = _formatMimeShort(item.mime || '');
+      if(typeShort) metaParts.push(typeShort);
+      var metaLine = metaParts.length ? '<div class="lib-cat">' + escAttr(metaParts.join(' · ')) + '</div>' : '';
       div.innerHTML =
         '<button class="lib-del" data-action="delete" title="Delete from library">✕</button>'
         + '<button class="lib-move" data-action="move" title="Edit category + tags">📁</button>'
         + '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '">'
         + '<div class="lib-name">' + escAttr(item.name) + '</div>'
-        + (catName ? '<div class="lib-cat">' + escAttr(catName) + '</div>' : '')
+        + metaLine
         + tagsLine;
       // v134: attach handlers directly to each button instead of using event delegation on the
       // parent div. v135/v136 diagnostic logs removed — root cause was z-index stacking, fixed.
@@ -9615,9 +9692,11 @@ function openMoveLibraryItemModal(item){
     if(c.id === item.category_id) opt.selected = true;
     sel.appendChild(opt);
   });
-  // v142: prefill the tags input with the item's current tags
-  var tagsInput = document.getElementById('moveLibraryItemTags');
-  if(tagsInput) tagsInput.value = (item.tags || []).join(', ');
+  // v148: initialize the editing tag set from the item's current tags and render the chip UI
+  _editingTags = (item.tags || []).slice();
+  renderEditTagsChips();
+  var newTagInput = document.getElementById('editNewTagInput');
+  if(newTagInput) newTagInput.value = '';
   document.getElementById('moveLibraryItemError').classList.add('hidden');
   document.getElementById('moveLibraryItemModal').classList.remove('hidden');
 }
@@ -9633,9 +9712,8 @@ function confirmMoveLibraryItem(){
   var sel = document.getElementById('moveLibraryItemTarget');
   var val = sel.value;
   var newCatId = val === '' ? null : parseInt(val, 10);
-  // v142: save category AND tags in one update
-  var tagsInput = document.getElementById('moveLibraryItemTags');
-  var newTags = _parseTagsInput(tagsInput ? tagsInput.value : '');
+  // v148: pull tags from the chip-selector working set instead of parsing a text input
+  var newTags = _editingTags.slice();
   cloudUpdateLibraryItem(item.id, {
     category_id: newCatId,
     tags: newTags
