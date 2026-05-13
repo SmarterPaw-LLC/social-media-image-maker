@@ -165,7 +165,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v134</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v135</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9066,14 +9066,24 @@ function renderImageLibrary(){
         + '<div class="lib-name">' + escAttr(item.name) + '</div>'
         + (catName ? '<div class="lib-cat">' + escAttr(catName) + '</div>' : '');
       // v134: attach handlers directly to each button instead of using event delegation on the
-      // parent div. The previous version relied on e.target.dataset.action to dispatch, but if
-      // the click target was a child element (e.g. an emoji glyph rendered as its own span by
-      // some browsers), the dispatch failed silently and the click fell through to pickLibraryItem.
+      // parent div. v135: add diagnostic console.log so we can see which handler fires (or doesn't).
       var delBtn = div.querySelector('[data-action="delete"]');
-      if(delBtn) delBtn.onclick = function(e){ e.stopPropagation(); confirmDeleteLibraryItem(item); };
+      if(delBtn) delBtn.onclick = function(e){
+        console.log('[lib] delete clicked:', item.name);
+        e.stopPropagation();
+        confirmDeleteLibraryItem(item);
+      };
       var moveBtn = div.querySelector('[data-action="move"]');
-      if(moveBtn) moveBtn.onclick = function(e){ e.stopPropagation(); openMoveLibraryItemModal(item); };
-      div.onclick = function(){ pickLibraryItem(item); };
+      if(moveBtn) moveBtn.onclick = function(e){
+        console.log('[lib] move clicked:', item.name, 'btn=', !!moveBtn, 'modal=', !!document.getElementById('moveLibraryItemModal'));
+        e.stopPropagation();
+        openMoveLibraryItemModal(item);
+      };
+      div.onclick = function(){
+        console.log('[lib] thumbnail clicked (load to canvas):', item.name);
+        pickLibraryItem(item);
+      };
+      if(!moveBtn) console.warn('[lib] move button querySelector returned null — DOM build may be off');
       grid.appendChild(div);
     });
   }).catch(function(e){
