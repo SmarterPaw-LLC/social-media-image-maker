@@ -173,7 +173,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v140</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v141</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -450,6 +450,8 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadInput').click()" title="Upload one or more images to the library">+ Add Image</button>
       <input type="file" id="libraryUploadInput" accept="image/*" multiple style="display:none;" onchange="handleLibraryUpload(event)">
     </div>
+    <!-- v141: search bar — filters items by name (within the current category filter) -->
+    <input type="text" id="imageLibrarySearch" placeholder="🔍 Search images…" autocomplete="off" oninput="renderImageLibrary()" style="width:100%;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;margin-bottom:8px;">
     <div id="imageLibraryStatus" class="hidden" style="padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:12px;color:#3a5e10;margin-bottom:8px;"></div>
     <div id="imageLibraryGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:8px;max-height:480px;overflow-y:auto;padding:4px;">
       <!-- populated by renderImageLibrary() -->
@@ -502,6 +504,8 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button class="btn-hdr" onclick="document.getElementById('loadFileInput').click()" style="flex:1;">📁 Load from file…</button>
       <button class="btn-hdr" id="myDesignsNewFolderBtn" onclick="promptCreateFolderInMyDesigns()" title="Create a folder inside the current location">+ New Folder</button>
     </div>
+    <!-- v141: search bar — filters both subfolders and designs by name (case-insensitive substring) -->
+    <input type="text" id="myDesignsSearch" placeholder="🔍 Search designs and folders…" autocomplete="off" oninput="renderMyDesigns()" style="width:100%;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;margin-bottom:8px;">
     <!-- Breadcrumb header — set by renderMyDesigns to show current folder path -->
     <div id="myDesignsBreadcrumb" style="font-size:12px;color:var(--muted);padding:6px 2px;border-bottom:1px solid var(--border);margin-bottom:8px;"></div>
     <div id="myDesignsList" style="display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto;">
@@ -2156,6 +2160,9 @@ function openMyDesignsModal(){
   var rBtn = document.getElementById('myDesignsTabRecent');
   if(fBtn) fBtn.classList.toggle('active', _myDesignsViewMode === 'folders');
   if(rBtn) rBtn.classList.toggle('active', _myDesignsViewMode === 'recent');
+  // v141: clear search each time the modal opens so the user starts with a clean view
+  var search = document.getElementById('myDesignsSearch');
+  if(search) search.value = '';
   renderMyDesigns();
 }
 function closeMyDesignsModal(){
@@ -2239,11 +2246,20 @@ function renderMyDesigns(){
       container.appendChild(note);
     }
 
+    // v141: pull the search query and apply it to both subfolders and designs below
+    var searchInput = document.getElementById('myDesignsSearch');
+    var searchQ = (searchInput ? searchInput.value : '').trim().toLowerCase();
+
     // ── Subfolder rows for the current folder (folders mode only) ──
     var subfolders = (_myDesignsViewMode === 'folders') ? folders.filter(function(f){
       var p = f.parent_folder_id != null ? f.parent_folder_id : null;
       return p === _myDesignsCurrentFolderId;
     }).sort(function(a,b){ return a.name.localeCompare(b.name); }) : [];
+    if(searchQ){
+      subfolders = subfolders.filter(function(f){
+        return (f.name || '').toLowerCase().indexOf(searchQ) >= 0;
+      });
+    }
 
     subfolders.forEach(function(f){
       var fRow = document.createElement('div');
@@ -2308,6 +2324,13 @@ function renderMyDesigns(){
           if(m.isAutosave) return _myDesignsCurrentFolderId == null;
           return m.effFolderId === _myDesignsCurrentFolderId;
         });
+    // v141: apply search query — case-insensitive substring match against the design's name
+    if(searchQ){
+      visibleDesigns = visibleDesigns.filter(function(m){
+        var nm = ((m.cloud && m.cloud.name) || (m.idb && m.idb.name) || '').toLowerCase();
+        return nm.indexOf(searchQ) >= 0;
+      });
+    }
 
     // Sort: autosave first, then newest → oldest
     visibleDesigns.sort(function(a,b){
@@ -2319,11 +2342,13 @@ function renderMyDesigns(){
     if(!visibleDesigns.length && !subfolders.length){
       var empty = document.createElement('div');
       empty.style.cssText = 'text-align:center;padding:20px;color:var(--muted);font-size:12px;';
-      empty.textContent = (_myDesignsViewMode === 'recent')
-        ? 'No saved designs yet. Save one to see it here.'
-        : _myDesignsCurrentFolderId == null
+      empty.textContent = searchQ
+        ? 'No matches for "' + searchQ + '".'
+        : (_myDesignsViewMode === 'recent')
           ? 'No saved designs yet. Save one to see it here.'
-          : 'This folder is empty. Save a design while it\'s selected, or use ↪ to move an existing design in.';
+          : _myDesignsCurrentFolderId == null
+            ? 'No saved designs yet. Save one to see it here.'
+            : 'This folder is empty. Save a design while it\'s selected, or use ↪ to move an existing design in.';
       container.appendChild(empty);
       return;
     }
@@ -9105,6 +9130,9 @@ function openImageLibraryModal(){
   if(!currentUser){ alert('Sign in to use the image library.'); return; }
   document.getElementById('imageLibraryModal').classList.remove('hidden');
   document.getElementById('imageLibraryStatus').classList.add('hidden');
+  // v141: clear search each time the modal opens
+  var search = document.getElementById('imageLibrarySearch');
+  if(search) search.value = '';
   cloudListLibraryCategories().then(function(cats){
     _libraryCategoriesCache = cats;
     populateLibraryCategoryFilter();
@@ -9145,8 +9173,18 @@ function renderImageLibrary(){
   else arg = parseInt(_libraryCurrentFilter, 10);                // Specific category id
 
   cloudListLibraryItems(arg).then(function(items){
+    // v141: apply search filter on item name within the current category view
+    var searchInput = document.getElementById('imageLibrarySearch');
+    var searchQ = (searchInput ? searchInput.value : '').trim().toLowerCase();
+    if(searchQ){
+      items = items.filter(function(it){
+        return (it.name || '').toLowerCase().indexOf(searchQ) >= 0;
+      });
+    }
     if(!items.length){
-      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;font-size:12px;">No images in this view. Use + Add Image to upload.</div>';
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;font-size:12px;">'
+        + (searchQ ? 'No matches for "' + escAttr(searchQ) + '" in this category.' : 'No images in this view. Use + Add Image to upload.')
+        + '</div>';
       return;
     }
     grid.innerHTML = '';
