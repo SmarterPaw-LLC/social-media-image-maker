@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v154</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v155</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3344,16 +3344,48 @@ function addSvgLayer(){
 }
 
 // ── IMAGE LAYER ──
+// v155: compute a sensible starting size + position for a newly-added image layer.
+// - If natural dims fit within 90% of the canvas, use them as-is (gives a small icon room to
+//   breathe instead of being stretched to fill the whole canvas).
+// - If they don't fit, scale down to fit within 90% of the canvas (preserving aspect ratio).
+// - Always centered. _baseW/_baseH track the placement size so the scale slider's 100% = "what
+//   the layer looked like when placed."
+function _computeImageLayerSize(img){
+  if(!img || !img.naturalWidth || !img.naturalHeight){
+    return { x: 0, y: 0, w: canvasW, h: canvasH, _baseW: canvasW, _baseH: canvasH };
+  }
+  var iw = img.naturalWidth, ih = img.naturalHeight;
+  var maxW = canvasW * 0.9, maxH = canvasH * 0.9;
+  var w, h;
+  if(iw <= maxW && ih <= maxH){
+    w = iw; h = ih;
+  } else {
+    var scale = Math.min(maxW / iw, maxH / ih);
+    w = Math.round(iw * scale);
+    h = Math.round(ih * scale);
+  }
+  return {
+    x: Math.round((canvasW - w) / 2),
+    y: Math.round((canvasH - h) / 2),
+    w: w, h: h, _baseW: w, _baseH: h
+  };
+}
+
 function addImageLayer(imgEl,filename){
   snapshotState();
   var id=nextId++;
+  // v155: use natural-dims-fit-to-canvas instead of always stretching to fill the entire canvas.
+  // No imgEl (deferred upload via promptImageUpload) keeps the canvas-sized placeholder; the
+  // actual sizing happens in handleFileInput once the image loads.
+  var sizing = imgEl ? _computeImageLayerSize(imgEl)
+                     : { x: 0, y: 0, w: canvasW, h: canvasH, _baseW: canvasW, _baseH: canvasH };
   layers.push({
     id:id,type:'image',name:filename||'Image '+id,
     img:imgEl||null,
-    x:0,y:0,w:canvasW,h:canvasH,
+    x: sizing.x, y: sizing.y, w: sizing.w, h: sizing.h,
     // Baseline dimensions for the scale slider — 100% means "the size this image was placed at".
     // Captured at upload time so users can always Reset to recover the original layout size.
-    _baseW: canvasW, _baseH: canvasH,
+    _baseW: sizing._baseW, _baseH: sizing._baseH,
     opacity:100,fit:'cover',flipH:false,flipV:false,rotation:0,
   });
   selectLayer(id);renderLayerList();redraw();
@@ -5458,7 +5490,20 @@ function handleFileInput(e,layerId){
     var img=new Image();
     img.onload=function(){
       var l=layers.find(function(x){return x.id===layerId;});
-      if(l){l.img=img;l.name=file.name.replace(/\.[^.]+$/,'');l.w=canvasW;l.h=canvasH;l.x=0;l.y=0;renderLayerList();renderProps();redraw();}
+      if(!l) return;
+      // v155: distinguish between "new image" (layer was a placeholder, no img yet) and "replace"
+      // (layer already had an img). New = compute fit-to-canvas sizing; replace = keep current
+      // layer dimensions so the new image slots into the same on-canvas footprint as the old one.
+      var wasPlaceholder = !l.img;
+      l.img = img;
+      l.name = file.name.replace(/\.[^.]+$/, '');
+      if(wasPlaceholder){
+        var sizing = _computeImageLayerSize(img);
+        l.x = sizing.x; l.y = sizing.y; l.w = sizing.w; l.h = sizing.h;
+        l._baseW = sizing._baseW; l._baseH = sizing._baseH;
+      }
+      // else: replacing an existing image — preserve x/y/w/h so the layer stays where it was
+      renderLayerList(); renderProps(); redraw();
     };
     img.src=ev.target.result;
   };
@@ -9710,7 +9755,7 @@ function replaceImageLayerFromLibrary(layerId){
     snapshotState();
     l.img = img;
     l.name = item.name || l.name;
-    l.w = canvasW; l.h = canvasH; l.x = 0; l.y = 0;
+    // v155: preserve existing layer position/size on replace (matches the file-replace path)
     renderLayerList(); renderProps(); redraw();
     showToast('📚 Replaced: ' + (item.name || 'image'));
   });
