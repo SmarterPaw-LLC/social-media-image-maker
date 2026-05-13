@@ -130,11 +130,15 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .account-item{display:block;width:100%;padding:9px 14px;font-size:13px;color:var(--text);background:none;border:none;text-align:left;cursor:pointer;font-weight:600;font-family:inherit;}
 .account-item:hover{background:#f4faf4;color:var(--green-dark);}
 .account-item.danger:hover{background:#fef2f0;color:#e53;}
-/* Image Library (v126) — split button + thumbnail grid. v128 uses gap instead of border
-   tricks because .btn-add has a dashed border that was bleeding into the adjacent button cell. */
-.btn-add-split{display:flex;gap:4px;}
-.btn-add-split > button:first-child{flex:1;min-width:0;}
-.btn-add-split > button:last-child{padding-left:8px;padding-right:8px;flex:0 0 auto;}
+/* Image Library (v126) — thumbnail grid. v129 dropped the split-button design in favor of a
+   dropdown menu (see .add-image-menu) because the dashed-bordered .btn-add styling can't be
+   reliably split into two adjacent buttons inside the narrow sidebar col2 grid. */
+/* + Image dropdown (v129) — replaces the v126-128 split button to avoid layout overflow */
+.add-image-menu{position:relative;}
+.add-image-popup{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.15);z-index:1500;padding:4px;display:none;}
+.add-image-popup.open{display:block;}
+.add-image-popup-item{display:block;width:100%;padding:8px 10px;font-size:12px;color:var(--text);background:none;border:none;text-align:left;cursor:pointer;border-radius:4px;font-weight:600;font-family:inherit;}
+.add-image-popup-item:hover{background:#f4faf4;color:var(--green-dark);}
 .lib-item{position:relative;border:1.5px solid var(--border);border-radius:7px;background:#fafafa;padding:6px;cursor:pointer;transition:border-color 0.15s, box-shadow 0.15s, transform 0.15s;}
 .lib-item:hover{border-color:var(--green);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,0.08);}
 .lib-item img{width:100%;height:96px;object-fit:cover;border-radius:5px;background:#eee;display:block;}
@@ -157,7 +161,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v128</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v129</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -211,9 +215,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <h3>Layers</h3>
     <div id="layerList" style="display:flex;flex-direction:column;gap:4px;"></div>
     <div class="col2" style="margin-top:3px;">
-      <div class="btn-add-split">
-        <button class="btn-add" onclick="addImageLayer()">+ Image</button>
-        <button class="btn-add" onclick="openImageLibraryModal()" title="Pick from the team image library">📚</button>
+      <div class="add-image-menu">
+        <button class="btn-add" onclick="toggleAddImageMenu()" title="Add an image to the canvas">+ Image ▾</button>
+        <div class="add-image-popup" id="addImagePopup">
+          <button class="add-image-popup-item" onclick="closeAddImageMenu(); addImageLayer();">📁 Upload from file…</button>
+          <button class="add-image-popup-item" onclick="closeAddImageMenu(); openImageLibraryModal();">📚 From library…</button>
+        </div>
       </div>
       <button class="btn-add" id="addStickerBtn" onclick="addStickerLayer()">+ Sticker</button>
     </div>
@@ -8679,6 +8686,39 @@ function confirmMoveFolder(){
     err.textContent = 'Move failed: ' + (e.message || e);
     err.classList.remove('hidden');
   });
+}
+
+// ── + IMAGE DROPDOWN (v129) ──
+// Single button with a popup chooser ("Upload from file" / "From library") to avoid the dashed-
+// border layout overflow that the v126-128 split-button design caused inside the narrow sidebar.
+
+var _addImageMenuListener = null;
+function toggleAddImageMenu(){
+  var p = document.getElementById('addImagePopup');
+  if(!p) return;
+  if(p.classList.contains('open')) closeAddImageMenu();
+  else openAddImageMenu();
+}
+function openAddImageMenu(){
+  var p = document.getElementById('addImagePopup');
+  if(!p) return;
+  p.classList.add('open');
+  // Defer outside-click registration so the opening click doesn't immediately close us
+  setTimeout(function(){
+    _addImageMenuListener = function(e){
+      var menu = document.querySelector('.add-image-menu');
+      if(menu && !menu.contains(e.target)) closeAddImageMenu();
+    };
+    document.addEventListener('click', _addImageMenuListener);
+  }, 0);
+}
+function closeAddImageMenu(){
+  var p = document.getElementById('addImagePopup');
+  if(p) p.classList.remove('open');
+  if(_addImageMenuListener){
+    document.removeEventListener('click', _addImageMenuListener);
+    _addImageMenuListener = null;
+  }
 }
 
 // ── IMAGE LIBRARY (v126) ──
