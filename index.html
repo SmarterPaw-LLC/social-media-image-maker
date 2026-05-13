@@ -165,7 +165,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v135</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v136</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -406,8 +406,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <!-- Toast (v123+) — transient confirmation message, populated and shown via showToast() -->
 <div class="toast" id="appToast"></div>
 
-<!-- Change-category modal (v133+) for library items — picks a new category from a select. -->
-<div class="modal-overlay hidden" id="moveLibraryItemModal">
+<!-- Change-category modal (v133+) for library items — picks a new category from a select.
+     v136: z-index bumped above the standard .modal-overlay so it stacks on top of the Image
+     Library modal it's launched from. -->
+<div class="modal-overlay hidden" id="moveLibraryItemModal" style="z-index:1100;">
   <div class="modal">
     <h2>📁 Change Category</h2>
     <div style="display:flex;flex-direction:column;gap:10px;">
@@ -570,8 +572,9 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
   </div>
 </div>
 
-<!-- Move-to-folder modal — small chooser modal shown when the user clicks 🗂 on a design row in My Designs -->
-<div class="modal-overlay hidden" id="moveFolderModal">
+<!-- Move-to-folder modal — small chooser modal shown when the user clicks ↪ on a design row in My Designs.
+     v136: z-index bumped above the standard .modal-overlay so it stacks on top of My Designs. -->
+<div class="modal-overlay hidden" id="moveFolderModal" style="z-index:1100;">
   <div class="modal">
     <h2>↪ Move design</h2>
     <div style="display:flex;flex-direction:column;gap:10px;">
@@ -9066,24 +9069,12 @@ function renderImageLibrary(){
         + '<div class="lib-name">' + escAttr(item.name) + '</div>'
         + (catName ? '<div class="lib-cat">' + escAttr(catName) + '</div>' : '');
       // v134: attach handlers directly to each button instead of using event delegation on the
-      // parent div. v135: add diagnostic console.log so we can see which handler fires (or doesn't).
+      // parent div. v135/v136 diagnostic logs removed — root cause was z-index stacking, fixed.
       var delBtn = div.querySelector('[data-action="delete"]');
-      if(delBtn) delBtn.onclick = function(e){
-        console.log('[lib] delete clicked:', item.name);
-        e.stopPropagation();
-        confirmDeleteLibraryItem(item);
-      };
+      if(delBtn) delBtn.onclick = function(e){ e.stopPropagation(); confirmDeleteLibraryItem(item); };
       var moveBtn = div.querySelector('[data-action="move"]');
-      if(moveBtn) moveBtn.onclick = function(e){
-        console.log('[lib] move clicked:', item.name, 'btn=', !!moveBtn, 'modal=', !!document.getElementById('moveLibraryItemModal'));
-        e.stopPropagation();
-        openMoveLibraryItemModal(item);
-      };
-      div.onclick = function(){
-        console.log('[lib] thumbnail clicked (load to canvas):', item.name);
-        pickLibraryItem(item);
-      };
-      if(!moveBtn) console.warn('[lib] move button querySelector returned null — DOM build may be off');
+      if(moveBtn) moveBtn.onclick = function(e){ e.stopPropagation(); openMoveLibraryItemModal(item); };
+      div.onclick = function(){ pickLibraryItem(item); };
       grid.appendChild(div);
     });
   }).catch(function(e){
