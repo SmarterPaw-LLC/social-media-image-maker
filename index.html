@@ -161,7 +161,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v129</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v130</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8960,15 +8960,29 @@ function handleLibraryUpload(event){
     if(isNaN(catId)) catId = null;
   }
   var statusEl = document.getElementById('imageLibraryStatus');
+  // v130: reset to success-styling each upload so a previous error's red doesn't bleed through
   statusEl.classList.remove('hidden');
+  statusEl.style.background = '#f4faf4';
+  statusEl.style.borderColor = '#d5e8bc';
+  statusEl.style.color = '#3a5e10';
   statusEl.textContent = 'Uploading ' + files.length + ' image' + (files.length === 1 ? '' : 's') + '…';
 
   var fileArr = Array.prototype.slice.call(files);
-  var ok = 0, failed = 0;
+  var ok = 0, failed = 0, lastError = '';
   function uploadNext(i){
     if(i >= fileArr.length){
-      statusEl.textContent = '✓ Uploaded ' + ok + (failed ? ' (' + failed + ' failed — check console)' : '');
-      setTimeout(function(){ statusEl.classList.add('hidden'); }, 2500);
+      if(failed){
+        // v130: surface the actual error message in the modal instead of hiding it in console
+        statusEl.style.background = '#fef2f0';
+        statusEl.style.borderColor = '#fbcaba';
+        statusEl.style.color = '#b3261e';
+        statusEl.textContent = '✗ ' + ok + ' uploaded, ' + failed + ' failed. Last error: ' + lastError;
+        // Keep the error visible long enough to copy
+        setTimeout(function(){ statusEl.classList.add('hidden'); }, 15000);
+      } else {
+        statusEl.textContent = '✓ Uploaded ' + ok;
+        setTimeout(function(){ statusEl.classList.add('hidden'); }, 2500);
+      }
       event.target.value = '';
       renderImageLibrary();
       return;
@@ -8980,6 +8994,7 @@ function handleLibraryUpload(event){
     }).catch(function(e){
       console.warn('[lib] upload failed for ' + fileArr[i].name + ':', e);
       failed++;
+      lastError = e.message || String(e);
     }).then(function(){
       uploadNext(i + 1);
     });
