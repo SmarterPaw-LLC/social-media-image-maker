@@ -161,7 +161,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v130</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v131</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8736,6 +8736,25 @@ function closeAddImageMenu(){
 
 var _libraryCategoriesCache = [];
 var _libraryCurrentFilter = '';  // '' = All; '0' = Uncategorized; otherwise category id as string
+var _libraryLastErrorText = '';  // v131: held for the [📋 Copy] button when an upload fails
+
+function copyLibraryError(){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(_libraryLastErrorText).then(function(){
+      showToast('📋 Error copied');
+    }).catch(function(){
+      // Older browsers / blocked clipboard — fall through to manual selection
+      var el = document.getElementById('libraryStatusText');
+      if(el){
+        var range = document.createRange();
+        range.selectNodeContents(el);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    });
+  }
+}
 
 function cloudListLibraryCategories(){
   if(!sb || !currentUser) return Promise.resolve([]);
@@ -8973,12 +8992,19 @@ function handleLibraryUpload(event){
     if(i >= fileArr.length){
       if(failed){
         // v130: surface the actual error message in the modal instead of hiding it in console
+        // v131: include a [📋 Copy] button so the user can grab the full error easily
         statusEl.style.background = '#fef2f0';
         statusEl.style.borderColor = '#fbcaba';
         statusEl.style.color = '#b3261e';
-        statusEl.textContent = '✗ ' + ok + ' uploaded, ' + failed + ' failed. Last error: ' + lastError;
+        _libraryLastErrorText = '✗ ' + ok + ' uploaded, ' + failed + ' failed. Last error: ' + lastError;
+        statusEl.innerHTML =
+          '<div style="display:flex;align-items:flex-start;gap:8px;">'
+          + '<div style="flex:1;user-select:text;cursor:text;" id="libraryStatusText"></div>'
+          + '<button type="button" onclick="copyLibraryError()" title="Copy" style="background:transparent;border:1px solid #fbcaba;color:#b3261e;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;flex-shrink:0;font-weight:600;">📋 Copy</button>'
+          + '</div>';
+        document.getElementById('libraryStatusText').textContent = _libraryLastErrorText;
         // Keep the error visible long enough to copy
-        setTimeout(function(){ statusEl.classList.add('hidden'); }, 15000);
+        setTimeout(function(){ statusEl.classList.add('hidden'); }, 30000);
       } else {
         statusEl.textContent = '✓ Uploaded ' + ok;
         setTimeout(function(){ statusEl.classList.add('hidden'); }, 2500);

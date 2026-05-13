@@ -88,21 +88,27 @@ insert into storage.buckets (id, name, public, file_size_limit)
   values ('image-library', 'image-library', true, 15728640)
   on conflict (id) do update set public = true, file_size_limit = 15728640;
 
--- Storage RLS — read is public via the bucket flag, so only insert/update/delete need policies
+-- Storage RLS — even though the bucket is public, RLS still applies to authenticated upserts.
+-- Two policies: one public-read (matching the bucket flag) and one full-CRUD for authenticated
+-- users inside this bucket. The earlier v126 setup left out the SELECT policy and split CRUD
+-- across three policies; that combination caused HTTP 403 ("new row violates row-level security
+-- policy") on upload because `upsert: true` internally SELECTs to decide insert-vs-update, and
+-- the authenticated role wasn't covered by the public-read bucket flag during that internal step.
+drop policy if exists "image-library: read own" on storage.objects;
+drop policy if exists "image-library: select all" on storage.objects;
 drop policy if exists "image-library: insert auth" on storage.objects;
 drop policy if exists "image-library: update auth" on storage.objects;
 drop policy if exists "image-library: delete auth" on storage.objects;
+drop policy if exists "image-library: full access for authenticated" on storage.objects;
+drop policy if exists "image-library: public read" on storage.objects;
 
-create policy "image-library: insert auth" on storage.objects
-  for insert to authenticated
-  with check (bucket_id = 'image-library');
-create policy "image-library: update auth" on storage.objects
-  for update to authenticated
+create policy "image-library: public read" on storage.objects
+  for select using (bucket_id = 'image-library');
+
+create policy "image-library: full access for authenticated" on storage.objects
+  for all to authenticated
   using (bucket_id = 'image-library')
   with check (bucket_id = 'image-library');
-create policy "image-library: delete auth" on storage.objects
-  for delete to authenticated
-  using (bucket_id = 'image-library');
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- Verify
