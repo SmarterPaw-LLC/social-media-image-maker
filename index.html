@@ -125,6 +125,11 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 /* Toast — transient confirmation pill at bottom-right. Auto-dismisses via showToast(). */
 .toast{position:fixed;bottom:24px;right:24px;background:var(--green-dark);color:#fff;padding:11px 18px;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.2);font-size:13px;font-weight:600;z-index:2000;opacity:0;transform:translateY(12px);transition:opacity 0.2s ease, transform 0.2s ease;pointer-events:none;max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .toast.show{opacity:1;transform:translateY(0);}
+/* My Designs view-mode tabs (v139) */
+.my-designs-tab{padding:6px 14px;font-size:12px;font-weight:600;background:#fafafa;border:1.5px solid var(--border);border-radius:6px;cursor:pointer;color:var(--muted);transition:all 0.15s;}
+.my-designs-tab:hover{border-color:var(--green);color:var(--green-dark);}
+.my-designs-tab.active{background:var(--green);color:#fff;border-color:var(--green-dark);}
+.my-designs-tab.active:hover{color:#fff;}
 /* Account dropdown (v127) — header profile/settings menu */
 .account-menu{position:relative;display:inline-block;}
 .account-panel{position:absolute;top:calc(100% + 6px);right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.18);min-width:240px;padding:6px 0;z-index:1500;display:none;}
@@ -168,7 +173,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v138</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v139</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -487,6 +492,11 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <div class="modal-overlay hidden" id="myDesignsModal">
   <div class="modal" style="max-width:640px;">
     <h2>📂 My Designs</h2>
+    <!-- v139: tab toggle — Folders (default) vs Recent (flat list sorted by most-recent) -->
+    <div style="display:flex;gap:4px;margin-bottom:8px;">
+      <button type="button" class="my-designs-tab" id="myDesignsTabFolders" onclick="setMyDesignsView('folders')">📁 Folders</button>
+      <button type="button" class="my-designs-tab" id="myDesignsTabRecent" onclick="setMyDesignsView('recent')">⏱ Recent</button>
+    </div>
     <div style="display:flex;gap:8px;margin-bottom:8px;">
       <input type="file" id="loadFileInput" accept=".json,application/json" style="display:none;" onchange="loadFromFileInput(event)">
       <button class="btn-hdr" onclick="document.getElementById('loadFileInput').click()" style="flex:1;">📁 Load from file…</button>
@@ -2141,6 +2151,11 @@ function hideAutosaveWarning(){
 // ── My Designs modal ──
 function openMyDesignsModal(){
   document.getElementById('myDesignsModal').classList.remove('hidden');
+  // v139: sync the tab active class to the persisted view mode each time the modal opens
+  var fBtn = document.getElementById('myDesignsTabFolders');
+  var rBtn = document.getElementById('myDesignsTabRecent');
+  if(fBtn) fBtn.classList.toggle('active', _myDesignsViewMode === 'folders');
+  if(rBtn) rBtn.classList.toggle('active', _myDesignsViewMode === 'recent');
   renderMyDesigns();
 }
 function closeMyDesignsModal(){
@@ -2163,8 +2178,12 @@ function renderMyDesigns(){
   container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px;">Loading…</div>';
 
   // Disable folder controls if not signed in (folders are cloud-only)
-  if(newFolderBtn) newFolderBtn.style.opacity = currentUser ? '1' : '0.4';
-  if(newFolderBtn) newFolderBtn.title = currentUser ? 'Create a folder inside the current location' : 'Sign in to create folders';
+  // v139: also hide the New Folder button in 'recent' mode since folder context doesn't apply there
+  if(newFolderBtn){
+    newFolderBtn.style.display = (_myDesignsViewMode === 'recent') ? 'none' : '';
+    newFolderBtn.style.opacity = currentUser ? '1' : '0.4';
+    newFolderBtn.title = currentUser ? 'Create a folder inside the current location' : 'Sign in to create folders';
+  }
 
   Promise.all([
     idbListDesigns().catch(function(e){ console.warn('[my-designs] IDB list failed:', e); return []; }),
@@ -2183,26 +2202,32 @@ function renderMyDesigns(){
       if(!stillExists) _myDesignsCurrentFolderId = null;
     }
 
-    // Render breadcrumb header
+    // Render breadcrumb header (folders mode only — in recent mode show a single "all designs" hint)
     breadcrumb.innerHTML = '';
-    var chain = getFolderAncestry(_myDesignsCurrentFolderId, folders);
-    var rootLink = document.createElement('a');
-    rootLink.href = '#';
-    rootLink.style.cssText = 'color:' + (_myDesignsCurrentFolderId == null ? 'var(--text)' : 'var(--green-dark)') + ';font-weight:' + (_myDesignsCurrentFolderId == null ? '700' : '600') + ';text-decoration:none;';
-    rootLink.textContent = '🏠 Root';
-    rootLink.onclick = function(e){ e.preventDefault(); _myDesignsCurrentFolderId = null; renderMyDesigns(); };
-    breadcrumb.appendChild(rootLink);
-    chain.forEach(function(seg, i){
-      var sep = document.createElement('span'); sep.textContent = ' › '; sep.style.color = 'var(--muted)';
-      breadcrumb.appendChild(sep);
-      var isLast = i === chain.length - 1;
-      var link = document.createElement('a');
-      link.href = '#';
-      link.style.cssText = 'color:' + (isLast ? 'var(--text)' : 'var(--green-dark)') + ';font-weight:' + (isLast ? '700' : '600') + ';text-decoration:none;';
-      link.textContent = seg.name;
-      link.onclick = function(e){ e.preventDefault(); _myDesignsCurrentFolderId = seg.id; renderMyDesigns(); };
-      breadcrumb.appendChild(link);
-    });
+    if(_myDesignsViewMode === 'recent'){
+      breadcrumb.textContent = 'All designs, most recent first';
+      breadcrumb.style.fontStyle = 'italic';
+    } else {
+      breadcrumb.style.fontStyle = '';
+      var chain = getFolderAncestry(_myDesignsCurrentFolderId, folders);
+      var rootLink = document.createElement('a');
+      rootLink.href = '#';
+      rootLink.style.cssText = 'color:' + (_myDesignsCurrentFolderId == null ? 'var(--text)' : 'var(--green-dark)') + ';font-weight:' + (_myDesignsCurrentFolderId == null ? '700' : '600') + ';text-decoration:none;';
+      rootLink.textContent = '🏠 Root';
+      rootLink.onclick = function(e){ e.preventDefault(); _myDesignsCurrentFolderId = null; renderMyDesigns(); };
+      breadcrumb.appendChild(rootLink);
+      chain.forEach(function(seg, i){
+        var sep = document.createElement('span'); sep.textContent = ' › '; sep.style.color = 'var(--muted)';
+        breadcrumb.appendChild(sep);
+        var isLast = i === chain.length - 1;
+        var link = document.createElement('a');
+        link.href = '#';
+        link.style.cssText = 'color:' + (isLast ? 'var(--text)' : 'var(--green-dark)') + ';font-weight:' + (isLast ? '700' : '600') + ';text-decoration:none;';
+        link.textContent = seg.name;
+        link.onclick = function(e){ e.preventDefault(); _myDesignsCurrentFolderId = seg.id; renderMyDesigns(); };
+        breadcrumb.appendChild(link);
+      });
+    }
 
     container.innerHTML = '';
 
@@ -2214,11 +2239,11 @@ function renderMyDesigns(){
       container.appendChild(note);
     }
 
-    // ── Subfolder rows for the current folder ──
-    var subfolders = folders.filter(function(f){
+    // ── Subfolder rows for the current folder (folders mode only) ──
+    var subfolders = (_myDesignsViewMode === 'folders') ? folders.filter(function(f){
       var p = f.parent_folder_id != null ? f.parent_folder_id : null;
       return p === _myDesignsCurrentFolderId;
-    }).sort(function(a,b){ return a.name.localeCompare(b.name); });
+    }).sort(function(a,b){ return a.name.localeCompare(b.name); }) : [];
 
     subfolders.forEach(function(f){
       var fRow = document.createElement('div');
@@ -2275,11 +2300,14 @@ function renderMyDesigns(){
       });
     });
 
-    // Filter to current folder. Autosave always shows at root only.
-    var visibleDesigns = merged.filter(function(m){
-      if(m.isAutosave) return _myDesignsCurrentFolderId == null;
-      return m.effFolderId === _myDesignsCurrentFolderId;
-    });
+    // v139: in 'recent' mode show every design regardless of folder; in 'folders' mode filter to
+    // whichever folder the user has navigated into (autosave still only shows at root).
+    var visibleDesigns = (_myDesignsViewMode === 'recent')
+      ? merged.slice()
+      : merged.filter(function(m){
+          if(m.isAutosave) return _myDesignsCurrentFolderId == null;
+          return m.effFolderId === _myDesignsCurrentFolderId;
+        });
 
     // Sort: autosave first, then newest → oldest
     visibleDesigns.sort(function(a,b){
@@ -2291,9 +2319,11 @@ function renderMyDesigns(){
     if(!visibleDesigns.length && !subfolders.length){
       var empty = document.createElement('div');
       empty.style.cssText = 'text-align:center;padding:20px;color:var(--muted);font-size:12px;';
-      empty.textContent = _myDesignsCurrentFolderId == null
+      empty.textContent = (_myDesignsViewMode === 'recent')
         ? 'No saved designs yet. Save one to see it here.'
-        : 'This folder is empty. Save a design while it\'s selected, or use 🗂 to move an existing design in.';
+        : _myDesignsCurrentFolderId == null
+          ? 'No saved designs yet. Save one to see it here.'
+          : 'This folder is empty. Save a design while it\'s selected, or use ↪ to move an existing design in.';
       container.appendChild(empty);
       return;
     }
@@ -2322,6 +2352,14 @@ function renderMyDesigns(){
       if(layerCount != null) metaParts.push(layerCount + ' layer' + (layerCount===1?'':'s'));
       metaParts.push(cw + '×' + ch);
       metaParts.push(displayTime);
+      // v139: in 'recent' mode, show the design's folder path as a badge so the user has context
+      // (since they can't see it from the breadcrumb in this mode).
+      if(_myDesignsViewMode === 'recent' && !m.isAutosave){
+        var folderLabel = (m.effFolderId == null)
+          ? 'Root'
+          : formatFolderPath(m.effFolderId, _cachedFolders);
+        metaParts.push('📁 ' + folderLabel);
+      }
       row.innerHTML =
         '<div style="flex:1;min-width:0;overflow:hidden;">'
           + nameHtml
@@ -8581,6 +8619,22 @@ var _myDesignsCurrentFolderId = null;  // null = root; bigint when navigated int
 var _currentFolderIdForSave = null;    // last-known folder_id of the open design (for Save defaults)
 var _cachedFolders = [];               // last-fetched folder list, populated by renderMyDesigns + Save modal
 var _pendingMoveContext = null;        // { m: <mergedRow> } populated when the Move modal opens
+// v139: My Designs view mode — 'folders' (default, current behavior with breadcrumb nav) or 'recent'
+// (flat list of all designs sorted by most-recent first). Persisted to localStorage so a user's
+// preference survives reloads.
+var _myDesignsViewMode = (function(){
+  try { return localStorage.getItem('myDesignsViewMode') || 'folders'; } catch(e){ return 'folders'; }
+})();
+function setMyDesignsView(mode){
+  if(mode !== 'folders' && mode !== 'recent') mode = 'folders';
+  _myDesignsViewMode = mode;
+  try { localStorage.setItem('myDesignsViewMode', mode); } catch(e){}
+  var fBtn = document.getElementById('myDesignsTabFolders');
+  var rBtn = document.getElementById('myDesignsTabRecent');
+  if(fBtn) fBtn.classList.toggle('active', mode === 'folders');
+  if(rBtn) rBtn.classList.toggle('active', mode === 'recent');
+  renderMyDesigns();
+}
 
 function cloudListFolders(){
   if(!sb || !currentUser) return Promise.resolve([]);
