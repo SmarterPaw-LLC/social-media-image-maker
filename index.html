@@ -161,7 +161,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v131</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v132</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8738,6 +8738,97 @@ var _libraryCategoriesCache = [];
 var _libraryCurrentFilter = '';  // '' = All; '0' = Uncategorized; otherwise category id as string
 var _libraryLastErrorText = '';  // v131: held for the [📋 Copy] button when an upload fails
 
+// v132: client-side compression before library upload. Targets WebP at 85% quality with a
+// 2000px max dimension — typical 4 MB PNG → 300-500 KB WebP with no visible quality loss for
+// social-media-sized output. Skipped for tiny files, SVG (would lose vector fidelity), and GIF
+// (canvas export loses animation). Compression is informational — the new (compressed) File
+// keeps the original name with a .webp suffix so library entries stay readable.
+var _LIBRARY_COMPRESS_MAX_DIM = 2000;
+var _LIBRARY_COMPRESS_QUALITY = 0.85;
+var _LIBRARY_COMPRESS_MIN_BYTES = 500 * 1024;  // skip compression for files already under 500 KB
+
+function _formatBytes(n){
+  if(n == null) return '?';
+  if(n < 1024) return n + ' B';
+  if(n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function compressImageForLibrary(file){
+  // Returns a Promise resolving to { file: <File>, originalSize, compressedSize, skipped }.
+  // Falls back to the original file on any error so uploads still succeed.
+  return new Promise(function(resolve){
+    var skipReason = null;
+    var t = (file.type || '').toLowerCase();
+    if(file.size < _LIBRARY_COMPRESS_MIN_BYTES) skipReason = 'small';
+    else if(t === 'image/svg+xml') skipReason = 'svg';
+    else if(t === 'image/gif') skipReason = 'gif';
+    else if(t && t.indexOf('image/') !== 0) skipReason = 'non-image';
+    if(skipReason){
+      resolve({file: file, originalSize: file.size, compressedSize: file.size, skipped: skipReason});
+      return;
+    }
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function(){
+      try {
+        var w = img.naturalWidth, h = img.naturalHeight;
+        if(w > _LIBRARY_COMPRESS_MAX_DIM || h > _LIBRARY_COMPRESS_MAX_DIM){
+          var scale = Math.min(_LIBRARY_COMPRESS_MAX_DIM / w, _LIBRARY_COMPRESS_MAX_DIM / h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(function(blob){
+          if(!blob){
+            resolve({file: file, originalSize: file.size, compressedSize: file.size, skipped: 'toBlob failed'});
+            return;
+          }
+          // If compression somehow made the file LARGER (rare — e.g. tiny images), keep the original
+          if(blob.size >= file.size){
+            resolve({file: file, originalSize: file.size, compressedSize: file.size, skipped: 'no gain'});
+            return;
+          }
+          var newName = (file.name || 'image').replace(/\.[^.]+$/, '') + '.webp';
+          var compressed = new File([blob], newName, {type: 'image/webp'});
+          resolve({file: compressed, originalSize: file.size, compressedSize: blob.size, skipped: null});
+        }, 'image/webp', _LIBRARY_COMPRESS_QUALITY);
+      } catch(e){
+        URL.revokeObjectURL(url);
+        console.warn('[lib] compress failed, using original:', e);
+        resolve({file: file, originalSize: file.size, compressedSize: file.size, skipped: 'error'});
+      }
+    };
+    img.onerror = function(){
+      URL.revokeObjectURL(url);
+      resolve({file: file, originalSize: file.size, compressedSize: file.size, skipped: 'load-failed'});
+    };
+    img.src = url;
+  });
+}
+
+function copyLibraryError(){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(_libraryLastErrorText).then(function(){
+      showToast('📋 Error copied');
+    }).catch(function(){
+      // Older browsers / blocked clipboard — fall through to manual selection
+      var el = document.getElementById('libraryStatusText');
+      if(el){
+        var range = document.createRange();
+        range.selectNodeContents(el);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    });
+  }
+}
+
 function copyLibraryError(){
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(_libraryLastErrorText).then(function(){
@@ -8987,7 +9078,7 @@ function handleLibraryUpload(event){
   statusEl.textContent = 'Uploading ' + files.length + ' image' + (files.length === 1 ? '' : 's') + '…';
 
   var fileArr = Array.prototype.slice.call(files);
-  var ok = 0, failed = 0, lastError = '';
+  var ok = 0, failed = 0, lastError = '', bytesSaved = 0;
   function uploadNext(i){
     if(i >= fileArr.length){
       if(failed){
@@ -9006,16 +9097,27 @@ function handleLibraryUpload(event){
         // Keep the error visible long enough to copy
         setTimeout(function(){ statusEl.classList.add('hidden'); }, 30000);
       } else {
-        statusEl.textContent = '✓ Uploaded ' + ok;
-        setTimeout(function(){ statusEl.classList.add('hidden'); }, 2500);
+        // v132: report compression savings on success so the user sees the quota benefit
+        var savedMsg = bytesSaved > 0 ? ' · saved ' + _formatBytes(bytesSaved) + ' via compression' : '';
+        statusEl.textContent = '✓ Uploaded ' + ok + savedMsg;
+        setTimeout(function(){ statusEl.classList.add('hidden'); }, 4000);
       }
       event.target.value = '';
       renderImageLibrary();
       return;
     }
-    statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + fileArr[i].name;
-    var displayName = (fileArr[i].name || 'Untitled').replace(/\.[^.]+$/, '');
-    cloudUploadLibraryItem(fileArr[i], catId, displayName).then(function(){
+    // v132: compress before upload to keep Supabase storage quota usable. SVG / GIF / already-small
+    // files pass through unchanged; PNG/JPG get re-encoded to WebP @ 85% with a 2000px max dimension.
+    statusEl.textContent = 'Compressing ' + (i + 1) + '/' + fileArr.length + ': ' + fileArr[i].name + '…';
+    compressImageForLibrary(fileArr[i]).then(function(result){
+      var compressMsg = result.skipped
+        ? ' (' + _formatBytes(result.originalSize) + ', not compressed: ' + result.skipped + ')'
+        : ' (' + _formatBytes(result.originalSize) + ' → ' + _formatBytes(result.compressedSize) + ')';
+      statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + fileArr[i].name + compressMsg;
+      bytesSaved += Math.max(0, result.originalSize - result.compressedSize);
+      var displayName = (fileArr[i].name || 'Untitled').replace(/\.[^.]+$/, '');
+      return cloudUploadLibraryItem(result.file, catId, displayName);
+    }).then(function(){
       ok++;
     }).catch(function(e){
       console.warn('[lib] upload failed for ' + fileArr[i].name + ':', e);
