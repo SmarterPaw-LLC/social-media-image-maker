@@ -185,7 +185,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v148</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v149</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -437,9 +437,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div style="display:flex;flex-direction:column;gap:10px;">
       <div>
         <label>"<span id="moveLibraryItemName" style="font-weight:600;"></span>" — Category:</label>
-        <select id="moveLibraryItemTarget" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
-          <option value="">(Uncategorized)</option>
-        </select>
+        <div style="display:flex;gap:6px;margin-top:4px;">
+          <select id="moveLibraryItemTarget" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+            <option value="">(Uncategorized)</option>
+          </select>
+          <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="promptCreateCategoryFromEditModal()" title="Create a new category and select it">+ New</button>
+        </div>
       </div>
       <div>
         <label>Tags <span style="font-weight:400;color:var(--muted);font-size:11px;">(click to add/remove; type below for a new tag)</span></label>
@@ -9704,6 +9707,36 @@ function openMoveLibraryItemModal(item){
 function closeMoveLibraryItemModal(){
   document.getElementById('moveLibraryItemModal').classList.add('hidden');
   _pendingLibraryMoveContext = null;
+}
+
+// v149: create a category inline from the Edit Image modal, then auto-select it in the dropdown
+// so the user doesn't have to bail out of the modal, create the category, and re-open the edit.
+function promptCreateCategoryFromEditModal(){
+  if(!currentUser){ alert('Sign in.'); return; }
+  var name = prompt('New category name:');
+  if(!name) return;
+  cloudCreateLibraryCategory(name).then(function(cat){
+    // Insert into the cached category list (kept sorted by name for consistent dropdown order)
+    _libraryCategoriesCache.push(cat);
+    _libraryCategoriesCache.sort(function(a,b){ return a.name.localeCompare(b.name); });
+    // Re-populate the Edit modal's category dropdown and pre-select the new one
+    var sel = document.getElementById('moveLibraryItemTarget');
+    if(sel){
+      sel.innerHTML = '<option value="">(Uncategorized)</option>';
+      _libraryCategoriesCache.forEach(function(c){
+        var opt = document.createElement('option');
+        opt.value = String(c.id);
+        opt.textContent = c.name;
+        if(c.id === cat.id) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+    // Also refresh the Library modal's category filter dropdown so the new category appears
+    // there when the user closes this edit modal
+    populateLibraryCategoryFilter();
+  }).catch(function(e){
+    alert('Could not create category: ' + (e.message || e));
+  });
 }
 
 function confirmMoveLibraryItem(){
