@@ -185,7 +185,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v149</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v150</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4024,6 +4024,18 @@ function ensureChromeVisible(){
     toggleOverscan();
   }
 }
+// v150: confirm-before-delete wrapper for user-initiated X clicks. Keyboard-shortcut deletes
+// (Delete / Backspace) still call deleteLayer directly so the explicit keystroke isn't gated
+// by a prompt. Undo (Ctrl+Z) still restores either way.
+function confirmDeleteLayer(id){
+  var l = layers.find(function(x){return x.id===id;});
+  if(!l) return;
+  if(l.locked){ alert('Unlock the layer first to delete it.'); return; }
+  var name = l.name || 'this layer';
+  if(!confirm('Delete layer "' + name + '"?')) return;
+  deleteLayer(id);
+}
+
 function deleteLayer(id){
   // Free any blob URL the layer owns (SVG blob, framed-image blob). Without revocation, blob
   // URLs accumulate over the session and contribute to memory pressure / browser crashes.
@@ -4067,7 +4079,7 @@ function renderLayerList(){
           +'style="cursor:pointer;font-size:12px;'+lockOpacity+'">'+lockIcon+'</span>'
         +'<span class="layer-del" title="Delete">✕</span>';
       item.onclick=function(e){
-        if(e.target.classList.contains('layer-del')){ if(layer.locked){alert('Unlock the layer first to delete it.');return;} deleteLayer(layer.id);return;}
+        if(e.target.classList.contains('layer-del')){ confirmDeleteLayer(layer.id); return; }
         if(e.target.classList.contains('layer-vis')){ layer.hidden=!layer.hidden; renderLayerList(); redraw(); return; }
         if(e.target.classList.contains('layer-lock')){ layer.locked=!layer.locked; renderLayerList(); renderProps(); return; }
         // Shift- or Ctrl/Cmd-click toggles selection (multi-select). Plain click replaces selection.
@@ -4172,7 +4184,7 @@ function moveBtns(id){
   return '<div style="display:flex;gap:5px;margin-top:5px;">'
     +'<button class="btn-sm" style="flex:1" onclick="moveLayer('+id+',-1)">↓ Down</button>'
     +'<button class="btn-sm" style="flex:1" onclick="moveLayer('+id+',1)">↑ Up</button>'
-    +'<button class="btn-sm danger" onclick="deleteLayer('+id+')">✕</button>'
+    +'<button class="btn-sm danger" onclick="confirmDeleteLayer('+id+')">✕</button>'
     +'</div>';
 }
 
