@@ -147,6 +147,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .lib-item .lib-del{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:11px;background:rgba(0,0,0,0.7);color:#fff;border:none;cursor:pointer;font-size:11px;line-height:22px;padding:0;opacity:0;transition:opacity 0.15s, background 0.15s;}
 .lib-item:hover .lib-del{opacity:1;}
 .lib-item .lib-del:hover{background:#e53;}
+/* v133: change-category button, sits to the left of the delete button */
+.lib-item .lib-move{position:absolute;top:4px;right:30px;width:22px;height:22px;border-radius:11px;background:rgba(0,0,0,0.7);color:#fff;border:none;cursor:pointer;font-size:11px;line-height:22px;padding:0;opacity:0;transition:opacity 0.15s, background 0.15s;}
+.lib-item:hover .lib-move{opacity:1;}
+.lib-item .lib-move:hover{background:var(--green-dark);}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -161,7 +165,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v132</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v133</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -401,6 +405,26 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 
 <!-- Toast (v123+) — transient confirmation message, populated and shown via showToast() -->
 <div class="toast" id="appToast"></div>
+
+<!-- Change-category modal (v133+) for library items — picks a new category from a select. -->
+<div class="modal-overlay hidden" id="moveLibraryItemModal">
+  <div class="modal">
+    <h2>📁 Change Category</h2>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label>Move "<span id="moveLibraryItemName" style="font-weight:600;"></span>" to:</label>
+        <select id="moveLibraryItemTarget" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
+          <option value="">(Uncategorized)</option>
+        </select>
+      </div>
+      <div id="moveLibraryItemError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeMoveLibraryItemModal()">Cancel</button>
+      <button class="btn-primary" onclick="confirmMoveLibraryItem()">Save</button>
+    </div>
+  </div>
+</div>
 
 <!-- Image Library modal (v126+) — shared team-wide library of reusable images.
      Backed by image_library_items/_categories tables + image-library Storage bucket. -->
@@ -8935,6 +8959,16 @@ function cloudUploadLibraryItem(file, categoryId, displayName){
   });
 }
 
+function cloudUpdateLibraryItemCategory(itemId, newCategoryId){
+  // v133: change the category an image lives in. null = uncategorized.
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  return sb.from('image_library_items').update({
+    category_id: newCategoryId != null ? newCategoryId : null
+  }).eq('id', itemId).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Category update failed');
+  });
+}
+
 function cloudDeleteLibraryItem(id, storagePath){
   if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
   // Best-effort storage cleanup. We DON'T fail the delete if the file removal errors out, since
@@ -9027,14 +9061,22 @@ function renderImageLibrary(){
       }
       div.innerHTML =
         '<button class="lib-del" data-action="delete" title="Delete from library">✕</button>'
+        + '<button class="lib-move" data-action="move" title="Change category">📁</button>'
         + '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '">'
         + '<div class="lib-name">' + escAttr(item.name) + '</div>'
         + (catName ? '<div class="lib-cat">' + escAttr(catName) + '</div>' : '');
       div.onclick = function(e){
-        if(e.target && e.target.dataset && e.target.dataset.action === 'delete'){
-          e.stopPropagation();
-          confirmDeleteLibraryItem(item);
-          return;
+        if(e.target && e.target.dataset){
+          if(e.target.dataset.action === 'delete'){
+            e.stopPropagation();
+            confirmDeleteLibraryItem(item);
+            return;
+          }
+          if(e.target.dataset.action === 'move'){
+            e.stopPropagation();
+            openMoveLibraryItemModal(item);
+            return;
+          }
         }
         pickLibraryItem(item);
       };
@@ -9142,6 +9184,48 @@ function pickLibraryItem(item){
     img.src = dataUri;
   }).catch(function(e){
     alert('Failed to load from library: ' + (e.message || e));
+  });
+}
+
+// v133: change-category UI for library items
+var _pendingLibraryMoveContext = null;
+
+function openMoveLibraryItemModal(item){
+  if(!currentUser){ alert('Sign in.'); return; }
+  _pendingLibraryMoveContext = { item: item };
+  document.getElementById('moveLibraryItemName').textContent = item.name || 'Untitled';
+  var sel = document.getElementById('moveLibraryItemTarget');
+  sel.innerHTML = '<option value="">(Uncategorized)</option>';
+  _libraryCategoriesCache.forEach(function(c){
+    var opt = document.createElement('option');
+    opt.value = String(c.id);
+    opt.textContent = c.name;
+    if(c.id === item.category_id) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  document.getElementById('moveLibraryItemError').classList.add('hidden');
+  document.getElementById('moveLibraryItemModal').classList.remove('hidden');
+}
+
+function closeMoveLibraryItemModal(){
+  document.getElementById('moveLibraryItemModal').classList.add('hidden');
+  _pendingLibraryMoveContext = null;
+}
+
+function confirmMoveLibraryItem(){
+  if(!_pendingLibraryMoveContext){ closeMoveLibraryItemModal(); return; }
+  var item = _pendingLibraryMoveContext.item;
+  var sel = document.getElementById('moveLibraryItemTarget');
+  var val = sel.value;
+  var newCatId = val === '' ? null : parseInt(val, 10);
+  cloudUpdateLibraryItemCategory(item.id, newCatId).then(function(){
+    closeMoveLibraryItemModal();
+    showToast('📁 Category updated');
+    renderImageLibrary();
+  }).catch(function(e){
+    var err = document.getElementById('moveLibraryItemError');
+    err.textContent = 'Update failed: ' + (e.message || e);
+    err.classList.remove('hidden');
   });
 }
 
