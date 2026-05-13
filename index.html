@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v152</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v153</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -430,6 +430,22 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <!-- Toast (v123+) — transient confirmation message, populated and shown via showToast() -->
 <div class="toast" id="appToast"></div>
 
+<!-- v153: Manage Tags modal — rename or delete a tag across every item in the library. Lives
+     above the Image Library modal (z-index 1100) so it stacks correctly. -->
+<div class="modal-overlay hidden" id="manageTagsModal" style="z-index:1100;">
+  <div class="modal" style="max-width:480px;">
+    <h2>🏷 Manage Tags</h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Rename or delete a tag everywhere it's used in the library. Renaming to an existing tag merges them.</div>
+    <div id="manageTagsList" style="display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto;">
+      <!-- populated by renderManageTagsList -->
+    </div>
+    <div id="manageTagsStatus" class="hidden" style="padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:12px;color:#3a5e10;margin-top:8px;"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeManageTagsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Change-category modal (v133+) for library items — picks a new category from a select.
      v136: z-index bumped above the standard .modal-overlay so it stacks on top of the Image
      Library modal it's launched from. -->
@@ -491,6 +507,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadInput').click()" title="Upload one or more image files">+ Files</button>
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadFolderInput').click()" title="Upload every image in a folder (non-image files are skipped)">+ Folder</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadVisibleLibraryItems()" title="Download all images currently visible in the grid as one .zip">⬇ ZIP</button>
+      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="openManageTagsModal()" title="Rename or delete tags across the whole library">✏ Tags</button>
       <input type="file" id="libraryUploadInput" accept="image/*" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
            Safari, and Firefox — covers all browsers SmarterPaw uses. Non-image files in the folder
@@ -9225,6 +9242,53 @@ function cloudUpdateLibraryItem(itemId, updates){
   });
 }
 
+// v153: rename a tag across every item that uses it. Supabase's REST API doesn't expose
+// array_replace directly, so we fetch the affected rows and rewrite each row's tags array
+// client-side. Renaming to a tag that already exists merges them (dedupe after replace).
+function cloudRenameTag(oldName, newName){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  oldName = (oldName || '').toLowerCase();
+  newName = (newName || '').toLowerCase();
+  if(!oldName || !newName) return Promise.reject(new Error('Both names required.'));
+  if(oldName === newName) return Promise.resolve({touched: 0});
+  return sb.from('image_library_items')
+    .select('id, tags')
+    .contains('tags', [oldName])
+    .then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Lookup failed');
+      var items = res.data || [];
+      if(!items.length) return {touched: 0};
+      var jobs = items.map(function(it){
+        var raw = (it.tags || []).map(function(t){ return t === oldName ? newName : t; });
+        // Dedupe (merge case: newName was already in the list)
+        var seen = {}, newTags = [];
+        raw.forEach(function(t){ if(t && !seen[t]){ seen[t] = true; newTags.push(t); } });
+        return sb.from('image_library_items').update({tags: newTags}).eq('id', it.id);
+      });
+      return Promise.all(jobs).then(function(){ return {touched: items.length}; });
+    });
+}
+
+// v153: delete a tag from every item that uses it.
+function cloudDeleteTag(name){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  name = (name || '').toLowerCase();
+  if(!name) return Promise.reject(new Error('Tag name required.'));
+  return sb.from('image_library_items')
+    .select('id, tags')
+    .contains('tags', [name])
+    .then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Lookup failed');
+      var items = res.data || [];
+      if(!items.length) return {touched: 0};
+      var jobs = items.map(function(it){
+        var newTags = (it.tags || []).filter(function(t){ return t !== name; });
+        return sb.from('image_library_items').update({tags: newTags}).eq('id', it.id);
+      });
+      return Promise.all(jobs).then(function(){ return {touched: items.length}; });
+    });
+}
+
 function cloudUploadLibraryItem(file, categoryId, displayName){
   if(!sb || !currentUser) return Promise.reject(new Error('Sign in to upload.'));
   if(!file) return Promise.reject(new Error('No file provided.'));
@@ -9732,6 +9796,107 @@ function openMoveLibraryItemModal(item){
 function closeMoveLibraryItemModal(){
   document.getElementById('moveLibraryItemModal').classList.add('hidden');
   _pendingLibraryMoveContext = null;
+}
+
+// ── MANAGE TAGS MODAL (v153) ──
+
+function openManageTagsModal(){
+  if(!currentUser){ alert('Sign in.'); return; }
+  document.getElementById('manageTagsStatus').classList.add('hidden');
+  document.getElementById('manageTagsModal').classList.remove('hidden');
+  renderManageTagsList();
+}
+
+function closeManageTagsModal(){
+  document.getElementById('manageTagsModal').classList.add('hidden');
+  // Re-render the underlying library so any rename/delete changes are reflected
+  if(!document.getElementById('imageLibraryModal').classList.contains('hidden')){
+    renderImageLibrary();
+  }
+}
+
+function renderManageTagsList(){
+  var container = document.getElementById('manageTagsList');
+  container.innerHTML = '';
+  // Count usage from the items cache so the user knows how many items each tag affects
+  var usage = {};
+  _libraryItemsCache.forEach(function(it){
+    (it.tags || []).forEach(function(t){ usage[t] = (usage[t] || 0) + 1; });
+  });
+  var allTags = Object.keys(usage).sort();
+  if(!allTags.length){
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px;">No tags yet. Add tags via the Edit Image modal.</div>';
+    return;
+  }
+  allTags.forEach(function(t){
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;background:#fafafa;';
+    row.innerHTML =
+      '<div style="flex:1;min-width:0;overflow:hidden;">'
+        + '<b style="font-size:13px;">🏷 ' + escAttr(t) + '</b>'
+        + '<div style="font-size:10px;color:var(--muted);margin-top:1px;">' + usage[t] + ' image' + (usage[t] === 1 ? '' : 's') + '</div>'
+      + '</div>'
+      + '<button type="button" class="btn-sm" data-action="rename" title="Rename across all items">✏ Rename</button>'
+      + '<button type="button" class="btn-sm danger" data-action="delete" title="Remove from all items">✕</button>';
+    row.querySelector('[data-action="rename"]').onclick = function(){ doRenameTag(t); };
+    row.querySelector('[data-action="delete"]').onclick = function(){ doDeleteTag(t); };
+    container.appendChild(row);
+  });
+}
+
+function _showManageTagsStatus(msg, isError){
+  var s = document.getElementById('manageTagsStatus');
+  s.classList.remove('hidden');
+  if(isError){
+    s.style.background = '#fef2f0';
+    s.style.borderColor = '#fbcaba';
+    s.style.color = '#b3261e';
+  } else {
+    s.style.background = '#f4faf4';
+    s.style.borderColor = '#d5e8bc';
+    s.style.color = '#3a5e10';
+  }
+  s.textContent = msg;
+  setTimeout(function(){ s.classList.add('hidden'); }, 4000);
+}
+
+function doRenameTag(oldName){
+  var newName = prompt('Rename tag "' + oldName + '" to:', oldName);
+  if(newName == null) return;
+  newName = newName.trim().toLowerCase();
+  if(!newName){ alert('Name required.'); return; }
+  if(newName === oldName) return;
+  cloudRenameTag(oldName, newName).then(function(result){
+    // Refresh the items cache so the manage-tags list and library both reflect the change
+    return cloudListLibraryItems().then(function(items){
+      _libraryItemsCache = items;
+      var tagSet = {};
+      items.forEach(function(it){ (it.tags || []).forEach(function(t){ if(t) tagSet[t] = true; }); });
+      _libraryAllTagsCache = Object.keys(tagSet).sort();
+      renderManageTagsList();
+      _showManageTagsStatus('✓ Renamed "' + oldName + '" → "' + newName + '" on ' + result.touched + ' image' + (result.touched === 1 ? '' : 's'));
+    });
+  }).catch(function(e){
+    console.error('[lib] rename tag failed:', e);
+    _showManageTagsStatus('✗ Rename failed: ' + (e.message || e), true);
+  });
+}
+
+function doDeleteTag(name){
+  if(!confirm('Delete tag "' + name + '" from every image in the library? Images themselves are kept.')) return;
+  cloudDeleteTag(name).then(function(result){
+    return cloudListLibraryItems().then(function(items){
+      _libraryItemsCache = items;
+      var tagSet = {};
+      items.forEach(function(it){ (it.tags || []).forEach(function(t){ if(t) tagSet[t] = true; }); });
+      _libraryAllTagsCache = Object.keys(tagSet).sort();
+      renderManageTagsList();
+      _showManageTagsStatus('✓ Removed "' + name + '" from ' + result.touched + ' image' + (result.touched === 1 ? '' : 's'));
+    });
+  }).catch(function(e){
+    console.error('[lib] delete tag failed:', e);
+    _showManageTagsStatus('✗ Delete failed: ' + (e.message || e), true);
+  });
 }
 
 // v149: create a category inline from the Edit Image modal, then auto-select it in the dropdown
