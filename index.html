@@ -165,7 +165,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v133</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v134</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9065,21 +9065,15 @@ function renderImageLibrary(){
         + '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '">'
         + '<div class="lib-name">' + escAttr(item.name) + '</div>'
         + (catName ? '<div class="lib-cat">' + escAttr(catName) + '</div>' : '');
-      div.onclick = function(e){
-        if(e.target && e.target.dataset){
-          if(e.target.dataset.action === 'delete'){
-            e.stopPropagation();
-            confirmDeleteLibraryItem(item);
-            return;
-          }
-          if(e.target.dataset.action === 'move'){
-            e.stopPropagation();
-            openMoveLibraryItemModal(item);
-            return;
-          }
-        }
-        pickLibraryItem(item);
-      };
+      // v134: attach handlers directly to each button instead of using event delegation on the
+      // parent div. The previous version relied on e.target.dataset.action to dispatch, but if
+      // the click target was a child element (e.g. an emoji glyph rendered as its own span by
+      // some browsers), the dispatch failed silently and the click fell through to pickLibraryItem.
+      var delBtn = div.querySelector('[data-action="delete"]');
+      if(delBtn) delBtn.onclick = function(e){ e.stopPropagation(); confirmDeleteLibraryItem(item); };
+      var moveBtn = div.querySelector('[data-action="move"]');
+      if(moveBtn) moveBtn.onclick = function(e){ e.stopPropagation(); openMoveLibraryItemModal(item); };
+      div.onclick = function(){ pickLibraryItem(item); };
       grid.appendChild(div);
     });
   }).catch(function(e){
