@@ -180,7 +180,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v144</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v145</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -192,11 +192,13 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
     <!-- v127: Account dropdown — collapses Add User / Change Password / Sign Out under one menu.
-         Hidden when signed out; shown by onSignedIn / hidden by onSignedOut. -->
+         v145: renamed "Account & Settings"; added Image Library entry as a top-level shortcut. -->
     <div class="account-menu" id="accountMenu" style="display:none;">
-      <button class="btn-hdr" id="accountTrigger" onclick="toggleAccountMenu()" title="Account menu">👤 Account ▾</button>
+      <button class="btn-hdr" id="accountTrigger" onclick="toggleAccountMenu()" title="Account &amp; Settings">⚙ Account &amp; Settings ▾</button>
       <div class="account-panel" id="accountPanel">
         <div class="account-email" id="accountEmail">—</div>
+        <button type="button" class="account-item" onclick="closeAccountMenu(); openImageLibraryModal();">📚 Image Library…</button>
+        <div style="border-top:1px solid var(--border);margin:4px 0;"></div>
         <button type="button" class="account-item" onclick="closeAccountMenu(); openAddUserModal();">👥 Add User…</button>
         <button type="button" class="account-item" onclick="closeAccountMenu(); openChangePasswordModal();">🔑 Change Password…</button>
         <div style="border-top:1px solid var(--border);margin:4px 0;"></div>
