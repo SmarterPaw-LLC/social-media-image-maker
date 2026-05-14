@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v161</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v162</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4088,10 +4088,12 @@ function createArrowFromDrag(sx, sy, ex, ey){
   // so the layer schema is complete and the property panel doesn't need fallbacks for new arrows.
   var style = isKKZ ? {
     color: '#6b3aa3', halo: '#ffffff', thickness: 14, wobble: 0.5, thicknessVar: 25, archStrength: 0,
-    aheadLen1: 72, aheadLen2: 72, aheadAngle: 45, aheadCurve1: -15, aheadCurve2: -15
+    aheadLen1: 72, aheadLen2: 72, aheadAngle: 45, aheadCurve1: -15, aheadCurve2: -15,
+    bodyStartCap: 'soft', wing1EndCap: 'pointed', wing2EndCap: 'pointed'
   } : {
     color: '#f07830', halo: '#ffffff', thickness: 20, wobble: 0.7, thicknessVar: 40, archStrength: -10,
-    aheadLen1: 95, aheadLen2: 95, aheadAngle: 48, aheadCurve1: -25, aheadCurve2: -25
+    aheadLen1: 95, aheadLen2: 95, aheadAngle: 48, aheadCurve1: -25, aheadCurve2: -25,
+    bodyStartCap: 'soft', wing1EndCap: 'pointed', wing2EndCap: 'pointed'
   };
   var id = nextId++;
   layers.push({
@@ -4117,6 +4119,10 @@ function createArrowFromDrag(sx, sy, ex, ey){
     aheadAngle: style.aheadAngle,
     aheadCurve1: style.aheadCurve1,
     aheadCurve2: style.aheadCurve2,
+    // v162: per-endpoint cap styles. See _capProfileAt for valid values.
+    bodyStartCap: style.bodyStartCap,
+    wing1EndCap: style.wing1EndCap,
+    wing2EndCap: style.wing2EndCap,
     arrowheadEnd: true, arrowheadStart: false,
     // Shadow defaults (off until user adjusts)
     shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0, shadowOpacity: 50, shadowColor: '#000000',
@@ -4171,56 +4177,56 @@ function _genArrowStroke(x1, y1, x2, y2, arch, wobble, seed){
   return pts;
 }
 
-function _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd){
-  // Marker-style thickness profile: low-frequency variation (1-2 gentle pulses across the
-  // length) + optional tapering at start or end. Variation is amplitude, NOT frequency, so
-  // higher variation = more pronounced pressure swing but still smooth.
+// v162: shape the thickness profile near a stroke endpoint based on a "cap style". Five styles
+// give visually-distinct endpoint looks — the user reported all endpoints (body start + both
+// wing tips) looked the same in v161 because every cap used the same soft-taper profile.
+//   d = "distance from the cap" along the stroke, normalized 0..1 (0 = AT the cap)
+//   style options:
+//     soft     — gentle taper to 45% thickness over the last 18% of the stroke (the v161 default)
+//     pointed  — aggressive taper to 12% over the last 25% — looks like a sharp marker point
+//     round    — no taper (full thickness right up to the cap); the lineCap='round' bulges it
+//     flat     — same as round here (no taper); could expand later to switch lineCap='butt'
+//     splayed  — flares out to 135% over the last 15% — marker-pressed-and-dragged look
+function _capProfileAt(distFromCap, style){
+  switch(style){
+    case 'flat':
+    case 'round':
+      return 1;
+    case 'splayed':
+      if(distFromCap > 0.15) return 1;
+      return 1.35 - 0.35 * (distFromCap / 0.15);
+    case 'pointed':
+      if(distFromCap > 0.25) return 1;
+      return 0.12 + 0.88 * (distFromCap / 0.25);
+    case 'soft':
+    default:
+      if(distFromCap > 0.18) return 1;
+      return 0.45 + 0.55 * (distFromCap / 0.18);
+  }
+}
+
+function _markerThicknessAt(t, baseThick, variation, seed, startStyle, endStyle){
+  // v162: replaced boolean taperStart/taperEnd with style strings. null = no taper at that end.
+  // Marker-style thickness: low-frequency variation (1–2 gentle pulses across the length) plus
+  // per-endpoint cap shaping. Variation controls amplitude, NOT frequency, so higher = more
+  // pronounced pressure swing but still smooth (no random per-segment noise).
   var s = seed * 0.0137;
   var lowFreq = Math.sin(t * Math.PI * 1.4 + s) * 0.5 + Math.sin(t * Math.PI * 2.7 + s * 1.7) * 0.25;
-  var taper = 1;
-  if(taperStart && t < 0.18) taper *= 0.45 + 0.55 * (t / 0.18);
-  if(taperEnd && t > 0.82) taper *= 0.45 + 0.55 * ((1 - t) / 0.18);
-  return Math.max(1, baseThick * (1 + variation * lowFreq * 0.35) * taper);
+  var startFactor = startStyle ? _capProfileAt(t, startStyle) : 1;
+  var endFactor = endStyle ? _capProfileAt(1 - t, endStyle) : 1;
+  return Math.max(1, baseThick * (1 + variation * lowFreq * 0.35) * startFactor * endFactor);
 }
 
-function _drawMarkerStroke(ctx, pts, color, halo, haloPad, baseThick, variation, seed, taperStart, taperEnd){
-  // Two passes: halo first, then color. Each segment gets its own thickness from the marker
-  // profile, with lineCap=round to smooth between segments.
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  var nLast = pts.length - 1;
-  // Halo
-  ctx.strokeStyle = halo;
-  for(var i = 1; i < pts.length; i++){
-    var t = i / nLast;
-    var thick = _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd);
-    ctx.lineWidth = thick + haloPad * 2;
-    ctx.beginPath();
-    ctx.moveTo(pts[i-1][0], pts[i-1][1]);
-    ctx.lineTo(pts[i][0], pts[i][1]);
-    ctx.stroke();
-  }
-  // Color
-  ctx.strokeStyle = color;
-  for(var i = 1; i < pts.length; i++){
-    var t = i / nLast;
-    var thick = _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd);
-    ctx.lineWidth = thick;
-    ctx.beginPath();
-    ctx.moveTo(pts[i-1][0], pts[i-1][1]);
-    ctx.lineTo(pts[i][0], pts[i][1]);
-    ctx.stroke();
-  }
-}
-
-function _drawMarkerStrokeHalo(ctx, pts, halo, haloPad, baseThick, variation, seed, taperStart, taperEnd){
+// v162: startStyle/endStyle are now strings (see _capProfileAt for valid values), or null for
+// "no taper at that end". Function names unchanged so existing callers route through cleanly.
+function _drawMarkerStrokeHalo(ctx, pts, halo, haloPad, baseThick, variation, seed, startStyle, endStyle){
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = halo;
   var nLast = pts.length - 1;
   for(var i = 1; i < pts.length; i++){
     var t = i / nLast;
-    var thick = _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd);
+    var thick = _markerThicknessAt(t, baseThick, variation, seed, startStyle, endStyle);
     ctx.lineWidth = thick + haloPad * 2;
     ctx.beginPath();
     ctx.moveTo(pts[i-1][0], pts[i-1][1]);
@@ -4229,14 +4235,14 @@ function _drawMarkerStrokeHalo(ctx, pts, halo, haloPad, baseThick, variation, se
   }
 }
 
-function _drawMarkerStrokeColor(ctx, pts, color, baseThick, variation, seed, taperStart, taperEnd){
+function _drawMarkerStrokeColor(ctx, pts, color, baseThick, variation, seed, startStyle, endStyle){
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = color;
   var nLast = pts.length - 1;
   for(var i = 1; i < pts.length; i++){
     var t = i / nLast;
-    var thick = _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd);
+    var thick = _markerThicknessAt(t, baseThick, variation, seed, startStyle, endStyle);
     ctx.lineWidth = thick;
     ctx.beginPath();
     ctx.moveTo(pts[i-1][0], pts[i-1][1]);
@@ -4332,15 +4338,20 @@ function drawArrowLayer(ctx, layer){
       sWing2Pts = buildWing(tipS, prevS, -1, aLen2, aCurve2, seed * 2.531);
     }
 
-    // v161: collect every stroke into one list so we can paint them either directly or via
-    // an offscreen canvas (for the shadow path). Each entry knows its own seed + taper shape.
+    // v162: per-endpoint cap style. bodyStartCap shapes the back of the body; wing1EndCap /
+    // wing2EndCap shape the outer wing tips. Legacy arrows (no cap fields set) fall back to
+    // 'soft' which matches v159-v161 visual behavior.
+    var bodyStartCap = layer.bodyStartCap || 'soft';
+    var w1Cap = layer.wing1EndCap || 'soft';
+    var w2Cap = layer.wing2EndCap || 'soft';
     var allStrokes = [
-      {pts: bodyPts, seed: seed, taperStart: true, taperEnd: false}
+      {pts: bodyPts, seed: seed, startStyle: bodyStartCap, endStyle: null}
     ];
-    if(wing1Pts) allStrokes.push({pts: wing1Pts, seed: seed * 1.317, taperStart: false, taperEnd: true});
-    if(wing2Pts) allStrokes.push({pts: wing2Pts, seed: seed * 1.713, taperStart: false, taperEnd: true});
-    if(sWing1Pts) allStrokes.push({pts: sWing1Pts, seed: seed * 2.119, taperStart: false, taperEnd: true});
-    if(sWing2Pts) allStrokes.push({pts: sWing2Pts, seed: seed * 2.531, taperStart: false, taperEnd: true});
+    if(wing1Pts) allStrokes.push({pts: wing1Pts, seed: seed * 1.317, startStyle: null, endStyle: w1Cap});
+    if(wing2Pts) allStrokes.push({pts: wing2Pts, seed: seed * 1.713, startStyle: null, endStyle: w2Cap});
+    // Start-side wings reuse the same end-cap style as their counterpart wing for now
+    if(sWing1Pts) allStrokes.push({pts: sWing1Pts, seed: seed * 2.119, startStyle: null, endStyle: w1Cap});
+    if(sWing2Pts) allStrokes.push({pts: sWing2Pts, seed: seed * 2.531, startStyle: null, endStyle: w2Cap});
 
     // getStrokeStyleFor() needs to be called with whichever ctx we're actually drawing into,
     // since gradient objects are bound to the context that created them.
@@ -4366,11 +4377,11 @@ function drawArrowLayer(ctx, layer){
       var ss = getStrokeStyleFor(target);
       // Halos first
       allStrokes.forEach(function(s){
-        _drawMarkerStrokeHalo(target, s.pts, halo, haloPad, thickAvg, thickVar, s.seed, s.taperStart, s.taperEnd);
+        _drawMarkerStrokeHalo(target, s.pts, halo, haloPad, thickAvg, thickVar, s.seed, s.startStyle, s.endStyle);
       });
       // Colors
       allStrokes.forEach(function(s){
-        _drawMarkerStrokeColor(target, s.pts, ss, thickAvg, thickVar, s.seed, s.taperStart, s.taperEnd);
+        _drawMarkerStrokeColor(target, s.pts, ss, thickAvg, thickVar, s.seed, s.startStyle, s.endStyle);
       });
     }
 
@@ -4470,9 +4481,13 @@ function buildArrowProps(l){
     + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Wing 1 (top side)</div>'
     + R('Wing 1 length', 'parrAheadLen1_' + id, aLen1, 10, 300, 1)
     + R('Wing 1 curve', 'parrAheadCurve1_' + id, aCurve1, -100, 100, 1)
+    + SEL('Wing 1 tip style', 'parrW1Cap_' + id, [['soft','Soft (gentle taper)'],['pointed','Pointed (marker tip)'],['round','Round bulb'],['flat','Flat / abrupt'],['splayed','Splayed (widens)']], l.wing1EndCap || 'soft')
     + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Wing 2 (bottom side)</div>'
     + R('Wing 2 length', 'parrAheadLen2_' + id, aLen2, 10, 300, 1)
     + R('Wing 2 curve', 'parrAheadCurve2_' + id, aCurve2, -100, 100, 1)
+    + SEL('Wing 2 tip style', 'parrW2Cap_' + id, [['soft','Soft (gentle taper)'],['pointed','Pointed (marker tip)'],['round','Round bulb'],['flat','Flat / abrupt'],['splayed','Splayed (widens)']], l.wing2EndCap || 'soft')
+    + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Body back</div>'
+    + SEL('Body start style', 'parrBodyCap_' + id, [['soft','Soft (gentle taper)'],['pointed','Pointed (marker tip)'],['round','Round bulb'],['flat','Flat / abrupt'],['splayed','Splayed (widens)']], l.bodyStartCap || 'soft')
     + '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadEnd ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadEnd=this.checked;redraw();}}).call(this)"> Arrowhead at end</label>'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadStart ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadStart=this.checked;redraw();}}).call(this)"> Arrowhead at start</label>'
@@ -5625,6 +5640,10 @@ function bindPropEvents(layer){
     rng('parrAheadLen2_' + aid, function(v){ layer.aheadLen2 = v; redraw(); });
     rng('parrAheadCurve1_' + aid, function(v){ layer.aheadCurve1 = v; redraw(); });
     rng('parrAheadCurve2_' + aid, function(v){ layer.aheadCurve2 = v; redraw(); });
+    // v162: per-endpoint cap-style dropdowns
+    on('parrBodyCap_' + aid, 'change', function(e){ layer.bodyStartCap = e.target.value; redraw(); });
+    on('parrW1Cap_' + aid, 'change', function(e){ layer.wing1EndCap = e.target.value; redraw(); });
+    on('parrW2Cap_' + aid, 'change', function(e){ layer.wing2EndCap = e.target.value; redraw(); });
     // v160: fill type + gradient controls (mirrors shape layer pattern)
     on('parrFillType_' + aid, 'change', function(e){ layer.fillType = e.target.value; renderProps(); });
     on('parrColor_' + aid, 'input', function(e){ layer.color = e.target.value; redraw(); });
