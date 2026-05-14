@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v156</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v157</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4042,13 +4042,14 @@ function addTextLayer(){
 function addArrowLayer(){
   snapshotState();
   var id = nextId++;
-  var w = Math.max(220, Math.round(canvasW * 0.32));
-  var h = Math.max(110, Math.round(w * 0.4));
+  var w = Math.max(260, Math.round(canvasW * 0.35));
+  var h = Math.max(140, Math.round(w * 0.45));
   var isKKZ = currentBrand === 'kkz';
+  // v157: brand presets carry the new archStrength + thicknessVar parameters too.
   var style = isKKZ ? {
-    color: '#6b3aa3', halo: '#ffffff', thickness: 12, wobble: 0.35  // KKZ — cleaner, purple
+    color: '#6b3aa3', halo: '#ffffff', thickness: 16, wobble: 0.4, thicknessVar: 15, archStrength: 0
   } : {
-    color: '#f07830', halo: '#ffffff', thickness: 14, wobble: 1.0   // Meowi/Doggi — orange wobble
+    color: '#f07830', halo: '#ffffff', thickness: 22, wobble: 1.0, thicknessVar: 35, archStrength: -25
   };
   layers.push({
     id: id, type: 'arrow', name: 'Arrow ' + id,
@@ -4058,7 +4059,10 @@ function addArrowLayer(){
     rotation: 0, opacity: 100,
     flipH: false, flipV: false,
     color: style.color, halo: style.halo,
-    thickness: style.thickness, wobble: style.wobble,
+    thickness: style.thickness,
+    thicknessVar: style.thicknessVar,   // 0..100 — variation along the line, 0 = uniform
+    archStrength: style.archStrength,   // -100..+100 — bow perpendicular to the line, 0 = straight
+    wobble: style.wobble,
     arrowheadEnd: true, arrowheadStart: false,
     _seed: Math.floor(Math.random() * 100000) + 1
   });
@@ -4075,96 +4079,159 @@ function reseedArrow(layerId){
   redraw();
 }
 
-function _generateWobblyArrowPath(sx, sy, ex, ey, wobble, seed){
-  // Produces ~20 points along the line from (sx,sy) to (ex,ey), each perturbed perpendicular
-  // to the line by a sin-of-sin "noise" function seeded so the result is deterministic for a
-  // given seed. Fade at endpoints so the line starts and ends precisely on the bbox.
-  var n = 20;
-  var pts = new Array(n + 1);
-  var dx = ex - sx, dy = ey - sy;
-  var len = Math.hypot(dx, dy) || 1;
-  var perpX = -dy / len;
-  var perpY = dx / len;
-  var s = seed * 0.0137;
-  for(var i = 0; i <= n; i++){
-    var t = i / n;
-    var fade = Math.sin(t * Math.PI);  // 0 at endpoints, 1 in middle
-    var noise = Math.sin(t * 7.3 + s) * 0.6 + Math.sin(t * 17.7 + s * 2.1) * 0.3 + Math.sin(t * 31.1 + s * 0.7) * 0.15;
-    var mag = noise * wobble * len * 0.05 * fade;
-    pts[i] = [sx + dx * t + perpX * mag, sy + dy * t + perpY * mag];
-  }
-  return pts;
-}
-
-function _drawHandDrawnArrowhead(ctx, pts, atEnd, color, halo, thickness, haloThickness){
-  if(pts.length < 4) return;
-  var tip, dirFrom;
-  if(atEnd){
-    tip = pts[pts.length - 1];
-    dirFrom = pts[Math.max(0, pts.length - 5)];
-  } else {
-    tip = pts[0];
-    dirFrom = pts[Math.min(pts.length - 1, 4)];
-  }
-  var dx = tip[0] - dirFrom[0];
-  var dy = tip[1] - dirFrom[1];
-  var len = Math.hypot(dx, dy) || 1;
-  dx /= len; dy /= len;
-  var size = thickness * 3.2;
-  // Two wings, ~40° off the line direction, pointing back from the tip
-  var wing = 0.65;  // radians
-  var c = Math.cos(wing), s = Math.sin(wing);
-  var bx = -dx * size, by = -dy * size;
-  var w1x = tip[0] + (bx * c - by * s);
-  var w1y = tip[1] + (bx * s + by * c);
-  var w2x = tip[0] + (bx * c - by * (-s));
-  var w2y = tip[1] + (bx * (-s) + by * c);
-  // Halo first
-  ctx.strokeStyle = halo;
-  ctx.lineWidth = haloThickness;
-  ctx.beginPath(); ctx.moveTo(w1x, w1y); ctx.lineTo(tip[0], tip[1]); ctx.lineTo(w2x, w2y); ctx.stroke();
-  // Color
-  ctx.strokeStyle = color;
-  ctx.lineWidth = thickness;
-  ctx.beginPath(); ctx.moveTo(w1x, w1y); ctx.lineTo(tip[0], tip[1]); ctx.lineTo(w2x, w2y); ctx.stroke();
-}
-
 function drawArrowLayer(ctx, layer){
-  // Position/rotation/opacity already applied by parent loop — render in local (0..w, 0..h) space.
-  var color = layer.color || '#f07830';
-  var halo = layer.halo || '#ffffff';
-  var thickness = Math.max(1, layer.thickness || 14);
-  var haloThickness = thickness + Math.max(4, thickness * 0.55);
-  var wobble = layer.wobble != null ? layer.wobble : 1;
-  // Default geometry: horizontal arrow at vertical center, spanning full bbox width
-  var sx = 0, sy = layer.h * 0.5;
-  var ex = layer.w, ey = layer.h * 0.5;
-  // flipH reverses direction; flipV mirrors the wobble curve to the other side
-  if(layer.flipH){ var tx = sx; sx = ex; ex = tx; var ty = sy; sy = ey; ey = ty; }
-  var pts = _generateWobblyArrowPath(sx, sy, ex, ey, wobble, layer._seed || 1);
-  if(layer.flipV){
-    var cy = layer.h * 0.5;
-    pts = pts.map(function(p){ return [p[0], 2 * cy - p[1]]; });
-  }
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  // Halo stroke
-  ctx.strokeStyle = halo;
-  ctx.lineWidth = haloThickness;
-  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-  for(var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-  ctx.stroke();
-  // Color stroke
-  ctx.strokeStyle = color;
-  ctx.lineWidth = thickness;
-  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
-  for(var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-  ctx.stroke();
-  // Arrowheads
-  if(layer.arrowheadEnd)   _drawHandDrawnArrowhead(ctx, pts, true,  color, halo, thickness, haloThickness);
-  if(layer.arrowheadStart) _drawHandDrawnArrowhead(ctx, pts, false, color, halo, thickness, haloThickness);
-  ctx.restore();
+  // v157 rewrite. Renders in ABSOLUTE canvas coordinates inside withRotation() — matches the
+  // convention used by drawShapeLayer/drawTextLayer/etc. (v156's local-coords version placed
+  // the arrow at canvas (0,0) regardless of where the layer's bbox actually was — the bug
+  // the user reported as "object box for the arrow isn't around the arrow").
+  //
+  // Geometry: body goes from (layer.x, mid-y) to (layer.x + w, mid-y) in untransformed terms;
+  // withRotation handles the layer's rotation around its bbox center. archStrength bows the
+  // line perpendicular at the midpoint via a quadratic Bezier control point. wobble adds
+  // sin-noise perpendicular to the tangent. thicknessVar varies stroke thickness segment to
+  // segment so the line looks marker-drawn. The arrowhead is a filled wedge whose base sits
+  // BACK from the path tip so the body+head read as one continuous mark (v156 stroked-V had
+  // a visible gap).
+  withRotation(ctx, layer, function(){
+    var x1 = layer.x;
+    var y1 = layer.y + layer.h * 0.5;
+    var x2 = layer.x + layer.w;
+    var y2 = layer.y + layer.h * 0.5;
+    if(layer.flipH){ var tx = x1; x1 = x2; x2 = tx; }
+
+    var dx = x2 - x1, dy = y2 - y1;
+    var len = Math.hypot(dx, dy) || 1;
+    var perpSign = layer.flipV ? -1 : 1;
+    var perpX = -dy / len * perpSign;
+    var perpY = dx / len * perpSign;
+
+    // Arch — quadratic Bezier control point offset perpendicular at the midpoint
+    var archPct = layer.archStrength != null ? layer.archStrength : 0;
+    var archMag = (archPct / 100) * len * 0.3;
+    var cx = (x1 + x2) / 2 + perpX * archMag;
+    var cy = (y1 + y2) / 2 + perpY * archMag;
+
+    var seed = layer._seed || 1;
+    var s = seed * 0.0137;
+    var wobble = layer.wobble != null ? layer.wobble : 1;
+    var n = 36;
+
+    // Sample centerline points along the Bezier curve, then perturb by wobble noise.
+    var pts = new Array(n + 1);
+    for(var i = 0; i <= n; i++){
+      var t = i / n;
+      var u = 1 - t;
+      var bx = u*u*x1 + 2*u*t*cx + t*t*x2;
+      var by = u*u*y1 + 2*u*t*cy + t*t*y2;
+      var ttx = 2*u*(cx - x1) + 2*t*(x2 - cx);
+      var tty = 2*u*(cy - y1) + 2*t*(y2 - cy);
+      var tlen = Math.hypot(ttx, tty) || 1;
+      var pwx = -tty / tlen, pwy = ttx / tlen;
+      var fade = Math.sin(t * Math.PI);
+      var noise = Math.sin(t * 7.3 + s) * 0.6 + Math.sin(t * 17.7 + s * 2.1) * 0.3 + Math.sin(t * 31.1 + s * 0.7) * 0.15;
+      var wobbleMag = noise * wobble * len * 0.04 * fade;
+      pts[i] = [bx + pwx * wobbleMag, by + pwy * wobbleMag];
+    }
+
+    // Thickness profile: avg with noise variation, taper at the very end so the body merges
+    // into the arrowhead instead of leaving a visible blunt cap before the wedge.
+    var thickAvg = Math.max(2, layer.thickness || 14);
+    var thickVar = (layer.thicknessVar != null ? layer.thicknessVar : 35) / 100;
+    var s2 = seed * 0.0271;
+    var thicknesses = new Array(n + 1);
+    for(var i = 0; i <= n; i++){
+      var t = i / n;
+      var thickNoise = Math.sin(t * 9 + s2) * 0.5 + Math.sin(t * 19 + s2 * 1.7) * 0.3;
+      var thickHere = thickAvg * (1 + thickVar * thickNoise * 0.5);
+      if(layer.arrowheadEnd !== false && t > 0.9){
+        var k = (1 - t) / 0.1;
+        thickHere *= 0.4 + 0.6 * k;
+      }
+      if(layer.arrowheadStart && t < 0.1){
+        var k2 = t / 0.1;
+        thickHere *= 0.4 + 0.6 * k2;
+      }
+      thicknesses[i] = Math.max(1, thickHere);
+    }
+
+    var color = layer.color || '#f07830';
+    var halo = layer.halo || '#ffffff';
+    var haloPad = Math.max(4, thickAvg * 0.4);
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // Halo pass — stroke each segment with thicker line (halo padding on both sides)
+    ctx.strokeStyle = halo;
+    for(var i = 1; i < pts.length; i++){
+      ctx.lineWidth = thicknesses[i] + haloPad * 2;
+      ctx.beginPath();
+      ctx.moveTo(pts[i-1][0], pts[i-1][1]);
+      ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+
+    // Color pass — same segments, body thickness only
+    ctx.strokeStyle = color;
+    for(var i = 1; i < pts.length; i++){
+      ctx.lineWidth = thicknesses[i];
+      ctx.beginPath();
+      ctx.moveTo(pts[i-1][0], pts[i-1][1]);
+      ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    }
+
+    // Filled arrowhead wedge that wraps the tapered tip
+    function drawWedge(tipIndex, isEnd){
+      var tipPt = pts[tipIndex];
+      var dirIdx = isEnd ? Math.max(0, tipIndex - 4) : Math.min(pts.length - 1, tipIndex + 4);
+      var tdx = isEnd ? tipPt[0] - pts[dirIdx][0] : pts[dirIdx][0] - tipPt[0];
+      var tdy = isEnd ? tipPt[1] - pts[dirIdx][1] : pts[dirIdx][1] - tipPt[1];
+      var tdlen = Math.hypot(tdx, tdy) || 1;
+      var ux = tdx / tdlen, uy = tdy / tdlen;
+      var aSize = thickAvg * 3.3;
+      // Extend slightly beyond the path tip for that "marker pushed past the body" look
+      var tipFx = tipPt[0] + ux * aSize * 0.25;
+      var tipFy = tipPt[1] + uy * aSize * 0.25;
+      // Base of wedge sits back along the body so the tapered line ending flows into the head
+      var baseX = tipPt[0] - ux * aSize * 0.45;
+      var baseY = tipPt[1] - uy * aSize * 0.45;
+      // Wing tips ~31° off the direction line
+      var wingAngle = 0.55;
+      var c1 = Math.cos(wingAngle), s1 = Math.sin(wingAngle);
+      var bbx = -ux * aSize, bby = -uy * aSize;
+      var w1x = tipFx + bbx * c1 - bby * s1;
+      var w1y = tipFy + bbx * s1 + bby * c1;
+      var w2x = tipFx + bbx * c1 + bby * s1;
+      var w2y = tipFy - bbx * s1 + bby * c1;
+      // Halo wedge (filled + stroked to give it a haloPad-pixel outline)
+      ctx.lineWidth = haloPad * 2;
+      ctx.strokeStyle = halo;
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(w1x, w1y);
+      ctx.lineTo(tipFx, tipFy);
+      ctx.lineTo(w2x, w2y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+      // Color wedge
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(w1x, w1y);
+      ctx.lineTo(tipFx, tipFy);
+      ctx.lineTo(w2x, w2y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if(layer.arrowheadEnd !== false) drawWedge(pts.length - 1, true);
+    if(layer.arrowheadStart) drawWedge(0, false);
+
+    ctx.restore();
+  });
 }
 
 // Property panel for arrow layers. Uses inline event handlers to mutate the layer + redraw —
@@ -4176,8 +4243,10 @@ function buildArrowProps(l){
     + '<input type="color" value="' + escAttr(l.color || '#f07830') + '" oninput="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.color=this.value;redraw();}}).call(this)">'
     + '<label style="margin-top:6px;">Outline / halo</label>'
     + '<input type="color" value="' + escAttr(l.halo || '#ffffff') + '" oninput="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.halo=this.value;redraw();}}).call(this)">'
-    + R('Thickness', 'parrThick_' + id, l.thickness || 14, 1, 60, 1)
+    + R('Thickness', 'parrThick_' + id, l.thickness || 14, 1, 80, 1)
+    + R('Thickness variation (hand-drawn)', 'parrThickVar_' + id, (l.thicknessVar != null ? l.thicknessVar : 35), 0, 100, 1)
     + R('Wobble', 'parrWobble_' + id, (l.wobble != null ? l.wobble : 1) * 100, 0, 200, 5)
+    + R('Arch (curve up/down)', 'parrArch_' + id, (l.archStrength != null ? l.archStrength : 0), -100, 100, 1)
     + '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadEnd ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadEnd=this.checked;redraw();}}).call(this)"> Arrowhead at end</label>'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadStart ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadStart=this.checked;redraw();}}).call(this)"> Arrowhead at start</label>'
@@ -5320,7 +5389,9 @@ function bindPropEvents(layer){
     // suffix because the inline color/checkbox handlers in buildArrowProps are also id-scoped.
     var aid = layer.id;
     rng('parrThick_' + aid, function(v){ layer.thickness = v; redraw(); });
+    rng('parrThickVar_' + aid, function(v){ layer.thicknessVar = v; redraw(); });
     rng('parrWobble_' + aid, function(v){ layer.wobble = v / 100; redraw(); });
+    rng('parrArch_' + aid, function(v){ layer.archStrength = v; redraw(); });
     num('narrx', function(v){ layer.x = v; redraw(); }, 'parrx');
     num('narry', function(v){ layer.y = v; redraw(); }, 'parry');
     num('narrw', function(v){ layer.w = v; redraw(); }, 'parrw');
