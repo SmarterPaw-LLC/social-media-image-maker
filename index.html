@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v155</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v156</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -263,6 +263,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div class="col2">
       <button class="btn-add" onclick="addVideoLayer()">+ Video</button>
       <button class="btn-add" onclick="addFramedImageLayer()" title="Image clipped inside a shape mask">+ Framed Image</button>
+    </div>
+    <div class="col2">
+      <button class="btn-add" onclick="addArrowLayer()" title="Hand-drawn marker-style arrow (style varies by brand)">+ Arrow</button>
+      <div></div>
     </div>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
     <!-- Shape picker (hidden by default) -->
@@ -4026,6 +4030,174 @@ function addTextLayer(){
   selectLayer(id);renderLayerList();redraw();
 }
 
+// ── ARROW LAYER (v156) ──
+// Hand-drawn marker-style arrow. Bbox holds a horizontal arrow going from (0, h/2) to (w, h/2)
+// in local space; user rotates the bbox to point in any direction and resizes for length. Wobble
+// is procedural-with-seed so the same arrow renders identically every frame (no shimmer) but
+// each new arrow gets its own seed for visual variety.
+//
+// Brand styling: Meowi/Doggi gets the orange wobbly look from the user's reference screenshot;
+// KKZ gets a placeholder distinct style (purple, less wobble) — easy to tune later by editing
+// the addArrowLayer brand branch.
+function addArrowLayer(){
+  snapshotState();
+  var id = nextId++;
+  var w = Math.max(220, Math.round(canvasW * 0.32));
+  var h = Math.max(110, Math.round(w * 0.4));
+  var isKKZ = currentBrand === 'kkz';
+  var style = isKKZ ? {
+    color: '#6b3aa3', halo: '#ffffff', thickness: 12, wobble: 0.35  // KKZ — cleaner, purple
+  } : {
+    color: '#f07830', halo: '#ffffff', thickness: 14, wobble: 1.0   // Meowi/Doggi — orange wobble
+  };
+  layers.push({
+    id: id, type: 'arrow', name: 'Arrow ' + id,
+    x: Math.round((canvasW - w) / 2),
+    y: Math.round((canvasH - h) / 2),
+    w: w, h: h,
+    rotation: 0, opacity: 100,
+    flipH: false, flipV: false,
+    color: style.color, halo: style.halo,
+    thickness: style.thickness, wobble: style.wobble,
+    arrowheadEnd: true, arrowheadStart: false,
+    _seed: Math.floor(Math.random() * 100000) + 1
+  });
+  selectLayer(id); renderLayerList(); renderProps(); redraw();
+}
+
+// Re-roll the wobble seed — exposed via a "🎲 New wobble" button in the property panel so the
+// user can iterate on the hand-drawn look without changing position/size.
+function reseedArrow(layerId){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l) return;
+  snapshotState();
+  l._seed = Math.floor(Math.random() * 100000) + 1;
+  redraw();
+}
+
+function _generateWobblyArrowPath(sx, sy, ex, ey, wobble, seed){
+  // Produces ~20 points along the line from (sx,sy) to (ex,ey), each perturbed perpendicular
+  // to the line by a sin-of-sin "noise" function seeded so the result is deterministic for a
+  // given seed. Fade at endpoints so the line starts and ends precisely on the bbox.
+  var n = 20;
+  var pts = new Array(n + 1);
+  var dx = ex - sx, dy = ey - sy;
+  var len = Math.hypot(dx, dy) || 1;
+  var perpX = -dy / len;
+  var perpY = dx / len;
+  var s = seed * 0.0137;
+  for(var i = 0; i <= n; i++){
+    var t = i / n;
+    var fade = Math.sin(t * Math.PI);  // 0 at endpoints, 1 in middle
+    var noise = Math.sin(t * 7.3 + s) * 0.6 + Math.sin(t * 17.7 + s * 2.1) * 0.3 + Math.sin(t * 31.1 + s * 0.7) * 0.15;
+    var mag = noise * wobble * len * 0.05 * fade;
+    pts[i] = [sx + dx * t + perpX * mag, sy + dy * t + perpY * mag];
+  }
+  return pts;
+}
+
+function _drawHandDrawnArrowhead(ctx, pts, atEnd, color, halo, thickness, haloThickness){
+  if(pts.length < 4) return;
+  var tip, dirFrom;
+  if(atEnd){
+    tip = pts[pts.length - 1];
+    dirFrom = pts[Math.max(0, pts.length - 5)];
+  } else {
+    tip = pts[0];
+    dirFrom = pts[Math.min(pts.length - 1, 4)];
+  }
+  var dx = tip[0] - dirFrom[0];
+  var dy = tip[1] - dirFrom[1];
+  var len = Math.hypot(dx, dy) || 1;
+  dx /= len; dy /= len;
+  var size = thickness * 3.2;
+  // Two wings, ~40° off the line direction, pointing back from the tip
+  var wing = 0.65;  // radians
+  var c = Math.cos(wing), s = Math.sin(wing);
+  var bx = -dx * size, by = -dy * size;
+  var w1x = tip[0] + (bx * c - by * s);
+  var w1y = tip[1] + (bx * s + by * c);
+  var w2x = tip[0] + (bx * c - by * (-s));
+  var w2y = tip[1] + (bx * (-s) + by * c);
+  // Halo first
+  ctx.strokeStyle = halo;
+  ctx.lineWidth = haloThickness;
+  ctx.beginPath(); ctx.moveTo(w1x, w1y); ctx.lineTo(tip[0], tip[1]); ctx.lineTo(w2x, w2y); ctx.stroke();
+  // Color
+  ctx.strokeStyle = color;
+  ctx.lineWidth = thickness;
+  ctx.beginPath(); ctx.moveTo(w1x, w1y); ctx.lineTo(tip[0], tip[1]); ctx.lineTo(w2x, w2y); ctx.stroke();
+}
+
+function drawArrowLayer(ctx, layer){
+  // Position/rotation/opacity already applied by parent loop — render in local (0..w, 0..h) space.
+  var color = layer.color || '#f07830';
+  var halo = layer.halo || '#ffffff';
+  var thickness = Math.max(1, layer.thickness || 14);
+  var haloThickness = thickness + Math.max(4, thickness * 0.55);
+  var wobble = layer.wobble != null ? layer.wobble : 1;
+  // Default geometry: horizontal arrow at vertical center, spanning full bbox width
+  var sx = 0, sy = layer.h * 0.5;
+  var ex = layer.w, ey = layer.h * 0.5;
+  // flipH reverses direction; flipV mirrors the wobble curve to the other side
+  if(layer.flipH){ var tx = sx; sx = ex; ex = tx; var ty = sy; sy = ey; ey = ty; }
+  var pts = _generateWobblyArrowPath(sx, sy, ex, ey, wobble, layer._seed || 1);
+  if(layer.flipV){
+    var cy = layer.h * 0.5;
+    pts = pts.map(function(p){ return [p[0], 2 * cy - p[1]]; });
+  }
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // Halo stroke
+  ctx.strokeStyle = halo;
+  ctx.lineWidth = haloThickness;
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for(var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke();
+  // Color stroke
+  ctx.strokeStyle = color;
+  ctx.lineWidth = thickness;
+  ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+  for(var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke();
+  // Arrowheads
+  if(layer.arrowheadEnd)   _drawHandDrawnArrowhead(ctx, pts, true,  color, halo, thickness, haloThickness);
+  if(layer.arrowheadStart) _drawHandDrawnArrowhead(ctx, pts, false, color, halo, thickness, haloThickness);
+  ctx.restore();
+}
+
+// Property panel for arrow layers. Uses inline event handlers to mutate the layer + redraw —
+// arrow doesn't need to participate in the larger bindPropEvents flow that other layer types use.
+function buildArrowProps(l){
+  var id = l.id;
+  return '<div class="prop-section">'
+    + '<label>Color</label>'
+    + '<input type="color" value="' + escAttr(l.color || '#f07830') + '" oninput="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.color=this.value;redraw();}}).call(this)">'
+    + '<label style="margin-top:6px;">Outline / halo</label>'
+    + '<input type="color" value="' + escAttr(l.halo || '#ffffff') + '" oninput="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.halo=this.value;redraw();}}).call(this)">'
+    + R('Thickness', 'parrThick_' + id, l.thickness || 14, 1, 60, 1)
+    + R('Wobble', 'parrWobble_' + id, (l.wobble != null ? l.wobble : 1) * 100, 0, 200, 5)
+    + '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
+      + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadEnd ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadEnd=this.checked;redraw();}}).call(this)"> Arrowhead at end</label>'
+      + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadStart ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadStart=this.checked;redraw();}}).call(this)"> Arrowhead at start</label>'
+    + '</div>'
+    + '<button class="btn-sm" style="width:100%;margin-bottom:6px;" onclick="reseedArrow(' + id + ')" title="Re-roll the procedural wobble">🎲 New wobble pattern</button>'
+    + NUMPAIR('X (px)', 'narrx', l.x, 'Y (px)', 'narry', l.y)
+    + NUMPAIR('W (px)', 'narrw', l.w, 'H (px)', 'narrh', l.h)
+    + R('X', 'parrx', Math.round(l.x), -canvasW, canvasW * 2, 2)
+    + R('Y', 'parry', Math.round(l.y), -canvasH, canvasH * 2, 2)
+    + R('Width', 'parrw', Math.round(l.w), 20, canvasW * 3, 2)
+    + R('Height', 'parrh', Math.round(l.h), 20, canvasH * 3, 2)
+    + R('Rotation', 'parrrotation', l.rotation, -180, 180, 1)
+    + R('Opacity', 'parropacity', l.opacity, 0, 100, 1)
+    + '<div style="display:flex;gap:4px;margin-top:4px;">'
+      + '<button class="btn-sm" style="flex:1;" onclick="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.flipH=!L.flipH;redraw();renderProps();}}).call(this)" title="Reverse direction (horizontal flip)">↔ Flip H</button>'
+      + '<button class="btn-sm" style="flex:1;" onclick="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.flipV=!L.flipV;redraw();renderProps();}}).call(this)" title="Mirror wobble vertically">↕ Flip V</button>'
+    + '</div>'
+    + moveBtns(l.id) + '</div>';
+}
+
 // ── SELECT / DELETE / MOVE ──
 // selectLayer(id): replaces selection (primary=id, selectedIds=[id]).
 // Pass {shift:true} to toggle id in/out of selectedIds without replacing (multi-select).
@@ -4201,6 +4373,7 @@ function renderProps(){
   else if(layer.type==='sprinkle') innerHtml=buildSprinkleProps(layer);
   else if(layer.type==='svg')     innerHtml=buildSvgProps(layer);
   else if(layer.type==='text')    innerHtml=buildTextProps(layer);
+  else if(layer.type==='arrow')   innerHtml=buildArrowProps(layer);
   // If locked, wrap the controls with pointer-events:none and dim them
   if(layer.locked){
     el.innerHTML = lockedBanner + '<div style="pointer-events:none;opacity:0.55;">'+innerHtml+'</div>';
@@ -5142,6 +5315,22 @@ function bindPropEvents(layer){
     rng('pshrotation',function(v){layer.rotation=v;redraw();});
     rng('pshopacity',function(v){layer.opacity=v;redraw();});
     bindShadowEvents('psh_', layer);
+  } else if(layer.type==='arrow'){
+    // v156: arrow layer property bindings. Thickness/wobble slider IDs include the layer id
+    // suffix because the inline color/checkbox handlers in buildArrowProps are also id-scoped.
+    var aid = layer.id;
+    rng('parrThick_' + aid, function(v){ layer.thickness = v; redraw(); });
+    rng('parrWobble_' + aid, function(v){ layer.wobble = v / 100; redraw(); });
+    num('narrx', function(v){ layer.x = v; redraw(); }, 'parrx');
+    num('narry', function(v){ layer.y = v; redraw(); }, 'parry');
+    num('narrw', function(v){ layer.w = v; redraw(); }, 'parrw');
+    num('narrh', function(v){ layer.h = v; redraw(); }, 'parrh');
+    rng('parrx', function(v){ layer.x = v; redraw(); });
+    rng('parry', function(v){ layer.y = v; redraw(); });
+    rng('parrw', function(v){ layer.w = v; redraw(); });
+    rng('parrh', function(v){ layer.h = v; redraw(); });
+    rng('parrrotation', function(v){ layer.rotation = v; redraw(); });
+    rng('parropacity', function(v){ layer.opacity = v; redraw(); });
   } else if(layer.type==='sprinkle'){
     // Position / size — number inputs only (no sliders). Users drag on-canvas for visual positioning.
     num('nsprx', function(v){ layer.x = v; redraw(); });
@@ -5766,7 +5955,7 @@ function bindCanvasEvents(){
       newRot=((newRot+540)%360)-180;
       layer.rotation=newRot;
       // sync slider if present
-      var slider=document.getElementById(layer.type==='shape'?'pshrotation':layer.type==='svg'?'svgrotation':layer.type==='sticker'?'prot':layer.type==='sprinkle'?'psprRot':'protation');
+      var slider=document.getElementById(layer.type==='shape'?'pshrotation':layer.type==='svg'?'svgrotation':layer.type==='sticker'?'prot':layer.type==='sprinkle'?'psprRot':layer.type==='arrow'?'parrrotation':'protation');
       if(slider){slider.value=Math.round(newRot); var v=document.getElementById(slider.id+'_v'); if(v) v.textContent=Math.round(newRot);}
       redrawSoon();
       return;
@@ -6232,6 +6421,7 @@ function redraw(){
     else if(layer.type==='sprinkle')drawSprinkleLayer(ctx,layer);
     else if(layer.type==='svg')drawSvgLayer(ctx,layer);
     else if(layer.type==='text')drawTextLayer(ctx,layer);
+    else if(layer.type==='arrow')drawArrowLayer(ctx,layer);
     ctx.restore();
   });
   // draw selection outline + resize handle (but NOT during crop mode — crop has its own overlay)
@@ -8205,6 +8395,7 @@ function doStaticExport(){
       else if(layer.type==='video')drawVideoLayer(bctx,layer);
       else if(layer.type==='sticker')drawStickerLayer(bctx,layer);
       else if(layer.type==='shape')drawShapeLayer(bctx,layer);
+      else if(layer.type==='arrow')drawArrowLayer(bctx,layer);
       else if(layer.type==='sprinkle')drawSprinkleLayer(bctx,layer);
       else if(layer.type==='svg')drawSvgLayer(bctx,layer);
       else if(layer.type==='text')drawTextLayer(bctx,layer);
@@ -8354,6 +8545,7 @@ function doGifExport(){
           else if(layer.type === 'sprinkle') drawSprinkleLayer(octx, layer);
           else if(layer.type === 'svg')     drawSvgLayer(octx, layer);
           else if(layer.type === 'text')    drawTextLayer(octx, layer);
+          else if(layer.type === 'arrow')   drawArrowLayer(octx, layer);
         } catch(e){ console.error('[gif] layer error:', e); }
         octx.restore();
       });
