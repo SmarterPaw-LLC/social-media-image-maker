@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v158</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v159</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4074,7 +4074,6 @@ function createArrowFromDrag(sx, sy, ex, ey){
   var dx = ex - sx, dy = ey - sy;
   var length = Math.hypot(dx, dy);
   if(length < 12){
-    // Too short — likely a stray click, not an intentional drag
     showToast('Drag a longer line to place an arrow');
     return;
   }
@@ -4085,10 +4084,14 @@ function createArrowFromDrag(sx, sy, ex, ey){
   var w = length;
   var h = Math.max(80, Math.round(length * 0.28));
   var isKKZ = currentBrand === 'kkz';
+  // v159: arrowhead is now two marker strokes (not a filled triangle); aheadLen/aheadAngle/
+  // aheadCurve replace the old wedge geometry. Defaults tuned to the user's reference images.
   var style = isKKZ ? {
-    color: '#6b3aa3', halo: '#ffffff', thickness: 16, wobble: 0.4, thicknessVar: 15, archStrength: 0
+    color: '#6b3aa3', halo: '#ffffff', thickness: 14, wobble: 0.5, thicknessVar: 25, archStrength: 0,
+    aheadLen: 72, aheadAngle: 45, aheadCurve: -15
   } : {
-    color: '#f07830', halo: '#ffffff', thickness: 22, wobble: 1.0, thicknessVar: 35, archStrength: -15
+    color: '#f07830', halo: '#ffffff', thickness: 20, wobble: 0.7, thicknessVar: 40, archStrength: -10,
+    aheadLen: 95, aheadAngle: 48, aheadCurve: -25
   };
   var id = nextId++;
   layers.push({
@@ -4103,6 +4106,9 @@ function createArrowFromDrag(sx, sy, ex, ey){
     thicknessVar: style.thicknessVar,
     archStrength: style.archStrength,
     wobble: style.wobble,
+    aheadLen: style.aheadLen,
+    aheadAngle: style.aheadAngle,
+    aheadCurve: style.aheadCurve,
     arrowheadEnd: true, arrowheadStart: false,
     _seed: Math.floor(Math.random() * 100000) + 1
   });
@@ -4119,19 +4125,123 @@ function reseedArrow(layerId){
   redraw();
 }
 
+// v159 helpers: a single marker-stroke is sampled along a quadratic Bezier (arch via perp
+// offset at the midpoint) and given a smooth low-frequency wobble. Thickness is also
+// low-frequency — designed to mimic how a felt-tip pen pressure varies across one continuous
+// motion, NOT random per-segment noise (which is the v156-v158 mistake).
+
+function _genArrowStroke(x1, y1, x2, y2, arch, wobble, seed){
+  // Returns an array of [x, y] points along a marker-style stroke from (x1,y1) to (x2,y2).
+  // arch: -100..100 (perpendicular bow at midpoint, as % of length * 0.3)
+  // wobble: 0..2 (gentle 2-3 cycle perpendicular oscillation, faded at endpoints)
+  var dx = x2 - x1, dy = y2 - y1;
+  var len = Math.hypot(dx, dy) || 1;
+  var perpX = -dy / len, perpY = dx / len;
+  var archMag = (arch / 100) * len * 0.3;
+  var cx = (x1 + x2) / 2 + perpX * archMag;
+  var cy = (y1 + y2) / 2 + perpY * archMag;
+  var n = 28;
+  var pts = new Array(n + 1);
+  var s = seed * 0.0137;
+  for(var i = 0; i <= n; i++){
+    var t = i / n;
+    var u = 1 - t;
+    var bx = u*u*x1 + 2*u*t*cx + t*t*x2;
+    var by = u*u*y1 + 2*u*t*cy + t*t*y2;
+    var ttx = 2*u*(cx - x1) + 2*t*(x2 - cx);
+    var tty = 2*u*(cy - y1) + 2*t*(y2 - cy);
+    var tlen = Math.hypot(ttx, tty) || 1;
+    var pwx = -tty / tlen, pwy = ttx / tlen;
+    // Slow wobble (2-3 cycles total), faded at the endpoints so the stroke starts/ends precisely
+    var fade = Math.sin(t * Math.PI);
+    var noise = Math.sin(t * 2.4 + s) * 0.7 + Math.sin(t * 4.3 + s * 1.7) * 0.3;
+    var wobbleMag = noise * wobble * len * 0.05 * fade;
+    pts[i] = [bx + pwx * wobbleMag, by + pwy * wobbleMag];
+  }
+  return pts;
+}
+
+function _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd){
+  // Marker-style thickness profile: low-frequency variation (1-2 gentle pulses across the
+  // length) + optional tapering at start or end. Variation is amplitude, NOT frequency, so
+  // higher variation = more pronounced pressure swing but still smooth.
+  var s = seed * 0.0137;
+  var lowFreq = Math.sin(t * Math.PI * 1.4 + s) * 0.5 + Math.sin(t * Math.PI * 2.7 + s * 1.7) * 0.25;
+  var taper = 1;
+  if(taperStart && t < 0.18) taper *= 0.45 + 0.55 * (t / 0.18);
+  if(taperEnd && t > 0.82) taper *= 0.45 + 0.55 * ((1 - t) / 0.18);
+  return Math.max(1, baseThick * (1 + variation * lowFreq * 0.35) * taper);
+}
+
+function _drawMarkerStroke(ctx, pts, color, halo, haloPad, baseThick, variation, seed, taperStart, taperEnd){
+  // Two passes: halo first, then color. Each segment gets its own thickness from the marker
+  // profile, with lineCap=round to smooth between segments.
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  var nLast = pts.length - 1;
+  // Halo
+  ctx.strokeStyle = halo;
+  for(var i = 1; i < pts.length; i++){
+    var t = i / nLast;
+    var thick = _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd);
+    ctx.lineWidth = thick + haloPad * 2;
+    ctx.beginPath();
+    ctx.moveTo(pts[i-1][0], pts[i-1][1]);
+    ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+  }
+  // Color
+  ctx.strokeStyle = color;
+  for(var i = 1; i < pts.length; i++){
+    var t = i / nLast;
+    var thick = _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd);
+    ctx.lineWidth = thick;
+    ctx.beginPath();
+    ctx.moveTo(pts[i-1][0], pts[i-1][1]);
+    ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+  }
+}
+
+function _drawMarkerStrokeHalo(ctx, pts, halo, haloPad, baseThick, variation, seed, taperStart, taperEnd){
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = halo;
+  var nLast = pts.length - 1;
+  for(var i = 1; i < pts.length; i++){
+    var t = i / nLast;
+    var thick = _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd);
+    ctx.lineWidth = thick + haloPad * 2;
+    ctx.beginPath();
+    ctx.moveTo(pts[i-1][0], pts[i-1][1]);
+    ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+  }
+}
+
+function _drawMarkerStrokeColor(ctx, pts, color, baseThick, variation, seed, taperStart, taperEnd){
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = color;
+  var nLast = pts.length - 1;
+  for(var i = 1; i < pts.length; i++){
+    var t = i / nLast;
+    var thick = _markerThicknessAt(t, baseThick, variation, seed, taperStart, taperEnd);
+    ctx.lineWidth = thick;
+    ctx.beginPath();
+    ctx.moveTo(pts[i-1][0], pts[i-1][1]);
+    ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.stroke();
+  }
+}
+
 function drawArrowLayer(ctx, layer){
-  // v157 rewrite. Renders in ABSOLUTE canvas coordinates inside withRotation() — matches the
-  // convention used by drawShapeLayer/drawTextLayer/etc. (v156's local-coords version placed
-  // the arrow at canvas (0,0) regardless of where the layer's bbox actually was — the bug
-  // the user reported as "object box for the arrow isn't around the arrow").
+  // v159 rewrite. The arrowhead is now TWO separate marker strokes (the reference style),
+  // not a filled triangle. Each wing is the same kind of stroke as the body — tapered toward
+  // its outer tip so it ends in a marker-pointed mark, with its own derived seed for variation.
   //
-  // Geometry: body goes from (layer.x, mid-y) to (layer.x + w, mid-y) in untransformed terms;
-  // withRotation handles the layer's rotation around its bbox center. archStrength bows the
-  // line perpendicular at the midpoint via a quadratic Bezier control point. wobble adds
-  // sin-noise perpendicular to the tangent. thicknessVar varies stroke thickness segment to
-  // segment so the line looks marker-drawn. The arrowhead is a filled wedge whose base sits
-  // BACK from the path tip so the body+head read as one continuous mark (v156 stroked-V had
-  // a visible gap).
+  // Render order: all halos first, then all colors. This avoids any halo from a later element
+  // painting over an earlier element's color (the v157 bug that caused the body↔head gap).
   withRotation(ctx, layer, function(){
     var x1 = layer.x;
     var y1 = layer.y + layer.h * 0.5;
@@ -4139,161 +4249,74 @@ function drawArrowLayer(ctx, layer){
     var y2 = layer.y + layer.h * 0.5;
     if(layer.flipH){ var tx = x1; x1 = x2; x2 = tx; }
 
-    var dx = x2 - x1, dy = y2 - y1;
-    var len = Math.hypot(dx, dy) || 1;
-    var perpSign = layer.flipV ? -1 : 1;
-    var perpX = -dy / len * perpSign;
-    var perpY = dx / len * perpSign;
-
-    // Arch — quadratic Bezier control point offset perpendicular at the midpoint
-    var archPct = layer.archStrength != null ? layer.archStrength : 0;
-    var archMag = (archPct / 100) * len * 0.3;
-    var cx = (x1 + x2) / 2 + perpX * archMag;
-    var cy = (y1 + y2) / 2 + perpY * archMag;
-
     var seed = layer._seed || 1;
-    var s = seed * 0.0137;
-    var wobble = layer.wobble != null ? layer.wobble : 1;
-    var n = 36;
-
-    // Sample centerline points along the Bezier curve, then perturb by wobble noise.
-    var pts = new Array(n + 1);
-    for(var i = 0; i <= n; i++){
-      var t = i / n;
-      var u = 1 - t;
-      var bx = u*u*x1 + 2*u*t*cx + t*t*x2;
-      var by = u*u*y1 + 2*u*t*cy + t*t*y2;
-      var ttx = 2*u*(cx - x1) + 2*t*(x2 - cx);
-      var tty = 2*u*(cy - y1) + 2*t*(y2 - cy);
-      var tlen = Math.hypot(ttx, tty) || 1;
-      var pwx = -tty / tlen, pwy = ttx / tlen;
-      var fade = Math.sin(t * Math.PI);
-      var noise = Math.sin(t * 7.3 + s) * 0.6 + Math.sin(t * 17.7 + s * 2.1) * 0.3 + Math.sin(t * 31.1 + s * 0.7) * 0.15;
-      var wobbleMag = noise * wobble * len * 0.04 * fade;
-      pts[i] = [bx + pwx * wobbleMag, by + pwy * wobbleMag];
-    }
-
-    // Thickness profile: avg with noise variation. v158: NO taper at the tip — the body
-    // extends at full thickness right into the arrowhead so they read as one continuous mark.
-    var thickAvg = Math.max(2, layer.thickness || 14);
-    var thickVar = (layer.thicknessVar != null ? layer.thicknessVar : 35) / 100;
-    var s2 = seed * 0.0271;
-    var thicknesses = new Array(n + 1);
-    for(var i = 0; i <= n; i++){
-      var t = i / n;
-      var thickNoise = Math.sin(t * 9 + s2) * 0.5 + Math.sin(t * 19 + s2 * 1.7) * 0.3;
-      thicknesses[i] = Math.max(1, thickAvg * (1 + thickVar * thickNoise * 0.5));
-    }
-
+    var wobble = layer.wobble != null ? layer.wobble : 0.7;
+    var arch = layer.archStrength != null ? layer.archStrength : 0;
+    if(layer.flipV) arch = -arch;
     var color = layer.color || '#f07830';
     var halo = layer.halo || '#ffffff';
+    var thickAvg = Math.max(2, layer.thickness || 20);
+    var thickVar = (layer.thicknessVar != null ? layer.thicknessVar : 35) / 100;
     var haloPad = Math.max(4, thickAvg * 0.4);
 
-    // v158: pre-compute the wobbly triangle wedges so we can interleave halo passes with the
-    // body, which prevents the v157 bug where wedge halo (drawn after body color) painted
-    // white over the body's end, leaving a visible gap between body and head.
-    function buildWobblyTriangle(tipIndex, isEnd){
-      var tipPt = pts[tipIndex];
-      var dirIdx = isEnd ? Math.max(0, tipIndex - 4) : Math.min(pts.length - 1, tipIndex + 4);
-      var tdx = isEnd ? tipPt[0] - pts[dirIdx][0] : pts[dirIdx][0] - tipPt[0];
-      var tdy = isEnd ? tipPt[1] - pts[dirIdx][1] : pts[dirIdx][1] - tipPt[1];
-      var tdlen = Math.hypot(tdx, tdy) || 1;
-      var ux = tdx / tdlen, uy = tdy / tdlen;
-      var perpx = -uy, perpy = ux;
-      var aSize = thickAvg * 3.6;
-      // Three triangle corners: tip (forward of body), b1 (back + perp+), b2 (back + perp-).
-      // Base sits BEHIND the body's end by aSize*0.8, so the body's last segments (drawn at
-      // full thickness now) overlap heavily with the wedge — body and head merge seamlessly.
-      var lenwise = aSize * 0.8;
-      var halfBase = aSize * 0.55;
-      var tipP = [tipPt[0] + ux * aSize * 0.35, tipPt[1] + uy * aSize * 0.35];
-      var b1 = [tipPt[0] - ux * lenwise + perpx * halfBase, tipPt[1] - uy * lenwise + perpy * halfBase];
-      var b2 = [tipPt[0] - ux * lenwise - perpx * halfBase, tipPt[1] - uy * lenwise - perpy * halfBase];
-      // Wobble each edge for hand-drawn feel. Sample n2 points per edge with perpendicular
-      // sin-noise displacement; the resulting polygon is the wedge's silhouette.
-      function wobbleEdge(p1, p2, wobbleSeed){
-        var n2 = 9;
-        var edgeDx = p2[0] - p1[0], edgeDy = p2[1] - p1[1];
-        var edgeLen = Math.hypot(edgeDx, edgeDy) || 1;
-        var edgePerpX = -edgeDy / edgeLen, edgePerpY = edgeDx / edgeLen;
-        var out = [];
-        for(var i = 0; i <= n2; i++){
-          var t = i / n2;
-          var fade = Math.sin(t * Math.PI);
-          var noise = Math.sin(t * 5 + wobbleSeed) * 0.6 + Math.sin(t * 13 + wobbleSeed * 1.7) * 0.3;
-          var mag = noise * wobble * edgeLen * 0.05 * fade;
-          out.push([p1[0] + edgeDx * t + edgePerpX * mag, p1[1] + edgeDy * t + edgePerpY * mag]);
-        }
-        return out;
-      }
-      var edge1 = wobbleEdge(b1, tipP, seed * 0.0413);  // base-left → tip
-      var edge2 = wobbleEdge(tipP, b2, seed * 0.0589);  // tip → base-right
-      // edge3 (base-right → base-left) is INSIDE the body, so it can be straight — won't be
-      // visible anyway since the body covers it. Just a straight line back to b1.
-      var polygon = edge1.concat(edge2.slice(1)).concat([b1]);
-      return polygon;
-    }
-    var wedgeEnd = (layer.arrowheadEnd !== false) ? buildWobblyTriangle(pts.length - 1, true) : null;
-    var wedgeStart = layer.arrowheadStart ? buildWobblyTriangle(0, false) : null;
+    // Body marker stroke
+    var bodyPts = _genArrowStroke(x1, y1, x2, y2, arch, wobble, seed);
 
-    function fillPolygon(poly, fillStyle){
-      ctx.fillStyle = fillStyle;
-      ctx.beginPath();
-      ctx.moveTo(poly[0][0], poly[0][1]);
-      for(var i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
-      ctx.closePath();
-      ctx.fill();
+    // Arrowhead: two marker strokes from the tip back-and-out. Wing endpoints are derived
+    // from the body's approach direction at the tip. Each wing has its own seed so the two
+    // sides don't render as mirror images of each other.
+    function buildWing(tipPt, prevPt, sideSign, wingSeed){
+      var ax = tipPt[0] - prevPt[0], ay = tipPt[1] - prevPt[1];
+      var alen = Math.hypot(ax, ay) || 1;
+      var ux = ax / alen, uy = ay / alen;
+      // Half-angle of the V (split between the two wings)
+      var halfAngle = (layer.aheadAngle != null ? layer.aheadAngle : 48) * Math.PI / 180;
+      var c = Math.cos(halfAngle), sn = Math.sin(halfAngle) * sideSign;
+      // Wing direction = reverse of approach, rotated by halfAngle to the chosen side
+      var wx = -ux * c - (-uy) * sn;
+      var wy = -ux * sn + (-uy) * c;
+      var wlen = layer.aheadLen != null ? layer.aheadLen : (thickAvg * 4.5);
+      var wEnd = [tipPt[0] + wx * wlen, tipPt[1] + wy * wlen];
+      // aheadCurve bows each wing perpendicular to its own axis. Sign of sideSign keeps both
+      // wings curving the same visual direction (both inward or both outward).
+      var curve = (layer.aheadCurve != null ? layer.aheadCurve : -25) * sideSign;
+      var wPts = _genArrowStroke(tipPt[0], tipPt[1], wEnd[0], wEnd[1], curve, wobble * 0.7, wingSeed);
+      return wPts;
     }
-    function strokePolygon(poly, strokeStyle, lineWidth){
-      ctx.strokeStyle = strokeStyle;
-      ctx.lineWidth = lineWidth;
-      ctx.beginPath();
-      ctx.moveTo(poly[0][0], poly[0][1]);
-      for(var i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
-      ctx.closePath();
-      ctx.stroke();
+
+    var wing1Pts = null, wing2Pts = null;
+    if(layer.arrowheadEnd !== false){
+      var tipE = bodyPts[bodyPts.length - 1];
+      var prevE = bodyPts[Math.max(0, bodyPts.length - 5)];
+      wing1Pts = buildWing(tipE, prevE, +1, seed * 1.317);
+      wing2Pts = buildWing(tipE, prevE, -1, seed * 1.713);
+    }
+    var sWing1Pts = null, sWing2Pts = null;
+    if(layer.arrowheadStart){
+      var tipS = bodyPts[0];
+      var prevS = bodyPts[Math.min(bodyPts.length - 1, 4)];
+      sWing1Pts = buildWing(tipS, prevS, +1, seed * 2.119);
+      sWing2Pts = buildWing(tipS, prevS, -1, seed * 2.531);
     }
 
     ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
 
-    // ── Render order (v158): all halos first, then all body+head colors on top. This is the
-    //    key fix for the v157 bug — wedge halo no longer paints over body color. ──
+    // ── Render order: ALL halos first, then ALL colors. This guarantees no halo paints over
+    //    a previously-drawn color, which was the bug in v157/v158 (gap between body and head). ──
 
-    // 1. Wedge halos (white outline + fill)
-    if(wedgeEnd){
-      strokePolygon(wedgeEnd, halo, haloPad * 2);
-      fillPolygon(wedgeEnd, halo);
-    }
-    if(wedgeStart){
-      strokePolygon(wedgeStart, halo, haloPad * 2);
-      fillPolygon(wedgeStart, halo);
-    }
+    // 1. Halos
+    _drawMarkerStrokeHalo(ctx, bodyPts, halo, haloPad, thickAvg, thickVar, seed, true, false);
+    if(wing1Pts) _drawMarkerStrokeHalo(ctx, wing1Pts, halo, haloPad, thickAvg, thickVar, seed * 1.317, false, true);
+    if(wing2Pts) _drawMarkerStrokeHalo(ctx, wing2Pts, halo, haloPad, thickAvg, thickVar, seed * 1.713, false, true);
+    if(sWing1Pts) _drawMarkerStrokeHalo(ctx, sWing1Pts, halo, haloPad, thickAvg, thickVar, seed * 2.119, false, true);
+    if(sWing2Pts) _drawMarkerStrokeHalo(ctx, sWing2Pts, halo, haloPad, thickAvg, thickVar, seed * 2.531, false, true);
 
-    // 2. Body halo (per-segment stroke with halo padding)
-    ctx.strokeStyle = halo;
-    for(var i = 1; i < pts.length; i++){
-      ctx.lineWidth = thicknesses[i] + haloPad * 2;
-      ctx.beginPath();
-      ctx.moveTo(pts[i-1][0], pts[i-1][1]);
-      ctx.lineTo(pts[i][0], pts[i][1]);
-      ctx.stroke();
-    }
-
-    // 3. Body color (same segments, body thickness only)
-    ctx.strokeStyle = color;
-    for(var i = 1; i < pts.length; i++){
-      ctx.lineWidth = thicknesses[i];
-      ctx.beginPath();
-      ctx.moveTo(pts[i-1][0], pts[i-1][1]);
-      ctx.lineTo(pts[i][0], pts[i][1]);
-      ctx.stroke();
-    }
-
-    // 4. Wedge color (fills triangle; covers body color in the overlap zone for a clean merge)
-    if(wedgeEnd) fillPolygon(wedgeEnd, color);
-    if(wedgeStart) fillPolygon(wedgeStart, color);
+    // 2. Colors
+    _drawMarkerStrokeColor(ctx, bodyPts, color, thickAvg, thickVar, seed, true, false);
+    if(wing1Pts) _drawMarkerStrokeColor(ctx, wing1Pts, color, thickAvg, thickVar, seed * 1.317, false, true);
+    if(wing2Pts) _drawMarkerStrokeColor(ctx, wing2Pts, color, thickAvg, thickVar, seed * 1.713, false, true);
+    if(sWing1Pts) _drawMarkerStrokeColor(ctx, sWing1Pts, color, thickAvg, thickVar, seed * 2.119, false, true);
+    if(sWing2Pts) _drawMarkerStrokeColor(ctx, sWing2Pts, color, thickAvg, thickVar, seed * 2.531, false, true);
 
     ctx.restore();
   });
@@ -4308,10 +4331,14 @@ function buildArrowProps(l){
     + '<input type="color" value="' + escAttr(l.color || '#f07830') + '" oninput="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.color=this.value;redraw();}}).call(this)">'
     + '<label style="margin-top:6px;">Outline / halo</label>'
     + '<input type="color" value="' + escAttr(l.halo || '#ffffff') + '" oninput="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.halo=this.value;redraw();}}).call(this)">'
-    + R('Thickness', 'parrThick_' + id, l.thickness || 14, 1, 80, 1)
-    + R('Thickness variation (hand-drawn)', 'parrThickVar_' + id, (l.thicknessVar != null ? l.thicknessVar : 35), 0, 100, 1)
-    + R('Wobble', 'parrWobble_' + id, (l.wobble != null ? l.wobble : 1) * 100, 0, 200, 5)
-    + R('Arch (curve up/down)', 'parrArch_' + id, (l.archStrength != null ? l.archStrength : 0), -100, 100, 1)
+    + R('Body thickness', 'parrThick_' + id, l.thickness || 20, 1, 80, 1)
+    + R('Body thickness variation', 'parrThickVar_' + id, (l.thicknessVar != null ? l.thicknessVar : 35), 0, 100, 1)
+    + R('Body wobble', 'parrWobble_' + id, (l.wobble != null ? l.wobble : 0.7) * 100, 0, 200, 5)
+    + R('Body arch (curve up/down)', 'parrArch_' + id, (l.archStrength != null ? l.archStrength : 0), -100, 100, 1)
+    + '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Arrowhead</div>'
+    + R('Wing length', 'parrAheadLen_' + id, (l.aheadLen != null ? l.aheadLen : 90), 10, 300, 1)
+    + R('Wing angle (V width)', 'parrAheadAngle_' + id, (l.aheadAngle != null ? l.aheadAngle : 48), 15, 80, 1)
+    + R('Wing curve', 'parrAheadCurve_' + id, (l.aheadCurve != null ? l.aheadCurve : -25), -100, 100, 1)
     + '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadEnd ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadEnd=this.checked;redraw();}}).call(this)"> Arrowhead at end</label>'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadStart ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadStart=this.checked;redraw();}}).call(this)"> Arrowhead at start</label>'
@@ -5457,6 +5484,9 @@ function bindPropEvents(layer){
     rng('parrThickVar_' + aid, function(v){ layer.thicknessVar = v; redraw(); });
     rng('parrWobble_' + aid, function(v){ layer.wobble = v / 100; redraw(); });
     rng('parrArch_' + aid, function(v){ layer.archStrength = v; redraw(); });
+    rng('parrAheadLen_' + aid, function(v){ layer.aheadLen = v; redraw(); });
+    rng('parrAheadAngle_' + aid, function(v){ layer.aheadAngle = v; redraw(); });
+    rng('parrAheadCurve_' + aid, function(v){ layer.aheadCurve = v; redraw(); });
     num('narrx', function(v){ layer.x = v; redraw(); }, 'parrx');
     num('narry', function(v){ layer.y = v; redraw(); }, 'parry');
     num('narrw', function(v){ layer.w = v; redraw(); }, 'parrw');
