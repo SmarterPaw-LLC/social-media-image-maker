@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v159</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v160</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4084,14 +4084,14 @@ function createArrowFromDrag(sx, sy, ex, ey){
   var w = length;
   var h = Math.max(80, Math.round(length * 0.28));
   var isKKZ = currentBrand === 'kkz';
-  // v159: arrowhead is now two marker strokes (not a filled triangle); aheadLen/aheadAngle/
-  // aheadCurve replace the old wedge geometry. Defaults tuned to the user's reference images.
+  // v160: per-wing length/curve, gradient fill support, shadow support — all initialized here
+  // so the layer schema is complete and the property panel doesn't need fallbacks for new arrows.
   var style = isKKZ ? {
     color: '#6b3aa3', halo: '#ffffff', thickness: 14, wobble: 0.5, thicknessVar: 25, archStrength: 0,
-    aheadLen: 72, aheadAngle: 45, aheadCurve: -15
+    aheadLen1: 72, aheadLen2: 72, aheadAngle: 45, aheadCurve1: -15, aheadCurve2: -15
   } : {
     color: '#f07830', halo: '#ffffff', thickness: 20, wobble: 0.7, thicknessVar: 40, archStrength: -10,
-    aheadLen: 95, aheadAngle: 48, aheadCurve: -25
+    aheadLen1: 95, aheadLen2: 95, aheadAngle: 48, aheadCurve1: -25, aheadCurve2: -25
   };
   var id = nextId++;
   layers.push({
@@ -4101,15 +4101,25 @@ function createArrowFromDrag(sx, sy, ex, ey){
     w: w, h: h,
     rotation: angleDeg, opacity: 100,
     flipH: false, flipV: false,
+    // Fill: 'solid' uses color; 'gradient' uses gradTop/gradBottom/gradStops/gradType/gradAngle
+    fillType: 'solid',
     color: style.color, halo: style.halo,
+    gradTop: style.color,
+    gradBottom: style.color,
+    gradType: 'linear',
+    gradAngle: 0,  // 0° = along arrow direction (L→R in local space)
     thickness: style.thickness,
     thicknessVar: style.thicknessVar,
     archStrength: style.archStrength,
     wobble: style.wobble,
-    aheadLen: style.aheadLen,
+    aheadLen1: style.aheadLen1,
+    aheadLen2: style.aheadLen2,
     aheadAngle: style.aheadAngle,
-    aheadCurve: style.aheadCurve,
+    aheadCurve1: style.aheadCurve1,
+    aheadCurve2: style.aheadCurve2,
     arrowheadEnd: true, arrowheadStart: false,
+    // Shadow defaults (off until user adjusts)
+    shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0, shadowOpacity: 50, shadowColor: '#000000',
     _seed: Math.floor(Math.random() * 100000) + 1
   });
   selectLayer(id); renderLayerList(); renderProps(); redraw();
@@ -4253,70 +4263,114 @@ function drawArrowLayer(ctx, layer){
     var wobble = layer.wobble != null ? layer.wobble : 0.7;
     var arch = layer.archStrength != null ? layer.archStrength : 0;
     if(layer.flipV) arch = -arch;
-    var color = layer.color || '#f07830';
     var halo = layer.halo || '#ffffff';
     var thickAvg = Math.max(2, layer.thickness || 20);
     var thickVar = (layer.thicknessVar != null ? layer.thicknessVar : 35) / 100;
     var haloPad = Math.max(4, thickAvg * 0.4);
 
+    // v160: stroke style — solid color or gradient. Gradient line is computed across the arrow's
+    // bbox so it runs along the body direction; wings sit near the gradient's "end" color.
+    var strokeColor;
+    if(layer.fillType === 'gradient'){
+      var gradAng = ((layer.gradAngle == null ? 0 : layer.gradAngle)) * Math.PI / 180;
+      var midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
+      var halfLen = Math.hypot(x2 - x1, y2 - y1) / 2;
+      var gx1 = midX - Math.cos(gradAng) * halfLen;
+      var gy1 = midY - Math.sin(gradAng) * halfLen;
+      var gx2 = midX + Math.cos(gradAng) * halfLen;
+      var gy2 = midY + Math.sin(gradAng) * halfLen;
+      var grad;
+      var gradType = layer.gradType || 'linear';
+      if(gradType === 'radial'){
+        grad = ctx.createRadialGradient(midX, midY, 0, midX, midY, halfLen);
+      } else if(gradType === 'conic' && ctx.createConicGradient){
+        grad = ctx.createConicGradient(gradAng, midX, midY);
+      } else {
+        grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
+      }
+      addLayerGradientStops(grad, layer);
+      strokeColor = grad;
+    } else {
+      strokeColor = layer.color || '#f07830';
+    }
+
     // Body marker stroke
     var bodyPts = _genArrowStroke(x1, y1, x2, y2, arch, wobble, seed);
 
-    // Arrowhead: two marker strokes from the tip back-and-out. Wing endpoints are derived
-    // from the body's approach direction at the tip. Each wing has its own seed so the two
-    // sides don't render as mirror images of each other.
-    function buildWing(tipPt, prevPt, sideSign, wingSeed){
+    // v160: per-wing length and curve. Falls back to the legacy aheadLen/aheadCurve fields so
+    // existing arrows saved pre-v160 keep working without explicit migration.
+    function buildWing(tipPt, prevPt, sideSign, wingLen, wingCurve, wingSeed){
       var ax = tipPt[0] - prevPt[0], ay = tipPt[1] - prevPt[1];
       var alen = Math.hypot(ax, ay) || 1;
       var ux = ax / alen, uy = ay / alen;
-      // Half-angle of the V (split between the two wings)
       var halfAngle = (layer.aheadAngle != null ? layer.aheadAngle : 48) * Math.PI / 180;
       var c = Math.cos(halfAngle), sn = Math.sin(halfAngle) * sideSign;
-      // Wing direction = reverse of approach, rotated by halfAngle to the chosen side
       var wx = -ux * c - (-uy) * sn;
       var wy = -ux * sn + (-uy) * c;
-      var wlen = layer.aheadLen != null ? layer.aheadLen : (thickAvg * 4.5);
-      var wEnd = [tipPt[0] + wx * wlen, tipPt[1] + wy * wlen];
-      // aheadCurve bows each wing perpendicular to its own axis. Sign of sideSign keeps both
-      // wings curving the same visual direction (both inward or both outward).
-      var curve = (layer.aheadCurve != null ? layer.aheadCurve : -25) * sideSign;
-      var wPts = _genArrowStroke(tipPt[0], tipPt[1], wEnd[0], wEnd[1], curve, wobble * 0.7, wingSeed);
-      return wPts;
+      var wEnd = [tipPt[0] + wx * wingLen, tipPt[1] + wy * wingLen];
+      // sideSign keeps the visual curve direction consistent (both inward or both outward)
+      var curveSigned = wingCurve * sideSign;
+      return _genArrowStroke(tipPt[0], tipPt[1], wEnd[0], wEnd[1], curveSigned, wobble * 0.7, wingSeed);
     }
+    var aLen1 = layer.aheadLen1 != null ? layer.aheadLen1 : (layer.aheadLen != null ? layer.aheadLen : thickAvg * 4.5);
+    var aLen2 = layer.aheadLen2 != null ? layer.aheadLen2 : (layer.aheadLen != null ? layer.aheadLen : thickAvg * 4.5);
+    var aCurve1 = layer.aheadCurve1 != null ? layer.aheadCurve1 : (layer.aheadCurve != null ? layer.aheadCurve : -25);
+    var aCurve2 = layer.aheadCurve2 != null ? layer.aheadCurve2 : (layer.aheadCurve != null ? layer.aheadCurve : -25);
 
     var wing1Pts = null, wing2Pts = null;
     if(layer.arrowheadEnd !== false){
       var tipE = bodyPts[bodyPts.length - 1];
       var prevE = bodyPts[Math.max(0, bodyPts.length - 5)];
-      wing1Pts = buildWing(tipE, prevE, +1, seed * 1.317);
-      wing2Pts = buildWing(tipE, prevE, -1, seed * 1.713);
+      wing1Pts = buildWing(tipE, prevE, +1, aLen1, aCurve1, seed * 1.317);
+      wing2Pts = buildWing(tipE, prevE, -1, aLen2, aCurve2, seed * 1.713);
     }
     var sWing1Pts = null, sWing2Pts = null;
     if(layer.arrowheadStart){
       var tipS = bodyPts[0];
       var prevS = bodyPts[Math.min(bodyPts.length - 1, 4)];
-      sWing1Pts = buildWing(tipS, prevS, +1, seed * 2.119);
-      sWing2Pts = buildWing(tipS, prevS, -1, seed * 2.531);
+      sWing1Pts = buildWing(tipS, prevS, +1, aLen1, aCurve1, seed * 2.119);
+      sWing2Pts = buildWing(tipS, prevS, -1, aLen2, aCurve2, seed * 2.531);
     }
 
     ctx.save();
 
-    // ── Render order: ALL halos first, then ALL colors. This guarantees no halo paints over
-    //    a previously-drawn color, which was the bug in v157/v158 (gap between body and head). ──
+    // ── Render order: halos first (no shadow), then colors with shadow applied. ──
 
-    // 1. Halos
+    // 1. Halos — no shadow so the halo is crisp around the colored core
     _drawMarkerStrokeHalo(ctx, bodyPts, halo, haloPad, thickAvg, thickVar, seed, true, false);
     if(wing1Pts) _drawMarkerStrokeHalo(ctx, wing1Pts, halo, haloPad, thickAvg, thickVar, seed * 1.317, false, true);
     if(wing2Pts) _drawMarkerStrokeHalo(ctx, wing2Pts, halo, haloPad, thickAvg, thickVar, seed * 1.713, false, true);
     if(sWing1Pts) _drawMarkerStrokeHalo(ctx, sWing1Pts, halo, haloPad, thickAvg, thickVar, seed * 2.119, false, true);
     if(sWing2Pts) _drawMarkerStrokeHalo(ctx, sWing2Pts, halo, haloPad, thickAvg, thickVar, seed * 2.531, false, true);
 
-    // 2. Colors
-    _drawMarkerStrokeColor(ctx, bodyPts, color, thickAvg, thickVar, seed, true, false);
-    if(wing1Pts) _drawMarkerStrokeColor(ctx, wing1Pts, color, thickAvg, thickVar, seed * 1.317, false, true);
-    if(wing2Pts) _drawMarkerStrokeColor(ctx, wing2Pts, color, thickAvg, thickVar, seed * 1.713, false, true);
-    if(sWing1Pts) _drawMarkerStrokeColor(ctx, sWing1Pts, color, thickAvg, thickVar, seed * 2.119, false, true);
-    if(sWing2Pts) _drawMarkerStrokeColor(ctx, sWing2Pts, color, thickAvg, thickVar, seed * 2.531, false, true);
+    // 2. Colors — shadow applied here so it falls under the body+head as one cohesive shape.
+    //    Set ctx.shadow* before any color strokes; canvas applies it to every stroke until reset.
+    var hasShadow = (layer.shadowBlur || 0) > 0 || (layer.shadowOffsetX || 0) !== 0 || (layer.shadowOffsetY || 0) !== 0;
+    if(hasShadow){
+      var sCol = layer.shadowColor || '#000000';
+      var sOp = layer.shadowOpacity == null ? 50 : layer.shadowOpacity;
+      // Convert hex + opacity → rgba so shadowOpacity is honored
+      var hex = sCol.replace('#', '');
+      if(hex.length === 3) hex = hex.split('').map(function(c){return c+c;}).join('');
+      var r = parseInt(hex.substring(0, 2), 16);
+      var g = parseInt(hex.substring(2, 4), 16);
+      var b = parseInt(hex.substring(4, 6), 16);
+      ctx.shadowColor = 'rgba(' + r + ',' + g + ',' + b + ',' + (sOp / 100) + ')';
+      ctx.shadowBlur = layer.shadowBlur || 0;
+      ctx.shadowOffsetX = layer.shadowOffsetX || 0;
+      ctx.shadowOffsetY = layer.shadowOffsetY || 0;
+    }
+    _drawMarkerStrokeColor(ctx, bodyPts, strokeColor, thickAvg, thickVar, seed, true, false);
+    if(wing1Pts) _drawMarkerStrokeColor(ctx, wing1Pts, strokeColor, thickAvg, thickVar, seed * 1.317, false, true);
+    if(wing2Pts) _drawMarkerStrokeColor(ctx, wing2Pts, strokeColor, thickAvg, thickVar, seed * 1.713, false, true);
+    if(sWing1Pts) _drawMarkerStrokeColor(ctx, sWing1Pts, strokeColor, thickAvg, thickVar, seed * 2.119, false, true);
+    if(sWing2Pts) _drawMarkerStrokeColor(ctx, sWing2Pts, strokeColor, thickAvg, thickVar, seed * 2.531, false, true);
+    if(hasShadow){
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+    }
 
     ctx.restore();
   });
@@ -4326,9 +4380,31 @@ function drawArrowLayer(ctx, layer){
 // arrow doesn't need to participate in the larger bindPropEvents flow that other layer types use.
 function buildArrowProps(l){
   var id = l.id;
+  var isSolid = (l.fillType || 'solid') === 'solid';
+  // Migrate legacy single-value head fields into per-wing for editing
+  var aLen1 = l.aheadLen1 != null ? l.aheadLen1 : (l.aheadLen != null ? l.aheadLen : 90);
+  var aLen2 = l.aheadLen2 != null ? l.aheadLen2 : (l.aheadLen != null ? l.aheadLen : 90);
+  var aCurve1 = l.aheadCurve1 != null ? l.aheadCurve1 : (l.aheadCurve != null ? l.aheadCurve : -25);
+  var aCurve2 = l.aheadCurve2 != null ? l.aheadCurve2 : (l.aheadCurve != null ? l.aheadCurve : -25);
   return '<div class="prop-section">'
-    + '<label>Color</label>'
-    + '<input type="color" value="' + escAttr(l.color || '#f07830') + '" oninput="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.color=this.value;redraw();}}).call(this)">'
+    + SEL('Fill Type', 'parrFillType_' + id, [['solid', 'Solid'], ['gradient', 'Gradient']], l.fillType || 'solid')
+    + (isSolid
+        ? '<div style="margin-bottom:5px;">' + COL('Color', 'parrColor_' + id, l.color || '#f07830') + '</div>'
+          + brandSwatchesHtml('parrColor_' + id)
+        : '<div class="col2" style="margin-bottom:5px;">'
+          + COL('Top', 'parrGradTop_' + id, l.gradTop || '#f07830')
+          + COL('Bottom', 'parrGradBot_' + id, l.gradBottom || '#3c8e14')
+        + '</div>'
+        + brandSwatchesHtml('parrColor_' + id)
+        + '<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click = Top · Alt+Click = Bottom</div>'
+      )
+    + '<div style="margin-top:8px;margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
+      + '<div class="preset-grid" style="margin-top:3px;">'
+      + gradientPresets.map(function(p){
+          return '<div class="preset-swatch" style="background:' + presetSwatchCss(p) + '" title="' + p.label + '" onclick="applyPresetToLayer(\'' + id + '\',\'' + p.id + '\')"></div>';
+        }).join('') + '</div></div>'
+    + (!isSolid ? SEL('Gradient Type', 'parrGradType_' + id, [['linear', 'Linear'], ['radial', 'Radial'], ['conic', 'Conic']], l.gradType || 'linear') : '')
+    + (!isSolid ? R('Gradient Angle', 'parrGradAngle_' + id, (l.gradAngle == null ? 0 : l.gradAngle), 0, 360, 5) : '')
     + '<label style="margin-top:6px;">Outline / halo</label>'
     + '<input type="color" value="' + escAttr(l.halo || '#ffffff') + '" oninput="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.halo=this.value;redraw();}}).call(this)">'
     + R('Body thickness', 'parrThick_' + id, l.thickness || 20, 1, 80, 1)
@@ -4336,9 +4412,13 @@ function buildArrowProps(l){
     + R('Body wobble', 'parrWobble_' + id, (l.wobble != null ? l.wobble : 0.7) * 100, 0, 200, 5)
     + R('Body arch (curve up/down)', 'parrArch_' + id, (l.archStrength != null ? l.archStrength : 0), -100, 100, 1)
     + '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Arrowhead</div>'
-    + R('Wing length', 'parrAheadLen_' + id, (l.aheadLen != null ? l.aheadLen : 90), 10, 300, 1)
     + R('Wing angle (V width)', 'parrAheadAngle_' + id, (l.aheadAngle != null ? l.aheadAngle : 48), 15, 80, 1)
-    + R('Wing curve', 'parrAheadCurve_' + id, (l.aheadCurve != null ? l.aheadCurve : -25), -100, 100, 1)
+    + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Wing 1 (top side)</div>'
+    + R('Wing 1 length', 'parrAheadLen1_' + id, aLen1, 10, 300, 1)
+    + R('Wing 1 curve', 'parrAheadCurve1_' + id, aCurve1, -100, 100, 1)
+    + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Wing 2 (bottom side)</div>'
+    + R('Wing 2 length', 'parrAheadLen2_' + id, aLen2, 10, 300, 1)
+    + R('Wing 2 curve', 'parrAheadCurve2_' + id, aCurve2, -100, 100, 1)
     + '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadEnd ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadEnd=this.checked;redraw();}}).call(this)"> Arrowhead at end</label>'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadStart ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadStart=this.checked;redraw();}}).call(this)"> Arrowhead at start</label>'
@@ -4356,6 +4436,7 @@ function buildArrowProps(l){
       + '<button class="btn-sm" style="flex:1;" onclick="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.flipH=!L.flipH;redraw();renderProps();}}).call(this)" title="Reverse direction (horizontal flip)">↔ Flip H</button>'
       + '<button class="btn-sm" style="flex:1;" onclick="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.flipV=!L.flipV;redraw();renderProps();}}).call(this)" title="Mirror wobble vertically">↕ Flip V</button>'
     + '</div>'
+    + shadowUI('parr_', l)
     + moveBtns(l.id) + '</div>';
 }
 
@@ -5484,9 +5565,41 @@ function bindPropEvents(layer){
     rng('parrThickVar_' + aid, function(v){ layer.thicknessVar = v; redraw(); });
     rng('parrWobble_' + aid, function(v){ layer.wobble = v / 100; redraw(); });
     rng('parrArch_' + aid, function(v){ layer.archStrength = v; redraw(); });
-    rng('parrAheadLen_' + aid, function(v){ layer.aheadLen = v; redraw(); });
     rng('parrAheadAngle_' + aid, function(v){ layer.aheadAngle = v; redraw(); });
-    rng('parrAheadCurve_' + aid, function(v){ layer.aheadCurve = v; redraw(); });
+    // v160: per-wing length + curve
+    rng('parrAheadLen1_' + aid, function(v){ layer.aheadLen1 = v; redraw(); });
+    rng('parrAheadLen2_' + aid, function(v){ layer.aheadLen2 = v; redraw(); });
+    rng('parrAheadCurve1_' + aid, function(v){ layer.aheadCurve1 = v; redraw(); });
+    rng('parrAheadCurve2_' + aid, function(v){ layer.aheadCurve2 = v; redraw(); });
+    // v160: fill type + gradient controls (mirrors shape layer pattern)
+    on('parrFillType_' + aid, 'change', function(e){ layer.fillType = e.target.value; renderProps(); });
+    on('parrColor_' + aid, 'input', function(e){ layer.color = e.target.value; redraw(); });
+    on('parrGradTop_' + aid, 'input', function(e){
+      layer.gradTop = e.target.value;
+      // Touching Top/Bottom drops any multi-stop preset back to 2-stop mode
+      delete layer.gradStops;
+      redraw();
+    });
+    on('parrGradBot_' + aid, 'input', function(e){
+      layer.gradBottom = e.target.value;
+      delete layer.gradStops;
+      redraw();
+    });
+    on('parrGradType_' + aid, 'change', function(e){ layer.gradType = e.target.value; redraw(); });
+    rng('parrGradAngle_' + aid, function(v){ layer.gradAngle = v; redraw(); });
+    // Brand swatch clicks: solid mode → set .color; gradient mode → set Top (or Bottom if Alt held)
+    bindBrandSwatches('parrColor_' + aid, function(hex){
+      if((layer.fillType || 'solid') === 'solid'){
+        layer.color = hex;
+      } else {
+        if(window.__altPressed) layer.gradBottom = hex;
+        else layer.gradTop = hex;
+        delete layer.gradStops;
+      }
+      renderProps(); redraw();
+    });
+    // v160: shadow controls (Blur / Offset X/Y / Opacity / Color) via the shared shadowUI binder
+    bindShadowEvents('parr_', layer);
     num('narrx', function(v){ layer.x = v; redraw(); }, 'parrx');
     num('narry', function(v){ layer.y = v; redraw(); }, 'parry');
     num('narrw', function(v){ layer.w = v; redraw(); }, 'parrw');
