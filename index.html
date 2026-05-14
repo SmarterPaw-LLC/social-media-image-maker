@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v164</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v165</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -6711,11 +6711,28 @@ function segmentsIntersect(p1,p2,p3,p4){
 }
 
 function getLayerAt(cx,cy){
+  // v165: rotation-aware hit-test. Previously this did a straight AABB check against
+  // (layer.x, layer.y, layer.w, layer.h), which silently failed for high-aspect-ratio
+  // rotated layers — most visibly the Arrow tool, whose bbox is ~2.5:1 and is usually
+  // rotated to match the user's drag angle. At 45°+ rotation the unrotated AABB barely
+  // overlaps the visible rotated bbox, so clicks on the drawn arrow missed entirely and
+  // the layer couldn't be picked up to drag. Rotating the click coords by -rotation
+  // around the layer center brings them into the layer's local axis-aligned space,
+  // where the bbox check is exact for any rotation.
   for(var i=layers.length-1;i>=0;i--){
     if(layers[i].hidden) continue;  // can't click hidden layers
     if(layers[i].locked) continue;  // locked layers are "pass-through" for clicks → marquee drags work over them
     var bds=getLayerBounds(layers[i]);
-    if(cx>=bds.x&&cx<=bds.x+bds.w&&cy>=bds.y&&cy<=bds.y+bds.h)return layers[i];
+    var rot=(layers[i].rotation||0)*Math.PI/180;
+    var hx=cx, hy=cy;
+    if(rot){
+      var ccx=bds.x+bds.w/2, ccy=bds.y+bds.h/2;
+      var ddx=cx-ccx, ddy=cy-ccy;
+      var cs=Math.cos(-rot), sn=Math.sin(-rot);
+      hx=ccx+ddx*cs-ddy*sn;
+      hy=ccy+ddx*sn+ddy*cs;
+    }
+    if(hx>=bds.x&&hx<=bds.x+bds.w&&hy>=bds.y&&hy<=bds.y+bds.h)return layers[i];
   }return null;
 }
 function getLayerBounds(layer){
