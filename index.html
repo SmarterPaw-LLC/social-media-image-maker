@@ -171,12 +171,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .lib-item .lib-move{position:absolute;top:4px;right:30px;width:22px;height:22px;border-radius:11px;background:rgba(0,0,0,0.7);color:#fff;border:none;cursor:pointer;font-size:11px;line-height:22px;padding:0;opacity:0;transition:opacity 0.15s, background 0.15s;}
 .lib-item:hover .lib-move{opacity:1;}
 .lib-item .lib-move:hover{background:var(--green-dark);}
-/* v171: multi-select state for bulk-edit. Whole tile turns green-bordered with a corner check.
-   In select-mode, the per-tile delete/move buttons are hidden because they only affect one item — the bulk
-   action bar at the top of the modal is what you use to act on the whole selection. */
-.lib-item.selected{border-color:var(--green);background:#e8f5d9;box-shadow:0 0 0 1.5px var(--green) inset;}
-.lib-item.selected::before{content:'✓';position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:11px;background:var(--green);color:#fff;font-size:13px;line-height:22px;text-align:center;z-index:5;font-weight:700;}
-.lib-item.select-mode .lib-del,.lib-item.select-mode .lib-move{display:none;}
+/* v172: always-visible selection checkbox on every tile. Sits in the top-left corner; clicking
+   it toggles selection without committing to a separate mode. When any tile is checked the bulk
+   action bar appears above the grid. Tile click (anywhere outside the checkbox/per-tile buttons)
+   continues to add the image to the canvas — selection is an orthogonal action. */
+.lib-item .lib-check{position:absolute;top:5px;left:5px;width:20px;height:20px;cursor:pointer;z-index:5;margin:0;}
+.lib-item.selected{border-color:var(--green);box-shadow:0 0 0 1.5px var(--green) inset;background:#f0f9e3;}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v171</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v172</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -619,9 +619,6 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadInput').click()" title="Upload one or more image files">+ Files</button>
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadFolderInput').click()" title="Upload every image in a folder (non-image files are skipped)">+ Folder</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadVisibleLibraryItems()" title="Download all images currently visible in the grid as one .zip">⬇ ZIP</button>
-      <!-- v171: multi-select mode toggle. When on, clicking tiles toggles selection (no add-to-canvas)
-           and the bulk-action bar appears below for category/tag edits on the whole selection. -->
-      <button type="button" id="libraryMultiSelectBtn" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="toggleLibraryMultiSelect()" title="Toggle multi-select mode to bulk-edit category + tags">☑ Select</button>
       <input type="file" id="libraryUploadInput" accept="image/*" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
            Safari, and Firefox — covers all browsers SmarterPaw uses. Non-image files in the folder
@@ -10420,31 +10417,34 @@ function renderImageLibrary(){
       var typeShort = _formatMimeShort(item.mime || '');
       if(typeShort) metaParts.push(typeShort);
       var metaLine = metaParts.length ? '<div class="lib-cat">' + escAttr(metaParts.join(' · ')) + '</div>' : '';
+      var isChecked = !!_librarySelectedItemIds[item.id];
       div.innerHTML =
-        '<button class="lib-del" data-action="delete" title="Delete from library">✕</button>'
+        '<input type="checkbox" class="lib-check" data-action="check"' + (isChecked ? ' checked' : '') + ' title="Select for bulk edit">'
+        + '<button class="lib-del" data-action="delete" title="Delete from library">✕</button>'
         + '<button class="lib-move" data-action="move" title="Edit category + tags">📁</button>'
         + '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '">'
         + '<div class="lib-name">' + escAttr(item.name) + '</div>'
         + metaLine
         + tagsLine;
-      // v171: in multi-select mode tile click toggles selection; tile shows selected state via class.
-      if(_libraryMultiSelectMode){
-        div.classList.add('select-mode');
-        if(_librarySelectedItemIds[item.id]) div.classList.add('selected');
-      }
+      if(isChecked) div.classList.add('selected');
       // v134: attach handlers directly to each button instead of using event delegation on the
       // parent div. v135/v136 diagnostic logs removed — root cause was z-index stacking, fixed.
       var delBtn = div.querySelector('[data-action="delete"]');
       if(delBtn) delBtn.onclick = function(e){ e.stopPropagation(); confirmDeleteLibraryItem(item); };
       var moveBtn = div.querySelector('[data-action="move"]');
       if(moveBtn) moveBtn.onclick = function(e){ e.stopPropagation(); openMoveLibraryItemModal(item); };
-      div.onclick = function(){
-        if(_libraryMultiSelectMode){
-          toggleLibraryItemSelection(item.id, div);
-        } else {
-          pickLibraryItem(item);
-        }
-      };
+      // v172: checkbox click toggles selection without bubbling up to the tile's add-to-canvas click.
+      var checkEl = div.querySelector('[data-action="check"]');
+      if(checkEl){
+        checkEl.onclick = function(e){
+          e.stopPropagation();
+          if(checkEl.checked) _librarySelectedItemIds[item.id] = true;
+          else delete _librarySelectedItemIds[item.id];
+          div.classList.toggle('selected', checkEl.checked);
+          updateLibraryBulkActionBar();
+        };
+      }
+      div.onclick = function(){ pickLibraryItem(item); };
       grid.appendChild(div);
     });
     // Keep the bulk-action bar's count + visibility in sync with whatever just rendered
@@ -10455,73 +10455,47 @@ function renderImageLibrary(){
   });
 }
 
-// ── LIBRARY MULTI-SELECT + BULK EDIT (v171) ──
-// Clicking a tile while multi-select is on toggles its selection (no canvas add). Selection state
-// lives in _librarySelectedItemIds keyed by item.id (true = selected). The Bulk Edit modal reads
-// this set, applies a single category update + tag add/remove per item, and refreshes the cache.
-var _libraryMultiSelectMode = false;
+// ── LIBRARY MULTI-SELECT + BULK EDIT (v171, simplified v172) ──
+// Each tile has a checkbox; tile click still adds to canvas (the original behavior). The bulk-action
+// bar auto-appears when at least one tile is checked. Selection survives between renders so search
+// + filter changes don't drop the user's selection — they can fan out across filters to build up a
+// set and then bulk-edit.
 var _librarySelectedItemIds = {};
 var _bulkEditAddTags = [];     // string[] — tags to add to every selected item
 var _bulkEditRemoveTags = {};  // {tag: true} — tags to strip from every selected item that has them
 
-function toggleLibraryMultiSelect(){
-  _libraryMultiSelectMode = !_libraryMultiSelectMode;
-  if(!_libraryMultiSelectMode) _librarySelectedItemIds = {};
-  // Reflect on the toggle button (filled vs empty look)
-  var btn = document.getElementById('libraryMultiSelectBtn');
-  if(btn){
-    if(_libraryMultiSelectMode){
-      btn.classList.remove('btn-cancel');
-      btn.classList.add('btn-primary');
-      btn.textContent = '✕ Exit Select';
-    } else {
-      btn.classList.remove('btn-primary');
-      btn.classList.add('btn-cancel');
-      btn.textContent = '☑ Select';
-    }
-  }
-  renderImageLibrary();
-}
-
-function toggleLibraryItemSelection(itemId, tileDiv){
-  if(_librarySelectedItemIds[itemId]){
-    delete _librarySelectedItemIds[itemId];
-    if(tileDiv) tileDiv.classList.remove('selected');
-  } else {
-    _librarySelectedItemIds[itemId] = true;
-    if(tileDiv) tileDiv.classList.add('selected');
-  }
-  updateLibraryBulkActionBar();
-}
-
 function bulkSelectAllVisible(){
-  // Selects every item currently in the filtered/visible list (so search + filters scope the action)
   (_libraryVisibleItems || []).forEach(function(it){ _librarySelectedItemIds[it.id] = true; });
-  // Refresh the visible state on each tile inline (no DB refetch)
+  // Refresh visible state on the rendered tiles inline (no DB refetch). The checkbox on each tile
+  // also needs to flip to checked.
   document.querySelectorAll('#imageLibraryGrid .lib-item').forEach(function(el, idx){
     var item = _libraryVisibleItems[idx];
-    if(item && _librarySelectedItemIds[item.id]) el.classList.add('selected');
+    if(item && _librarySelectedItemIds[item.id]){
+      el.classList.add('selected');
+      var cb = el.querySelector('input.lib-check');
+      if(cb) cb.checked = true;
+    }
   });
   updateLibraryBulkActionBar();
 }
 
 function bulkClearSelection(){
   _librarySelectedItemIds = {};
-  document.querySelectorAll('#imageLibraryGrid .lib-item.selected').forEach(function(el){ el.classList.remove('selected'); });
+  document.querySelectorAll('#imageLibraryGrid .lib-item').forEach(function(el){
+    el.classList.remove('selected');
+    var cb = el.querySelector('input.lib-check');
+    if(cb) cb.checked = false;
+  });
   updateLibraryBulkActionBar();
 }
 
 function updateLibraryBulkActionBar(){
   var bar = document.getElementById('libraryBulkActionBar');
   if(!bar) return;
-  var ids = Object.keys(_librarySelectedItemIds);
-  // Bar only shows in multi-select mode; even if nothing's selected we still want it visible so
-  // the user sees the "Select all visible" / "Clear" affordances.
-  if(_libraryMultiSelectMode){
+  var count = Object.keys(_librarySelectedItemIds).length;
+  if(count > 0){
     bar.classList.remove('hidden');
-    var count = ids.length;
-    var label = count + ' selected';
-    document.getElementById('libraryBulkSelectionCount').textContent = label;
+    document.getElementById('libraryBulkSelectionCount').textContent = count + ' selected';
   } else {
     bar.classList.add('hidden');
   }
