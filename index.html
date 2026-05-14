@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v166</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v167</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2547,7 +2547,46 @@ function bindKeyboardShortcuts(){
     if(now - _lastNudgeAt > 1000) snapshotState();
     _lastNudgeAt = now;
   }
+
+  // v167: Ctrl/Cmd + wheel over the canvas area = cursor-anchored canvas zoom (not browser zoom).
+  // Bound here so we can preventDefault. {passive:false} is required for preventDefault on wheel.
+  var area = document.getElementById('canvasArea');
+  if(area){
+    area.addEventListener('wheel', function(e){
+      if(!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      // Multiplicative step so zoom feel is consistent across the full 5%–300% range. deltaY is
+      // typically ±100 for a notched wheel; sign flips for in vs out.
+      var factor = e.deltaY < 0 ? 1.1 : (1 / 1.1);
+      zoomAt(zoomLevel * factor, e.clientX, e.clientY);
+    }, {passive: false});
+  }
+
   document.addEventListener('keydown', function(e){
+    // v167: Ctrl/Cmd + +/-/0 zoom canvas (not browser viewport). Must run BEFORE the input-skip
+    // check below so the shortcuts still work while a property field has focus.
+    var isMetaZoom = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
+    if(isMetaZoom){
+      // Zoom IN: '=' (the unshifted key on US layouts), '+' (Shift+= or numpad), 'Add' (numpad code on some browsers)
+      if(e.key === '=' || e.key === '+' || e.key === 'Add'){
+        e.preventDefault();
+        zoomAt(zoomLevel * 1.15);
+        return;
+      }
+      // Zoom OUT
+      if(e.key === '-' || e.key === '_' || e.key === 'Subtract'){
+        e.preventDefault();
+        zoomAt(zoomLevel / 1.15);
+        return;
+      }
+      // Reset to fit (matches the Fit button in the zoom bar)
+      if(e.key === '0'){
+        e.preventDefault();
+        fitZoom();
+        return;
+      }
+    }
+
     // Ignore if user is typing in an input/textarea/contenteditable
     var tgt = e.target;
     var tag = (tgt.tagName || '').toLowerCase();
@@ -2698,6 +2737,37 @@ function fitZoom(){
   var fitW = canvasW + 2*ovs, fitH = canvasH + 2*ovs;
   zoomLevel=Math.min((a.clientWidth-80)/fitW,(a.clientHeight-80)/fitH,1);
   applyZoom();
+}
+// v167: cursor-anchored zoom. Used by Ctrl+wheel and Ctrl+/-/0 so the world point under the
+// cursor stays under the cursor after zooming — i.e. you don't lose what you were looking at.
+// anchorClientX/Y are page-space (clientX/Y from a mouse event). When omitted, falls back to
+// the center of the canvas-area viewport (for the keyboard path, which has no cursor info).
+function zoomAt(newZoom, anchorClientX, anchorClientY){
+  newZoom = Math.max(0.05, Math.min(3, newZoom));
+  if(Math.abs(newZoom - zoomLevel) < 0.0005) return;
+  var area = document.getElementById('canvasArea');
+  var wrap = document.getElementById('canvasWrap');
+  if(!area || !wrap){ zoomLevel = newZoom; applyZoom(); return; }
+  if(anchorClientX == null || anchorClientY == null){
+    var arect = area.getBoundingClientRect();
+    anchorClientX = arect.left + arect.width / 2;
+    anchorClientY = arect.top + arect.height / 2;
+  }
+  // World coords (unscaled wrap-space pixels) under the cursor BEFORE zoom changes.
+  var oldRect = wrap.getBoundingClientRect();
+  var worldX = (anchorClientX - oldRect.left) / zoomLevel;
+  var worldY = (anchorClientY - oldRect.top)  / zoomLevel;
+  zoomLevel = newZoom;
+  applyZoom();
+  // After applyZoom, the wrap's CSS size changed and the canvas-area's scroll bounds expand.
+  // wrap.getBoundingClientRect() reflects the new layout (canvas-area is flex/center, so the
+  // wrap may also shift if it now fits inside the viewport). Compute where the same world
+  // point now lands in client coords, then nudge scroll so it lands back at the anchor.
+  var newRect = wrap.getBoundingClientRect();
+  var landX = newRect.left + worldX * newZoom;
+  var landY = newRect.top  + worldY * newZoom;
+  area.scrollLeft += landX - anchorClientX;
+  area.scrollTop  += landY - anchorClientY;
 }
 function applyZoom(){
   var w=document.getElementById('canvasWrap');
