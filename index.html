@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v160</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v161</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4332,46 +4332,100 @@ function drawArrowLayer(ctx, layer){
       sWing2Pts = buildWing(tipS, prevS, -1, aLen2, aCurve2, seed * 2.531);
     }
 
-    ctx.save();
+    // v161: collect every stroke into one list so we can paint them either directly or via
+    // an offscreen canvas (for the shadow path). Each entry knows its own seed + taper shape.
+    var allStrokes = [
+      {pts: bodyPts, seed: seed, taperStart: true, taperEnd: false}
+    ];
+    if(wing1Pts) allStrokes.push({pts: wing1Pts, seed: seed * 1.317, taperStart: false, taperEnd: true});
+    if(wing2Pts) allStrokes.push({pts: wing2Pts, seed: seed * 1.713, taperStart: false, taperEnd: true});
+    if(sWing1Pts) allStrokes.push({pts: sWing1Pts, seed: seed * 2.119, taperStart: false, taperEnd: true});
+    if(sWing2Pts) allStrokes.push({pts: sWing2Pts, seed: seed * 2.531, taperStart: false, taperEnd: true});
 
-    // ── Render order: halos first (no shadow), then colors with shadow applied. ──
+    // getStrokeStyleFor() needs to be called with whichever ctx we're actually drawing into,
+    // since gradient objects are bound to the context that created them.
+    function getStrokeStyleFor(targetCtx){
+      if(layer.fillType !== 'gradient') return layer.color || '#f07830';
+      var gradAng = ((layer.gradAngle == null ? 0 : layer.gradAngle)) * Math.PI / 180;
+      var midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
+      var halfLen = Math.hypot(x2 - x1, y2 - y1) / 2;
+      var gx1 = midX - Math.cos(gradAng) * halfLen;
+      var gy1 = midY - Math.sin(gradAng) * halfLen;
+      var gx2 = midX + Math.cos(gradAng) * halfLen;
+      var gy2 = midY + Math.sin(gradAng) * halfLen;
+      var gradType = layer.gradType || 'linear';
+      var grad;
+      if(gradType === 'radial') grad = targetCtx.createRadialGradient(midX, midY, 0, midX, midY, halfLen);
+      else if(gradType === 'conic' && targetCtx.createConicGradient) grad = targetCtx.createConicGradient(gradAng, midX, midY);
+      else grad = targetCtx.createLinearGradient(gx1, gy1, gx2, gy2);
+      addLayerGradientStops(grad, layer);
+      return grad;
+    }
 
-    // 1. Halos — no shadow so the halo is crisp around the colored core
-    _drawMarkerStrokeHalo(ctx, bodyPts, halo, haloPad, thickAvg, thickVar, seed, true, false);
-    if(wing1Pts) _drawMarkerStrokeHalo(ctx, wing1Pts, halo, haloPad, thickAvg, thickVar, seed * 1.317, false, true);
-    if(wing2Pts) _drawMarkerStrokeHalo(ctx, wing2Pts, halo, haloPad, thickAvg, thickVar, seed * 1.713, false, true);
-    if(sWing1Pts) _drawMarkerStrokeHalo(ctx, sWing1Pts, halo, haloPad, thickAvg, thickVar, seed * 2.119, false, true);
-    if(sWing2Pts) _drawMarkerStrokeHalo(ctx, sWing2Pts, halo, haloPad, thickAvg, thickVar, seed * 2.531, false, true);
+    function paintArrow(target){
+      var ss = getStrokeStyleFor(target);
+      // Halos first
+      allStrokes.forEach(function(s){
+        _drawMarkerStrokeHalo(target, s.pts, halo, haloPad, thickAvg, thickVar, s.seed, s.taperStart, s.taperEnd);
+      });
+      // Colors
+      allStrokes.forEach(function(s){
+        _drawMarkerStrokeColor(target, s.pts, ss, thickAvg, thickVar, s.seed, s.taperStart, s.taperEnd);
+      });
+    }
 
-    // 2. Colors — shadow applied here so it falls under the body+head as one cohesive shape.
-    //    Set ctx.shadow* before any color strokes; canvas applies it to every stroke until reset.
     var hasShadow = (layer.shadowBlur || 0) > 0 || (layer.shadowOffsetX || 0) !== 0 || (layer.shadowOffsetY || 0) !== 0;
-    if(hasShadow){
-      var sCol = layer.shadowColor || '#000000';
-      var sOp = layer.shadowOpacity == null ? 50 : layer.shadowOpacity;
-      // Convert hex + opacity → rgba so shadowOpacity is honored
-      var hex = sCol.replace('#', '');
-      if(hex.length === 3) hex = hex.split('').map(function(c){return c+c;}).join('');
-      var r = parseInt(hex.substring(0, 2), 16);
-      var g = parseInt(hex.substring(2, 4), 16);
-      var b = parseInt(hex.substring(4, 6), 16);
-      ctx.shadowColor = 'rgba(' + r + ',' + g + ',' + b + ',' + (sOp / 100) + ')';
-      ctx.shadowBlur = layer.shadowBlur || 0;
-      ctx.shadowOffsetX = layer.shadowOffsetX || 0;
-      ctx.shadowOffsetY = layer.shadowOffsetY || 0;
-    }
-    _drawMarkerStrokeColor(ctx, bodyPts, strokeColor, thickAvg, thickVar, seed, true, false);
-    if(wing1Pts) _drawMarkerStrokeColor(ctx, wing1Pts, strokeColor, thickAvg, thickVar, seed * 1.317, false, true);
-    if(wing2Pts) _drawMarkerStrokeColor(ctx, wing2Pts, strokeColor, thickAvg, thickVar, seed * 1.713, false, true);
-    if(sWing1Pts) _drawMarkerStrokeColor(ctx, sWing1Pts, strokeColor, thickAvg, thickVar, seed * 2.119, false, true);
-    if(sWing2Pts) _drawMarkerStrokeColor(ctx, sWing2Pts, strokeColor, thickAvg, thickVar, seed * 2.531, false, true);
-    if(hasShadow){
-      ctx.shadowColor = 'transparent';
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 0;
+    if(!hasShadow){
+      // Fast path — paint directly into the main ctx
+      ctx.save();
+      paintArrow(ctx);
+      ctx.restore();
+      return;
     }
 
+    // v161: shadow path uses an offscreen canvas so the arrow's complete silhouette casts ONE
+    // unified shadow. v160's per-segment shadow rendered as bumpy overlapping circles AND
+    // sometimes drew shadow ON TOP of earlier segments (when the offset put the shadow of
+    // segment N+1 over segment N's body).
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    allStrokes.forEach(function(s){
+      for(var i = 0; i < s.pts.length; i++){
+        var p = s.pts[i];
+        if(p[0] < minX) minX = p[0];
+        if(p[0] > maxX) maxX = p[0];
+        if(p[1] < minY) minY = p[1];
+        if(p[1] > maxY) maxY = p[1];
+      }
+    });
+    var extentPad = thickAvg + haloPad * 2 + 6;
+    var rx = Math.floor(minX - extentPad);
+    var ry = Math.floor(minY - extentPad);
+    var rw = Math.ceil((maxX - minX) + extentPad * 2);
+    var rh = Math.ceil((maxY - minY) + extentPad * 2);
+    if(rw < 1 || rh < 1) return;
+    var off = document.createElement('canvas');
+    off.width = rw;
+    off.height = rh;
+    var octx = off.getContext('2d');
+    octx.translate(-rx, -ry);  // so paintArrow's world coords land at correct offset in offscreen
+    paintArrow(octx);
+
+    // Compose rgba from shadowColor hex + shadowOpacity %
+    var sCol = layer.shadowColor || '#000000';
+    var sOp = layer.shadowOpacity == null ? 50 : layer.shadowOpacity;
+    var hex = sCol.replace('#', '');
+    if(hex.length === 3) hex = hex.split('').map(function(c){return c+c;}).join('');
+    var rC = parseInt(hex.substring(0, 2), 16);
+    var gC = parseInt(hex.substring(2, 4), 16);
+    var bC = parseInt(hex.substring(4, 6), 16);
+    var rgba = 'rgba(' + rC + ',' + gC + ',' + bC + ',' + (sOp / 100) + ')';
+
+    ctx.save();
+    ctx.shadowColor = rgba;
+    ctx.shadowBlur = layer.shadowBlur || 0;
+    ctx.shadowOffsetX = layer.shadowOffsetX || 0;
+    ctx.shadowOffsetY = layer.shadowOffsetY || 0;
+    ctx.drawImage(off, rx, ry);
     ctx.restore();
   });
 }
