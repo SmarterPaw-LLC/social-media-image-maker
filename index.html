@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v163</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v164</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4178,17 +4178,29 @@ function _genArrowStroke(x1, y1, x2, y2, arch, wobble, seed){
   return pts;
 }
 
-// v163: shape the thickness profile near a stroke endpoint based on a continuous taper amount
-// (0..1). The slider in the UI runs 0..100 → divided by 100 here.
-//   0   = no taper (full thickness right up to the cap; lineCap='round' produces a round bulb)
-//   0.5 = the v161 default look (~18% length, ~45% min thickness)
-//   1   = aggressive marker point (~36% length, ~5% min thickness)
-function _capProfileFromTaperAmount(distFromCap, taperAmount){
-  if(!(taperAmount > 0.001)) return 1;
-  var taperLength = 0.36 * taperAmount;
-  var minThick = Math.max(0.05, 1.0 - 1.10 * taperAmount);
-  if(distFromCap > taperLength) return 1;
-  return minThick + (1 - minThick) * (distFromCap / taperLength);
+// v164: piecewise-linear mapping that supports SPLAYED tips (cap wider than body) at low slider
+// values, no taper in the lower-middle range, and only MILD taper at max. Mapping (slider/100):
+//   0.0 → cap = 1.5× body (max splay — bulb wider than the line)
+//   0.3 → cap = 1.0× body (no taper, round bulb)
+//   0.5 → cap = 0.5× body (the v161 default look — DEFAULT slider value for new arrows)
+//   1.0 → cap = 0.3× body (mild marker point, NOT razor-sharp)
+// v163 went to 5% at max which the user said tapered too aggressively; this curve caps the
+// minimum at 30% so the tip stays substantial. Also exposes a splay range at the low end.
+function _capProfileFromTaperAmount(distFromCap, sliderVal){
+  if(sliderVal == null) return 1;
+  var capMult;
+  if(sliderVal < 0.3){
+    capMult = 1.5 + (1.0 - 1.5) * (sliderVal / 0.3);          // 1.5 → 1.0
+  } else if(sliderVal < 0.5){
+    capMult = 1.0 + (0.5 - 1.0) * ((sliderVal - 0.3) / 0.2);  // 1.0 → 0.5
+  } else {
+    capMult = 0.5 + (0.3 - 0.5) * ((sliderVal - 0.5) / 0.5);  // 0.5 → 0.3
+  }
+  // capMult==1 means no taper anywhere — short-circuit so the rest of the stroke is unaffected
+  if(Math.abs(capMult - 1) < 0.001) return 1;
+  var effectLength = 0.20;
+  if(distFromCap > effectLength) return 1;
+  return capMult + (1 - capMult) * (distFromCap / effectLength);
 }
 
 function _markerThicknessAt(t, baseThick, variation, seed, startTaper, endTaper){
@@ -4477,13 +4489,13 @@ function buildArrowProps(l){
     + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Wing 1 (top side)</div>'
     + R('Wing 1 length', 'parrAheadLen1_' + id, aLen1, 10, 300, 1)
     + R('Wing 1 curve', 'parrAheadCurve1_' + id, aCurve1, -100, 100, 1)
-    + R('Wing 1 tip taper', 'parrW1Taper_' + id, (l.wing1EndTaper != null ? l.wing1EndTaper : 50), 0, 100, 1)
+    + R('Wing 1 tip shape (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrW1Taper_' + id, (l.wing1EndTaper != null ? l.wing1EndTaper : 50), 0, 100, 1)
     + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Wing 2 (bottom side)</div>'
     + R('Wing 2 length', 'parrAheadLen2_' + id, aLen2, 10, 300, 1)
     + R('Wing 2 curve', 'parrAheadCurve2_' + id, aCurve2, -100, 100, 1)
-    + R('Wing 2 tip taper', 'parrW2Taper_' + id, (l.wing2EndTaper != null ? l.wing2EndTaper : 50), 0, 100, 1)
+    + R('Wing 2 tip shape (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrW2Taper_' + id, (l.wing2EndTaper != null ? l.wing2EndTaper : 50), 0, 100, 1)
     + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Body back</div>'
-    + R('Body start taper', 'parrBodyTaper_' + id, (l.bodyStartTaper != null ? l.bodyStartTaper : 50), 0, 100, 1)
+    + R('Body start shape (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrBodyTaper_' + id, (l.bodyStartTaper != null ? l.bodyStartTaper : 50), 0, 100, 1)
     + '<label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:6px;margin-top:8px;"><input type="checkbox" id="parrRoundEnds_' + id + '"' + (l.roundEnds ? ' checked' : '') + '> Rounded ends (overrides taper sliders → all caps become round bulbs)</label>'
     + '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
       + '<label style="font-size:11px;cursor:pointer;"><input type="checkbox" ' + (l.arrowheadEnd ? 'checked' : '') + ' onchange="(function(){var L=layers.find(function(x){return x.id===' + id + ';});if(L){L.arrowheadEnd=this.checked;redraw();}}).call(this)"> Arrowhead at end</label>'
