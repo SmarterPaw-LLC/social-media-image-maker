@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v157</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v158</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4039,29 +4039,69 @@ function addTextLayer(){
 // Brand styling: Meowi/Doggi gets the orange wobbly look from the user's reference screenshot;
 // KKZ gets a placeholder distinct style (purple, less wobble) — easy to tune later by editing
 // the addArrowLayer brand branch.
+// v158: clicking + Arrow now enters click-drag drawing mode. The user drags on the canvas to
+// define start and end points; mouseup creates a layer sized + rotated to match the drag.
+var _arrowDrawingMode = false;
+var _arrowDrawStart = null;       // [canvasX, canvasY] of mousedown during drawing mode
+var _arrowDrawPreviewEnd = null;  // [canvasX, canvasY] of current mouse during drag
+
 function addArrowLayer(){
+  enterArrowDrawMode();
+}
+
+function enterArrowDrawMode(){
+  _arrowDrawingMode = true;
+  _arrowDrawStart = null;
+  _arrowDrawPreviewEnd = null;
+  var wrap = document.getElementById('canvasWrap');
+  if(wrap) wrap.style.cursor = 'crosshair';
+  showToast('Click and drag on the canvas to draw your arrow');
+}
+
+function exitArrowDrawMode(){
+  _arrowDrawingMode = false;
+  _arrowDrawStart = null;
+  _arrowDrawPreviewEnd = null;
+  var wrap = document.getElementById('canvasWrap');
+  if(wrap) wrap.style.cursor = '';
+  redraw();
+}
+
+// Compose an arrow layer from a drag's start (sx,sy) and end (ex,ey) canvas-space points.
+// The bbox is centered on the drag midpoint, sized w=length & h=auto, and rotated to align
+// with the drag angle — so the in-local-space horizontal arrow renders along the drag line.
+function createArrowFromDrag(sx, sy, ex, ey){
+  var dx = ex - sx, dy = ey - sy;
+  var length = Math.hypot(dx, dy);
+  if(length < 12){
+    // Too short — likely a stray click, not an intentional drag
+    showToast('Drag a longer line to place an arrow');
+    return;
+  }
   snapshotState();
-  var id = nextId++;
-  var w = Math.max(260, Math.round(canvasW * 0.35));
-  var h = Math.max(140, Math.round(w * 0.45));
+  var angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+  var midX = (sx + ex) / 2;
+  var midY = (sy + ey) / 2;
+  var w = length;
+  var h = Math.max(80, Math.round(length * 0.28));
   var isKKZ = currentBrand === 'kkz';
-  // v157: brand presets carry the new archStrength + thicknessVar parameters too.
   var style = isKKZ ? {
     color: '#6b3aa3', halo: '#ffffff', thickness: 16, wobble: 0.4, thicknessVar: 15, archStrength: 0
   } : {
-    color: '#f07830', halo: '#ffffff', thickness: 22, wobble: 1.0, thicknessVar: 35, archStrength: -25
+    color: '#f07830', halo: '#ffffff', thickness: 22, wobble: 1.0, thicknessVar: 35, archStrength: -15
   };
+  var id = nextId++;
   layers.push({
     id: id, type: 'arrow', name: 'Arrow ' + id,
-    x: Math.round((canvasW - w) / 2),
-    y: Math.round((canvasH - h) / 2),
+    x: midX - w / 2,
+    y: midY - h / 2,
     w: w, h: h,
-    rotation: 0, opacity: 100,
+    rotation: angleDeg, opacity: 100,
     flipH: false, flipV: false,
     color: style.color, halo: style.halo,
     thickness: style.thickness,
-    thicknessVar: style.thicknessVar,   // 0..100 — variation along the line, 0 = uniform
-    archStrength: style.archStrength,   // -100..+100 — bow perpendicular to the line, 0 = straight
+    thicknessVar: style.thicknessVar,
+    archStrength: style.archStrength,
     wobble: style.wobble,
     arrowheadEnd: true, arrowheadStart: false,
     _seed: Math.floor(Math.random() * 100000) + 1
@@ -4133,8 +4173,8 @@ function drawArrowLayer(ctx, layer){
       pts[i] = [bx + pwx * wobbleMag, by + pwy * wobbleMag];
     }
 
-    // Thickness profile: avg with noise variation, taper at the very end so the body merges
-    // into the arrowhead instead of leaving a visible blunt cap before the wedge.
+    // Thickness profile: avg with noise variation. v158: NO taper at the tip — the body
+    // extends at full thickness right into the arrowhead so they read as one continuous mark.
     var thickAvg = Math.max(2, layer.thickness || 14);
     var thickVar = (layer.thicknessVar != null ? layer.thicknessVar : 35) / 100;
     var s2 = seed * 0.0271;
@@ -4142,27 +4182,96 @@ function drawArrowLayer(ctx, layer){
     for(var i = 0; i <= n; i++){
       var t = i / n;
       var thickNoise = Math.sin(t * 9 + s2) * 0.5 + Math.sin(t * 19 + s2 * 1.7) * 0.3;
-      var thickHere = thickAvg * (1 + thickVar * thickNoise * 0.5);
-      if(layer.arrowheadEnd !== false && t > 0.9){
-        var k = (1 - t) / 0.1;
-        thickHere *= 0.4 + 0.6 * k;
-      }
-      if(layer.arrowheadStart && t < 0.1){
-        var k2 = t / 0.1;
-        thickHere *= 0.4 + 0.6 * k2;
-      }
-      thicknesses[i] = Math.max(1, thickHere);
+      thicknesses[i] = Math.max(1, thickAvg * (1 + thickVar * thickNoise * 0.5));
     }
 
     var color = layer.color || '#f07830';
     var halo = layer.halo || '#ffffff';
     var haloPad = Math.max(4, thickAvg * 0.4);
 
+    // v158: pre-compute the wobbly triangle wedges so we can interleave halo passes with the
+    // body, which prevents the v157 bug where wedge halo (drawn after body color) painted
+    // white over the body's end, leaving a visible gap between body and head.
+    function buildWobblyTriangle(tipIndex, isEnd){
+      var tipPt = pts[tipIndex];
+      var dirIdx = isEnd ? Math.max(0, tipIndex - 4) : Math.min(pts.length - 1, tipIndex + 4);
+      var tdx = isEnd ? tipPt[0] - pts[dirIdx][0] : pts[dirIdx][0] - tipPt[0];
+      var tdy = isEnd ? tipPt[1] - pts[dirIdx][1] : pts[dirIdx][1] - tipPt[1];
+      var tdlen = Math.hypot(tdx, tdy) || 1;
+      var ux = tdx / tdlen, uy = tdy / tdlen;
+      var perpx = -uy, perpy = ux;
+      var aSize = thickAvg * 3.6;
+      // Three triangle corners: tip (forward of body), b1 (back + perp+), b2 (back + perp-).
+      // Base sits BEHIND the body's end by aSize*0.8, so the body's last segments (drawn at
+      // full thickness now) overlap heavily with the wedge — body and head merge seamlessly.
+      var lenwise = aSize * 0.8;
+      var halfBase = aSize * 0.55;
+      var tipP = [tipPt[0] + ux * aSize * 0.35, tipPt[1] + uy * aSize * 0.35];
+      var b1 = [tipPt[0] - ux * lenwise + perpx * halfBase, tipPt[1] - uy * lenwise + perpy * halfBase];
+      var b2 = [tipPt[0] - ux * lenwise - perpx * halfBase, tipPt[1] - uy * lenwise - perpy * halfBase];
+      // Wobble each edge for hand-drawn feel. Sample n2 points per edge with perpendicular
+      // sin-noise displacement; the resulting polygon is the wedge's silhouette.
+      function wobbleEdge(p1, p2, wobbleSeed){
+        var n2 = 9;
+        var edgeDx = p2[0] - p1[0], edgeDy = p2[1] - p1[1];
+        var edgeLen = Math.hypot(edgeDx, edgeDy) || 1;
+        var edgePerpX = -edgeDy / edgeLen, edgePerpY = edgeDx / edgeLen;
+        var out = [];
+        for(var i = 0; i <= n2; i++){
+          var t = i / n2;
+          var fade = Math.sin(t * Math.PI);
+          var noise = Math.sin(t * 5 + wobbleSeed) * 0.6 + Math.sin(t * 13 + wobbleSeed * 1.7) * 0.3;
+          var mag = noise * wobble * edgeLen * 0.05 * fade;
+          out.push([p1[0] + edgeDx * t + edgePerpX * mag, p1[1] + edgeDy * t + edgePerpY * mag]);
+        }
+        return out;
+      }
+      var edge1 = wobbleEdge(b1, tipP, seed * 0.0413);  // base-left → tip
+      var edge2 = wobbleEdge(tipP, b2, seed * 0.0589);  // tip → base-right
+      // edge3 (base-right → base-left) is INSIDE the body, so it can be straight — won't be
+      // visible anyway since the body covers it. Just a straight line back to b1.
+      var polygon = edge1.concat(edge2.slice(1)).concat([b1]);
+      return polygon;
+    }
+    var wedgeEnd = (layer.arrowheadEnd !== false) ? buildWobblyTriangle(pts.length - 1, true) : null;
+    var wedgeStart = layer.arrowheadStart ? buildWobblyTriangle(0, false) : null;
+
+    function fillPolygon(poly, fillStyle){
+      ctx.fillStyle = fillStyle;
+      ctx.beginPath();
+      ctx.moveTo(poly[0][0], poly[0][1]);
+      for(var i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+      ctx.closePath();
+      ctx.fill();
+    }
+    function strokePolygon(poly, strokeStyle, lineWidth){
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = lineWidth;
+      ctx.beginPath();
+      ctx.moveTo(poly[0][0], poly[0][1]);
+      for(var i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+      ctx.closePath();
+      ctx.stroke();
+    }
+
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Halo pass — stroke each segment with thicker line (halo padding on both sides)
+    // ── Render order (v158): all halos first, then all body+head colors on top. This is the
+    //    key fix for the v157 bug — wedge halo no longer paints over body color. ──
+
+    // 1. Wedge halos (white outline + fill)
+    if(wedgeEnd){
+      strokePolygon(wedgeEnd, halo, haloPad * 2);
+      fillPolygon(wedgeEnd, halo);
+    }
+    if(wedgeStart){
+      strokePolygon(wedgeStart, halo, haloPad * 2);
+      fillPolygon(wedgeStart, halo);
+    }
+
+    // 2. Body halo (per-segment stroke with halo padding)
     ctx.strokeStyle = halo;
     for(var i = 1; i < pts.length; i++){
       ctx.lineWidth = thicknesses[i] + haloPad * 2;
@@ -4172,7 +4281,7 @@ function drawArrowLayer(ctx, layer){
       ctx.stroke();
     }
 
-    // Color pass — same segments, body thickness only
+    // 3. Body color (same segments, body thickness only)
     ctx.strokeStyle = color;
     for(var i = 1; i < pts.length; i++){
       ctx.lineWidth = thicknesses[i];
@@ -4182,53 +4291,9 @@ function drawArrowLayer(ctx, layer){
       ctx.stroke();
     }
 
-    // Filled arrowhead wedge that wraps the tapered tip
-    function drawWedge(tipIndex, isEnd){
-      var tipPt = pts[tipIndex];
-      var dirIdx = isEnd ? Math.max(0, tipIndex - 4) : Math.min(pts.length - 1, tipIndex + 4);
-      var tdx = isEnd ? tipPt[0] - pts[dirIdx][0] : pts[dirIdx][0] - tipPt[0];
-      var tdy = isEnd ? tipPt[1] - pts[dirIdx][1] : pts[dirIdx][1] - tipPt[1];
-      var tdlen = Math.hypot(tdx, tdy) || 1;
-      var ux = tdx / tdlen, uy = tdy / tdlen;
-      var aSize = thickAvg * 3.3;
-      // Extend slightly beyond the path tip for that "marker pushed past the body" look
-      var tipFx = tipPt[0] + ux * aSize * 0.25;
-      var tipFy = tipPt[1] + uy * aSize * 0.25;
-      // Base of wedge sits back along the body so the tapered line ending flows into the head
-      var baseX = tipPt[0] - ux * aSize * 0.45;
-      var baseY = tipPt[1] - uy * aSize * 0.45;
-      // Wing tips ~31° off the direction line
-      var wingAngle = 0.55;
-      var c1 = Math.cos(wingAngle), s1 = Math.sin(wingAngle);
-      var bbx = -ux * aSize, bby = -uy * aSize;
-      var w1x = tipFx + bbx * c1 - bby * s1;
-      var w1y = tipFy + bbx * s1 + bby * c1;
-      var w2x = tipFx + bbx * c1 + bby * s1;
-      var w2y = tipFy - bbx * s1 + bby * c1;
-      // Halo wedge (filled + stroked to give it a haloPad-pixel outline)
-      ctx.lineWidth = haloPad * 2;
-      ctx.strokeStyle = halo;
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.moveTo(baseX, baseY);
-      ctx.lineTo(w1x, w1y);
-      ctx.lineTo(tipFx, tipFy);
-      ctx.lineTo(w2x, w2y);
-      ctx.closePath();
-      ctx.stroke();
-      ctx.fill();
-      // Color wedge
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(baseX, baseY);
-      ctx.lineTo(w1x, w1y);
-      ctx.lineTo(tipFx, tipFy);
-      ctx.lineTo(w2x, w2y);
-      ctx.closePath();
-      ctx.fill();
-    }
-    if(layer.arrowheadEnd !== false) drawWedge(pts.length - 1, true);
-    if(layer.arrowheadStart) drawWedge(0, false);
+    // 4. Wedge color (fills triangle; covers body color in the overlap zone for a clean merge)
+    if(wedgeEnd) fillPolygon(wedgeEnd, color);
+    if(wedgeStart) fillPolygon(wedgeStart, color);
 
     ctx.restore();
   });
@@ -5850,6 +5915,33 @@ function bindCanvasEvents(){
     var rect=wrap.getBoundingClientRect();
     var ovs = _overscanOn ? _overscanPx : 0;
     var cx=(e.clientX-rect.left)/zoomLevel - ovs, cy=(e.clientY-rect.top)/zoomLevel - ovs;
+    // v158: arrow drawing mode — intercept mousedown to start a click-drag arrow placement.
+    // Attaches temporary window listeners that track the drag and finalize on mouseup, then
+    // bypasses the normal layer-selection / drag / resize handling.
+    if(_arrowDrawingMode){
+      _arrowDrawStart = [cx, cy];
+      _arrowDrawPreviewEnd = [cx, cy];
+      var rectCache = rect, ovsCache = ovs;
+      function _onArrowMove(ev){
+        var nx = (ev.clientX - rectCache.left) / zoomLevel - ovsCache;
+        var ny = (ev.clientY - rectCache.top) / zoomLevel - ovsCache;
+        _arrowDrawPreviewEnd = [nx, ny];
+        redrawSoon();
+      }
+      function _onArrowUp(ev){
+        window.removeEventListener('mousemove', _onArrowMove);
+        window.removeEventListener('mouseup', _onArrowUp);
+        var ux = (ev.clientX - rectCache.left) / zoomLevel - ovsCache;
+        var uy = (ev.clientY - rectCache.top) / zoomLevel - ovsCache;
+        var startPt = _arrowDrawStart;
+        exitArrowDrawMode();   // resets state vars + cursor; redraw clears preview
+        if(startPt) createArrowFromDrag(startPt[0], startPt[1], ux, uy);
+      }
+      window.addEventListener('mousemove', _onArrowMove);
+      window.addEventListener('mouseup', _onArrowUp);
+      e.preventDefault();
+      return;
+    }
     // DEBUG: log the click and which layer (if any) was hit. Off-canvas layers have negative
     // coords or coords > canvasW/canvasH; if hits aren't being detected when overscan is on,
     // this log will reveal whether the issue is in the math or somewhere else.
@@ -6601,6 +6693,22 @@ function redraw(){
     ctx.lineWidth = 2;
     ctx.setLineDash([8, 4]);
     ctx.strokeRect(inX + 0.5, inY + 0.5, canvasW - 1, canvasH - 1);
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+  // v158: arrow-drawing-mode preview line. Dashed orange straight line from drag start to
+  // current mouse position so the user sees where the arrow will land. The actual arrow with
+  // wobble + arrowhead is created in createArrowFromDrag on mouseup.
+  if(_arrowDrawingMode && _arrowDrawStart && _arrowDrawPreviewEnd){
+    ctx.save();
+    ctx.strokeStyle = '#f07830';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.setLineDash([10, 6]);
+    ctx.beginPath();
+    ctx.moveTo(_arrowDrawStart[0], _arrowDrawStart[1]);
+    ctx.lineTo(_arrowDrawPreviewEnd[0], _arrowDrawPreviewEnd[1]);
+    ctx.stroke();
     ctx.setLineDash([]);
     ctx.restore();
   }
