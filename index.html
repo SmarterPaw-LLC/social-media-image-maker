@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v169</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v170</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -441,7 +441,13 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <div class="modal-overlay hidden" id="manageCategoriesModal" style="z-index:1100;">
   <div class="modal" style="max-width:640px;width:92vw;">
     <h2>Manage Categories</h2>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Rename or delete categories. Deleting a category leaves its images in place — they move to "Uncategorized".</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Add, rename, or delete categories. Deleting a category leaves its images in place — they move to "Uncategorized".</div>
+    <!-- v170: + New Category inline form. Moved here from the library toolbar so all
+         category-management lives in one place. Enter submits, same as the + Add Tag input. -->
+    <div style="display:flex;gap:6px;margin-bottom:10px;">
+      <input type="text" id="manageCategoryNewName" autocomplete="off" placeholder="New category name…" onkeydown="if(event.key==='Enter'){event.preventDefault();addCategoryFromManageModal();}" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+      <button type="button" class="btn-primary" onclick="addCategoryFromManageModal()" style="padding:5px 14px;font-size:12px;">+ Add</button>
+    </div>
     <div id="manageCategoriesList" style="display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto;">
       <!-- populated by renderManageCategoriesList -->
     </div>
@@ -538,27 +544,39 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <div class="modal-overlay hidden" id="imageLibraryModal">
   <div class="modal" style="max-width:760px;width:90vw;">
     <h2>📚 Image Library</h2>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
-      <label style="margin:0;">Category:</label>
-      <select id="imageLibraryCategoryFilter" onchange="renderImageLibrary()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;min-width:130px;">
+    <!-- v170: toolbar reorganized into three stacked filter rows + an actions row so the
+         relationships are visually grouped:
+           1) Category row — filter + Manage Categories
+           2) Match — between the two filters so it's clear it joins them
+           3) Tag row — filter + Manage Tags
+           4) Actions — upload / download
+         "+ Category" moved INTO the Manage Categories modal (it logically belongs with the rest
+         of the category-management actions). -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+      <label style="margin:0;width:60px;flex-shrink:0;">Category:</label>
+      <select id="imageLibraryCategoryFilter" onchange="renderImageLibrary()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;width:220px;max-width:100%;">
         <option value="">All</option>
       </select>
-      <label style="margin:0;">Tag:</label>
-      <select id="imageLibraryTagFilter" onchange="renderImageLibrary()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;min-width:130px;">
-        <option value="">All</option>
-      </select>
-      <span style="font-size:11px;color:var(--muted);margin-left:4px;" title="How to combine the Category, Tag, and Search filters when more than one is active">Match:</span>
+      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="openManageCategoriesModal()" title="Add, rename, or delete categories">Manage Categories</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding-left:68px;">
+      <span style="font-size:11px;color:var(--muted);" title="How to combine the Category, Tag, and Search filters when more than one is active">Match:</span>
       <div class="match-toggle">
         <button type="button" id="libraryMatchAndBtn" onclick="setLibraryMatchMode('AND')" title="Show items matching ALL active filters">AND</button>
         <button type="button" id="libraryMatchOrBtn" onclick="setLibraryMatchMode('OR')" title="Show items matching ANY active filter">OR</button>
       </div>
-      <div style="flex:1;"></div>
-      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="promptCreateLibraryCategory()" title="Create a new category">+ Category</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+      <label style="margin:0;width:60px;flex-shrink:0;">Tag:</label>
+      <select id="imageLibraryTagFilter" onchange="renderImageLibrary()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;width:220px;max-width:100%;">
+        <option value="">All</option>
+      </select>
+      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="openManageTagsModal()" title="Rename or delete tags across the whole library">Manage Tags</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadInput').click()" title="Upload one or more image files">+ Files</button>
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadFolderInput').click()" title="Upload every image in a folder (non-image files are skipped)">+ Folder</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadVisibleLibraryItems()" title="Download all images currently visible in the grid as one .zip">⬇ ZIP</button>
-      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="openManageCategoriesModal()" title="Rename or delete categories">Manage Categories</button>
-      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="openManageTagsModal()" title="Rename or delete tags across the whole library">Manage Tags</button>
       <input type="file" id="libraryUploadInput" accept="image/*" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
            Safari, and Firefox — covers all browsers SmarterPaw uses. Non-image files in the folder
@@ -10606,8 +10624,31 @@ function closeMoveLibraryItemModal(){
 function openManageCategoriesModal(){
   if(!currentUser){ alert('Sign in.'); return; }
   document.getElementById('manageCategoriesStatus').classList.add('hidden');
+  var inp = document.getElementById('manageCategoryNewName');
+  if(inp) inp.value = '';
   document.getElementById('manageCategoriesModal').classList.remove('hidden');
   renderManageCategoriesList();
+}
+
+// v170: + New Category, moved into this modal from the library toolbar. Refreshes the cached
+// categories so the list AND the library filter dropdown both reflect the new entry.
+function addCategoryFromManageModal(){
+  var inp = document.getElementById('manageCategoryNewName');
+  if(!inp) return;
+  var name = (inp.value || '').trim();
+  if(!name){ inp.focus(); return; }
+  cloudCreateLibraryCategory(name).then(function(cat){
+    return cloudListLibraryCategories().then(function(cats){
+      _libraryCategoriesCache = cats;
+      inp.value = '';
+      renderManageCategoriesList();
+      _showManageCategoriesStatus('✓ Added "' + cat.name + '"');
+      inp.focus();
+    });
+  }).catch(function(e){
+    console.error('[lib] add category failed:', e);
+    _showManageCategoriesStatus('✗ Add failed: ' + (e.message || e), true);
+  });
 }
 
 function closeManageCategoriesModal(){
