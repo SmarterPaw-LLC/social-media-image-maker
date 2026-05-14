@@ -171,6 +171,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .lib-item .lib-move{position:absolute;top:4px;right:30px;width:22px;height:22px;border-radius:11px;background:rgba(0,0,0,0.7);color:#fff;border:none;cursor:pointer;font-size:11px;line-height:22px;padding:0;opacity:0;transition:opacity 0.15s, background 0.15s;}
 .lib-item:hover .lib-move{opacity:1;}
 .lib-item .lib-move:hover{background:var(--green-dark);}
+/* v171: multi-select state for bulk-edit. Whole tile turns green-bordered with a corner check.
+   In select-mode, the per-tile delete/move buttons are hidden because they only affect one item — the bulk
+   action bar at the top of the modal is what you use to act on the whole selection. */
+.lib-item.selected{border-color:var(--green);background:#e8f5d9;box-shadow:0 0 0 1.5px var(--green) inset;}
+.lib-item.selected::before{content:'✓';position:absolute;top:4px;left:4px;width:22px;height:22px;border-radius:11px;background:var(--green);color:#fff;font-size:13px;line-height:22px;text-align:center;z-index:5;font-weight:700;}
+.lib-item.select-mode .lib-del,.lib-item.select-mode .lib-move{display:none;}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -187,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v170</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v171</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -434,6 +440,42 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <!-- Toast (v123+) — transient confirmation message, populated and shown via showToast() -->
 <div class="toast" id="appToast"></div>
 
+<!-- v171: Bulk Edit modal — set category + add/remove tags on every selected library image at once.
+     Category dropdown defaults to "(Leave unchanged)" so the user can edit tags only without
+     accidentally bulk-recategorizing. Add-tags vs Remove-tags are kept separate so a single Save
+     can do both in one pass. z-index 1100 to stack above the library modal. -->
+<div class="modal-overlay hidden" id="bulkEditModal" style="z-index:1100;">
+  <div class="modal" style="max-width:560px;width:92vw;">
+    <h2>Bulk Edit <span id="bulkEditCount" style="color:var(--muted);font-weight:400;font-size:13px;"></span></h2>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <label>Category</label>
+        <select id="bulkEditCategorySel" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
+          <option value="__unchanged__">(Leave unchanged)</option>
+          <option value="">(Uncategorized)</option>
+        </select>
+      </div>
+      <div>
+        <label>Add tags <span style="font-weight:400;color:var(--muted);font-size:11px;">(these will be added to every selected image; existing tags are kept)</span></label>
+        <div id="bulkEditAddTagsChips" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1.5px solid var(--border);border-radius:6px;min-height:38px;max-height:120px;overflow-y:auto;margin-top:4px;background:#fff;"></div>
+        <div style="display:flex;gap:4px;margin-top:4px;">
+          <input type="text" id="bulkEditAddTagInput" placeholder="new tag…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();bulkEditAddTagFromInput();}" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+          <button type="button" class="btn-cancel" onclick="bulkEditAddTagFromInput()" style="padding:5px 12px;font-size:12px;">+ Add</button>
+        </div>
+      </div>
+      <div>
+        <label>Remove tags <span style="font-weight:400;color:var(--muted);font-size:11px;">(click tags that appear on any selected image to remove them from those images)</span></label>
+        <div id="bulkEditRemoveTagsChips" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1.5px solid var(--border);border-radius:6px;min-height:38px;max-height:120px;overflow-y:auto;margin-top:4px;background:#fff;"></div>
+      </div>
+      <div id="bulkEditError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeBulkEditModal()">Cancel</button>
+      <button class="btn-primary" onclick="confirmBulkEdit()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- v169: Manage Categories modal — rename or delete categories. Mirrors the Manage Tags modal
      structure. Deleting a category orphans its items to "Uncategorized" (FK is on-delete-set-null
      in the DB schema), so we surface the affected-item count in the confirm prompt rather than
@@ -577,11 +619,22 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadInput').click()" title="Upload one or more image files">+ Files</button>
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadFolderInput').click()" title="Upload every image in a folder (non-image files are skipped)">+ Folder</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadVisibleLibraryItems()" title="Download all images currently visible in the grid as one .zip">⬇ ZIP</button>
+      <!-- v171: multi-select mode toggle. When on, clicking tiles toggles selection (no add-to-canvas)
+           and the bulk-action bar appears below for category/tag edits on the whole selection. -->
+      <button type="button" id="libraryMultiSelectBtn" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="toggleLibraryMultiSelect()" title="Toggle multi-select mode to bulk-edit category + tags">☑ Select</button>
       <input type="file" id="libraryUploadInput" accept="image/*" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
            Safari, and Firefox — covers all browsers SmarterPaw uses. Non-image files in the folder
            are filtered out in handleLibraryUpload before the upload loop. -->
       <input type="file" id="libraryUploadFolderInput" webkitdirectory directory multiple style="display:none;" onchange="handleLibraryUpload(event)">
+    </div>
+    <!-- v171: bulk-action bar — only visible in multi-select mode. Shows count + actions. -->
+    <div id="libraryBulkActionBar" class="hidden" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#f4faf4;border:1.5px solid var(--green);border-radius:6px;margin-bottom:8px;flex-wrap:wrap;">
+      <b id="libraryBulkSelectionCount" style="font-size:12px;color:var(--green-dark);">0 selected</b>
+      <div style="flex:1;"></div>
+      <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="bulkSelectAllVisible()" title="Select every image currently visible in the grid">Select all visible</button>
+      <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="bulkClearSelection()" title="Clear the selection (stays in select mode)">Clear</button>
+      <button type="button" class="btn-primary" style="padding:5px 12px;font-size:12px;" onclick="openBulkEditModal()" title="Set category and add/remove tags for the selected images">✎ Bulk Edit</button>
     </div>
     <!-- v147: hint shown only in manage mode so the user knows clicks edit, not add to canvas -->
     <div id="imageLibraryModeHint" class="hidden" style="padding:6px 10px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;font-size:11px;color:#664d03;margin-bottom:8px;"></div>
@@ -10374,18 +10427,278 @@ function renderImageLibrary(){
         + '<div class="lib-name">' + escAttr(item.name) + '</div>'
         + metaLine
         + tagsLine;
+      // v171: in multi-select mode tile click toggles selection; tile shows selected state via class.
+      if(_libraryMultiSelectMode){
+        div.classList.add('select-mode');
+        if(_librarySelectedItemIds[item.id]) div.classList.add('selected');
+      }
       // v134: attach handlers directly to each button instead of using event delegation on the
       // parent div. v135/v136 diagnostic logs removed — root cause was z-index stacking, fixed.
       var delBtn = div.querySelector('[data-action="delete"]');
       if(delBtn) delBtn.onclick = function(e){ e.stopPropagation(); confirmDeleteLibraryItem(item); };
       var moveBtn = div.querySelector('[data-action="move"]');
       if(moveBtn) moveBtn.onclick = function(e){ e.stopPropagation(); openMoveLibraryItemModal(item); };
-      div.onclick = function(){ pickLibraryItem(item); };
+      div.onclick = function(){
+        if(_libraryMultiSelectMode){
+          toggleLibraryItemSelection(item.id, div);
+        } else {
+          pickLibraryItem(item);
+        }
+      };
       grid.appendChild(div);
     });
+    // Keep the bulk-action bar's count + visibility in sync with whatever just rendered
+    updateLibraryBulkActionBar();
   }).catch(function(e){
     console.error('[lib] render error:', e);
     grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#a00;padding:20px;font-size:12px;">Error: ' + (e.message || e) + '</div>';
+  });
+}
+
+// ── LIBRARY MULTI-SELECT + BULK EDIT (v171) ──
+// Clicking a tile while multi-select is on toggles its selection (no canvas add). Selection state
+// lives in _librarySelectedItemIds keyed by item.id (true = selected). The Bulk Edit modal reads
+// this set, applies a single category update + tag add/remove per item, and refreshes the cache.
+var _libraryMultiSelectMode = false;
+var _librarySelectedItemIds = {};
+var _bulkEditAddTags = [];     // string[] — tags to add to every selected item
+var _bulkEditRemoveTags = {};  // {tag: true} — tags to strip from every selected item that has them
+
+function toggleLibraryMultiSelect(){
+  _libraryMultiSelectMode = !_libraryMultiSelectMode;
+  if(!_libraryMultiSelectMode) _librarySelectedItemIds = {};
+  // Reflect on the toggle button (filled vs empty look)
+  var btn = document.getElementById('libraryMultiSelectBtn');
+  if(btn){
+    if(_libraryMultiSelectMode){
+      btn.classList.remove('btn-cancel');
+      btn.classList.add('btn-primary');
+      btn.textContent = '✕ Exit Select';
+    } else {
+      btn.classList.remove('btn-primary');
+      btn.classList.add('btn-cancel');
+      btn.textContent = '☑ Select';
+    }
+  }
+  renderImageLibrary();
+}
+
+function toggleLibraryItemSelection(itemId, tileDiv){
+  if(_librarySelectedItemIds[itemId]){
+    delete _librarySelectedItemIds[itemId];
+    if(tileDiv) tileDiv.classList.remove('selected');
+  } else {
+    _librarySelectedItemIds[itemId] = true;
+    if(tileDiv) tileDiv.classList.add('selected');
+  }
+  updateLibraryBulkActionBar();
+}
+
+function bulkSelectAllVisible(){
+  // Selects every item currently in the filtered/visible list (so search + filters scope the action)
+  (_libraryVisibleItems || []).forEach(function(it){ _librarySelectedItemIds[it.id] = true; });
+  // Refresh the visible state on each tile inline (no DB refetch)
+  document.querySelectorAll('#imageLibraryGrid .lib-item').forEach(function(el, idx){
+    var item = _libraryVisibleItems[idx];
+    if(item && _librarySelectedItemIds[item.id]) el.classList.add('selected');
+  });
+  updateLibraryBulkActionBar();
+}
+
+function bulkClearSelection(){
+  _librarySelectedItemIds = {};
+  document.querySelectorAll('#imageLibraryGrid .lib-item.selected').forEach(function(el){ el.classList.remove('selected'); });
+  updateLibraryBulkActionBar();
+}
+
+function updateLibraryBulkActionBar(){
+  var bar = document.getElementById('libraryBulkActionBar');
+  if(!bar) return;
+  var ids = Object.keys(_librarySelectedItemIds);
+  // Bar only shows in multi-select mode; even if nothing's selected we still want it visible so
+  // the user sees the "Select all visible" / "Clear" affordances.
+  if(_libraryMultiSelectMode){
+    bar.classList.remove('hidden');
+    var count = ids.length;
+    var label = count + ' selected';
+    document.getElementById('libraryBulkSelectionCount').textContent = label;
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+// Bulk update: applies category (optional) + add/remove tags to each id sequentially-via-Promise.all.
+// Each row's new tags array is computed from its CURRENT tags (we re-fetch from _libraryItemsCache
+// just before computing to be safe). cloudUpdateLibraryItem takes one row at a time; Promise.all
+// fans them out in parallel.
+function cloudBulkUpdateLibraryItems(ids, opts){
+  // opts = {categoryId: number|null|undefined ('undefined' = leave unchanged), addTags: string[], removeTagsSet: {tag:true}}
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  if(!ids.length) return Promise.resolve({touched: 0});
+  var add = opts.addTags || [];
+  var removeSet = opts.removeTagsSet || {};
+  var setCat = opts.categoryId !== undefined;
+  var jobs = ids.map(function(id){
+    var item = _libraryItemsCache.find(function(x){return x.id === +id;});
+    if(!item) return Promise.resolve();
+    var existing = item.tags || [];
+    // Build new tag list: drop any in removeSet, then union with addTags (deduped).
+    var seen = {};
+    var newTags = [];
+    existing.forEach(function(t){
+      if(!t) return;
+      if(removeSet[t]) return;
+      if(seen[t]) return;
+      seen[t] = true;
+      newTags.push(t);
+    });
+    add.forEach(function(t){
+      if(!t || seen[t]) return;
+      seen[t] = true;
+      newTags.push(t);
+    });
+    var updates = {tags: newTags};
+    if(setCat) updates.category_id = opts.categoryId;
+    return cloudUpdateLibraryItem(+id, updates);
+  });
+  return Promise.all(jobs).then(function(){ return {touched: ids.length}; });
+}
+
+// Bulk Edit modal — state + UI
+
+function openBulkEditModal(){
+  var ids = Object.keys(_librarySelectedItemIds);
+  if(!ids.length){ alert('Select at least one image first.'); return; }
+  _bulkEditAddTags = [];
+  _bulkEditRemoveTags = {};
+  // Populate category dropdown from cache, preserving "(Leave unchanged)" + "(Uncategorized)" head
+  var sel = document.getElementById('bulkEditCategorySel');
+  sel.innerHTML = '<option value="__unchanged__">(Leave unchanged)</option><option value="">(Uncategorized)</option>';
+  _libraryCategoriesCache.slice().sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(c){
+    var opt = document.createElement('option');
+    opt.value = String(c.id);
+    opt.textContent = c.name;
+    sel.appendChild(opt);
+  });
+  sel.value = '__unchanged__';
+  document.getElementById('bulkEditAddTagInput').value = '';
+  document.getElementById('bulkEditError').classList.add('hidden');
+  document.getElementById('bulkEditCount').textContent = '(' + ids.length + ' image' + (ids.length === 1 ? '' : 's') + ')';
+  renderBulkEditAddChips();
+  renderBulkEditRemoveChips();
+  document.getElementById('bulkEditModal').classList.remove('hidden');
+}
+
+function closeBulkEditModal(){
+  document.getElementById('bulkEditModal').classList.add('hidden');
+}
+
+function renderBulkEditAddChips(){
+  var box = document.getElementById('bulkEditAddTagsChips');
+  box.innerHTML = '';
+  if(!_bulkEditAddTags.length){
+    box.innerHTML = '<span style="font-size:11px;color:var(--muted);padding:4px;">No tags will be added.</span>';
+    return;
+  }
+  _bulkEditAddTags.forEach(function(t){
+    var chip = document.createElement('span');
+    chip.className = 'tag-chip selected';
+    chip.style.cursor = 'pointer';
+    chip.title = 'Click to remove from the add list';
+    chip.innerHTML = escAttr(t) + ' <span style="opacity:0.7;font-weight:400;">✕</span>';
+    chip.onclick = function(){
+      _bulkEditAddTags = _bulkEditAddTags.filter(function(x){return x !== t;});
+      renderBulkEditAddChips();
+    };
+    box.appendChild(chip);
+  });
+}
+
+function bulkEditAddTagFromInput(){
+  var inp = document.getElementById('bulkEditAddTagInput');
+  var raw = (inp.value || '').trim().toLowerCase();
+  if(!raw) return;
+  // Accept comma-separated entries so the user can paste several at once
+  raw.split(',').map(function(s){return s.trim();}).filter(Boolean).forEach(function(t){
+    if(_bulkEditAddTags.indexOf(t) < 0) _bulkEditAddTags.push(t);
+  });
+  inp.value = '';
+  inp.focus();
+  renderBulkEditAddChips();
+}
+
+function renderBulkEditRemoveChips(){
+  // Show every tag that appears on ANY selected item. Clicking marks it for removal (filled style);
+  // clicking again un-marks. This way the user only sees relevant tags, not every tag in the library.
+  var box = document.getElementById('bulkEditRemoveTagsChips');
+  box.innerHTML = '';
+  var ids = Object.keys(_librarySelectedItemIds);
+  var tagSet = {};
+  ids.forEach(function(idStr){
+    var item = _libraryItemsCache.find(function(x){return x.id === +idStr;});
+    if(!item) return;
+    (item.tags || []).forEach(function(t){ if(t) tagSet[t] = (tagSet[t] || 0) + 1; });
+  });
+  var tags = Object.keys(tagSet).sort();
+  if(!tags.length){
+    box.innerHTML = '<span style="font-size:11px;color:var(--muted);padding:4px;">No tags on the selected images.</span>';
+    return;
+  }
+  tags.forEach(function(t){
+    var chip = document.createElement('span');
+    var isMarked = !!_bulkEditRemoveTags[t];
+    chip.className = 'tag-chip' + (isMarked ? ' selected' : '');
+    chip.style.cursor = 'pointer';
+    // Distinguish "applies to all selected" vs "applies to some"
+    var countLabel = tagSet[t] === ids.length ? '' : ' (' + tagSet[t] + '/' + ids.length + ')';
+    chip.title = isMarked ? 'Click to keep this tag' : 'Click to mark for removal' + countLabel;
+    chip.textContent = t + countLabel;
+    chip.onclick = function(){
+      if(_bulkEditRemoveTags[t]) delete _bulkEditRemoveTags[t];
+      else _bulkEditRemoveTags[t] = true;
+      renderBulkEditRemoveChips();
+    };
+    box.appendChild(chip);
+  });
+}
+
+function confirmBulkEdit(){
+  var ids = Object.keys(_librarySelectedItemIds);
+  if(!ids.length){ closeBulkEditModal(); return; }
+  var sel = document.getElementById('bulkEditCategorySel');
+  var catVal = sel.value;
+  var opts = {addTags: _bulkEditAddTags, removeTagsSet: _bulkEditRemoveTags};
+  if(catVal === '__unchanged__'){
+    // no category change
+  } else if(catVal === ''){
+    opts.categoryId = null;
+  } else {
+    opts.categoryId = parseInt(catVal, 10);
+  }
+  // No-op early-exit so we don't spam the network when nothing actually changed
+  if(opts.categoryId === undefined && !_bulkEditAddTags.length && !Object.keys(_bulkEditRemoveTags).length){
+    closeBulkEditModal();
+    return;
+  }
+  var errEl = document.getElementById('bulkEditError');
+  errEl.classList.add('hidden');
+  cloudBulkUpdateLibraryItems(ids, opts).then(function(result){
+    // Refresh the cache so the bulk-edit's effects show up in the grid immediately
+    return cloudListLibraryItems().then(function(items){
+      _libraryItemsCache = items;
+      var tagSet = {};
+      items.forEach(function(it){ (it.tags || []).forEach(function(t){ if(t) tagSet[t] = true; }); });
+      _libraryAllTagsCache = Object.keys(tagSet).sort();
+      populateLibraryTagFilter();
+      closeBulkEditModal();
+      // Stay in select mode but reflect updated tile metadata
+      renderImageLibrary();
+      showToast('✓ Updated ' + result.touched + ' image' + (result.touched === 1 ? '' : 's'));
+    });
+  }).catch(function(e){
+    console.error('[lib] bulk edit failed:', e);
+    errEl.textContent = '✗ Save failed: ' + (e.message || e);
+    errEl.classList.remove('hidden');
   });
 }
 
