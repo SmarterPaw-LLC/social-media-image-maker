@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v167</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v168</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -437,7 +437,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <!-- v153: Manage Tags modal — rename or delete a tag across every item in the library. Lives
      above the Image Library modal (z-index 1100) so it stacks correctly. -->
 <div class="modal-overlay hidden" id="manageTagsModal" style="z-index:1100;">
-  <div class="modal" style="max-width:480px;">
+  <div class="modal" style="max-width:640px;width:92vw;">
     <h2>Manage Tags</h2>
     <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Rename, delete, or apply a tag across the library. Renaming to an existing tag merges them.</div>
     <div id="manageTagsList" style="display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto;">
@@ -10589,13 +10589,13 @@ function renderManageTagsList(){
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;background:#fafafa;';
     row.innerHTML =
-      '<div style="flex:1;min-width:0;overflow:hidden;">'
-        + '<b style="font-size:13px;"><span style="color:var(--muted);font-weight:700;margin-right:2px;">#</span>' + escAttr(t) + '</b>'
+      '<div style="flex:1;min-width:0;">'
+        + '<b style="font-size:13px;word-break:break-word;"><span style="color:var(--muted);font-weight:700;margin-right:2px;">#</span>' + escAttr(t) + '</b>'
         + '<div style="font-size:10px;color:var(--muted);margin-top:1px;">' + usage[t] + ' image' + (usage[t] === 1 ? '' : 's') + '</div>'
       + '</div>'
-      + '<button type="button" class="btn-sm" data-action="apply" title="Pick images to add this tag to (or remove from)">Apply…</button>'
-      + '<button type="button" class="btn-sm" data-action="rename" title="Rename across all items">Rename</button>'
-      + '<button type="button" class="btn-sm danger" data-action="delete" title="Remove from all items">Delete</button>';
+      + '<button type="button" class="btn-sm" data-action="apply" title="Pick images to add this tag to (or remove from)" style="flex-shrink:0;">Apply…</button>'
+      + '<button type="button" class="btn-sm" data-action="rename" title="Rename across all items" style="flex-shrink:0;">Rename</button>'
+      + '<button type="button" class="btn-sm danger" data-action="delete" title="Remove from all items" style="flex-shrink:0;">Delete</button>';
     row.querySelector('[data-action="apply"]').onclick = function(){ openApplyTagModal(t); };
     row.querySelector('[data-action="rename"]').onclick = function(){ doRenameTag(t); };
     row.querySelector('[data-action="delete"]').onclick = function(){ doDeleteTag(t); };
