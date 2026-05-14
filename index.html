@@ -187,7 +187,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v168</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v169</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -434,6 +434,24 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <!-- Toast (v123+) — transient confirmation message, populated and shown via showToast() -->
 <div class="toast" id="appToast"></div>
 
+<!-- v169: Manage Categories modal — rename or delete categories. Mirrors the Manage Tags modal
+     structure. Deleting a category orphans its items to "Uncategorized" (FK is on-delete-set-null
+     in the DB schema), so we surface the affected-item count in the confirm prompt rather than
+     deleting silently. -->
+<div class="modal-overlay hidden" id="manageCategoriesModal" style="z-index:1100;">
+  <div class="modal" style="max-width:640px;width:92vw;">
+    <h2>Manage Categories</h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Rename or delete categories. Deleting a category leaves its images in place — they move to "Uncategorized".</div>
+    <div id="manageCategoriesList" style="display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto;">
+      <!-- populated by renderManageCategoriesList -->
+    </div>
+    <div id="manageCategoriesStatus" class="hidden" style="padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:12px;color:#3a5e10;margin-top:8px;"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeManageCategoriesModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- v153: Manage Tags modal — rename or delete a tag across every item in the library. Lives
      above the Image Library modal (z-index 1100) so it stacks correctly. -->
 <div class="modal-overlay hidden" id="manageTagsModal" style="z-index:1100;">
@@ -539,6 +557,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadInput').click()" title="Upload one or more image files">+ Files</button>
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadFolderInput').click()" title="Upload every image in a folder (non-image files are skipped)">+ Folder</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadVisibleLibraryItems()" title="Download all images currently visible in the grid as one .zip">⬇ ZIP</button>
+      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="openManageCategoriesModal()" title="Rename or delete categories">Manage Categories</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="openManageTagsModal()" title="Rename or delete tags across the whole library">Manage Tags</button>
       <input type="file" id="libraryUploadInput" accept="image/*" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
@@ -9977,6 +9996,30 @@ function cloudCreateLibraryCategory(name){
   });
 }
 
+// v169: rename a single category. DB has a unique-name constraint, so collisions throw 23505;
+// surface that as a friendly message.
+function cloudRenameLibraryCategory(id, newName){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  if(!newName || !newName.trim()) return Promise.reject(new Error('Name required.'));
+  return sb.from('image_library_categories').update({name: newName.trim()}).eq('id', id).then(function(res){
+    if(res.error){
+      if(res.error.code === '23505') throw new Error('A category named "' + newName + '" already exists.');
+      throw new Error(res.error.message || 'Rename failed');
+    }
+  });
+}
+
+// v169: delete a category. image_library_items.category_id is declared `on delete set null` in
+// supabase_add_image_library.sql, so deleting a category orphans its items to "Uncategorized"
+// rather than cascade-deleting them. We still surface the affected item count in the UI so the
+// user can confirm before clicking through.
+function cloudDeleteLibraryCategory(id){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  return sb.from('image_library_categories').delete().eq('id', id).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Delete failed');
+  });
+}
+
 function cloudListLibraryItems(){
   // v142: removed the categoryIdOrUncat param. Library is small enough that loading all items
   // once and filtering client-side gives a snappier UX (no DB round-trip on every dropdown
@@ -10553,6 +10596,110 @@ function openMoveLibraryItemModal(item){
 function closeMoveLibraryItemModal(){
   document.getElementById('moveLibraryItemModal').classList.add('hidden');
   _pendingLibraryMoveContext = null;
+}
+
+// ── MANAGE CATEGORIES MODAL (v169) ──
+// Lets the user rename or delete categories from the library. Mirrors Manage Tags. Deletion is
+// safe: the DB foreign key is on-delete-set-null, so items in the deleted category fall back to
+// "Uncategorized" rather than being deleted with the category.
+
+function openManageCategoriesModal(){
+  if(!currentUser){ alert('Sign in.'); return; }
+  document.getElementById('manageCategoriesStatus').classList.add('hidden');
+  document.getElementById('manageCategoriesModal').classList.remove('hidden');
+  renderManageCategoriesList();
+}
+
+function closeManageCategoriesModal(){
+  document.getElementById('manageCategoriesModal').classList.add('hidden');
+  // Re-render the underlying library so renames/deletes are reflected in the filter dropdown and grid
+  if(!document.getElementById('imageLibraryModal').classList.contains('hidden')){
+    renderImageLibrary();
+  }
+}
+
+function renderManageCategoriesList(){
+  var container = document.getElementById('manageCategoriesList');
+  container.innerHTML = '';
+  // Item counts come from the cached items list so the modal shows how many images each category holds.
+  var usage = {};
+  _libraryItemsCache.forEach(function(it){
+    var k = it.category_id != null ? String(it.category_id) : '__none__';
+    usage[k] = (usage[k] || 0) + 1;
+  });
+  if(!_libraryCategoriesCache.length){
+    container.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px;">No categories yet. Add one via the "+ Category" button in the library toolbar.</div>';
+    return;
+  }
+  // Sort for predictable order (matches the category dropdown elsewhere)
+  var sorted = _libraryCategoriesCache.slice().sort(function(a, b){ return a.name.localeCompare(b.name); });
+  sorted.forEach(function(c){
+    var count = usage[String(c.id)] || 0;
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;background:#fafafa;';
+    row.innerHTML =
+      '<div style="flex:1;min-width:0;">'
+        + '<b style="font-size:13px;word-break:break-word;">' + escAttr(c.name) + '</b>'
+        + '<div style="font-size:10px;color:var(--muted);margin-top:1px;">' + count + ' image' + (count === 1 ? '' : 's') + '</div>'
+      + '</div>'
+      + '<button type="button" class="btn-sm" data-action="rename" title="Rename this category" style="flex-shrink:0;">Rename</button>'
+      + '<button type="button" class="btn-sm danger" data-action="delete" title="Delete category (images move to Uncategorized)" style="flex-shrink:0;">Delete</button>';
+    row.querySelector('[data-action="rename"]').onclick = function(){ doRenameCategory(c); };
+    row.querySelector('[data-action="delete"]').onclick = function(){ doDeleteCategory(c, count); };
+    container.appendChild(row);
+  });
+}
+
+function _showManageCategoriesStatus(msg, isError){
+  var s = document.getElementById('manageCategoriesStatus');
+  s.classList.remove('hidden');
+  if(isError){
+    s.style.background = '#fef2f0';
+    s.style.borderColor = '#fbcaba';
+    s.style.color = '#b3261e';
+  } else {
+    s.style.background = '#f4faf4';
+    s.style.borderColor = '#d5e8bc';
+    s.style.color = '#3a5e10';
+  }
+  s.textContent = msg;
+  setTimeout(function(){ s.classList.add('hidden'); }, 4000);
+}
+
+function doRenameCategory(cat){
+  var newName = prompt('Rename category "' + cat.name + '" to:', cat.name);
+  if(newName == null) return;
+  newName = newName.trim();
+  if(!newName){ alert('Name required.'); return; }
+  if(newName === cat.name) return;
+  cloudRenameLibraryCategory(cat.id, newName).then(function(){
+    return cloudListLibraryCategories().then(function(cats){
+      _libraryCategoriesCache = cats;
+      renderManageCategoriesList();
+      _showManageCategoriesStatus('✓ Renamed "' + cat.name + '" → "' + newName + '"');
+    });
+  }).catch(function(e){
+    console.error('[lib] rename category failed:', e);
+    _showManageCategoriesStatus('✗ Rename failed: ' + (e.message || e), true);
+  });
+}
+
+function doDeleteCategory(cat, count){
+  var msg = 'Delete category "' + cat.name + '"?';
+  if(count > 0) msg += '\n\n' + count + ' image' + (count === 1 ? '' : 's') + ' will move to Uncategorized — the images themselves are kept.';
+  if(!confirm(msg)) return;
+  cloudDeleteLibraryCategory(cat.id).then(function(){
+    // Re-fetch categories AND items so the cached items reflect their now-null category_id
+    return Promise.all([cloudListLibraryCategories(), cloudListLibraryItems()]).then(function(both){
+      _libraryCategoriesCache = both[0];
+      _libraryItemsCache = both[1];
+      renderManageCategoriesList();
+      _showManageCategoriesStatus('✓ Deleted "' + cat.name + '"' + (count > 0 ? ' (' + count + ' image' + (count === 1 ? '' : 's') + ' moved to Uncategorized)' : ''));
+    });
+  }).catch(function(e){
+    console.error('[lib] delete category failed:', e);
+    _showManageCategoriesStatus('✗ Delete failed: ' + (e.message || e), true);
+  });
 }
 
 // ── MANAGE TAGS MODAL (v153) ──
