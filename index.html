@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v174</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v175</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -449,6 +449,16 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <h2>Bulk Edit <span id="bulkEditCount" style="color:var(--muted);font-weight:400;font-size:13px;"></span></h2>
     <div style="display:flex;flex-direction:column;gap:12px;">
       <div>
+        <label>Brand</label>
+        <select id="bulkEditBrandSel" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
+          <option value="__unchanged__">(Leave unchanged)</option>
+          <option value="">(No brand)</option>
+          <option value="meowi">Meowijuana</option>
+          <option value="doggi">Doggijuana</option>
+          <option value="kkz">Kitty Ka-Zoom</option>
+        </select>
+      </div>
+      <div>
         <label>Category</label>
         <select id="bulkEditCategorySel" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
           <option value="__unchanged__">(Leave unchanged)</option>
@@ -546,6 +556,26 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
   </div>
 </div>
 
+<!-- v175: Upload brand picker — shown after files are chosen, before the upload loop runs. The
+     chosen brand is stamped onto every image in this upload batch. z-index 1100 to sit above the
+     Image Library modal. -->
+<div class="modal-overlay hidden" id="uploadBrandModal" style="z-index:1100;">
+  <div class="modal" style="max-width:420px;">
+    <h2>Which brand?</h2>
+    <div id="uploadBrandCount" style="font-size:12px;color:var(--muted);margin-bottom:10px;"></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Pick the brand these images belong to. You can change it later via Edit Image or Bulk Edit.</div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <button type="button" class="btn-primary" style="padding:10px;font-size:13px;" onclick="runLibraryUpload('meowi')">Meowijuana</button>
+      <button type="button" class="btn-primary" style="padding:10px;font-size:13px;" onclick="runLibraryUpload('doggi')">Doggijuana</button>
+      <button type="button" class="btn-primary" style="padding:10px;font-size:13px;" onclick="runLibraryUpload('kkz')">Kitty Ka-Zoom</button>
+      <button type="button" class="btn-cancel" style="padding:8px;font-size:12px;" onclick="runLibraryUpload('')">No brand / skip</button>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="cancelUploadBrand()">Cancel upload</button>
+    </div>
+  </div>
+</div>
+
 <!-- Change-category modal (v133+) for library items — picks a new category from a select.
      v136: z-index bumped above the standard .modal-overlay so it stacks on top of the Image
      Library modal it's launched from. -->
@@ -556,6 +586,15 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <div>
         <label>Name</label>
         <input type="text" id="moveLibraryItemNameInput" autocomplete="off" placeholder="Untitled" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
+      </div>
+      <div>
+        <label>Brand</label>
+        <select id="moveLibraryItemBrand" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;">
+          <option value="">(No brand)</option>
+          <option value="meowi">Meowijuana</option>
+          <option value="doggi">Doggijuana</option>
+          <option value="kkz">Kitty Ka-Zoom</option>
+        </select>
       </div>
       <div>
         <label>Category</label>
@@ -597,6 +636,16 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
          "+ Category" moved INTO the Manage Categories modal (it logically belongs with the rest
          of the category-management actions). -->
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+      <label style="margin:0;width:60px;flex-shrink:0;">Brand:</label>
+      <select id="imageLibraryBrandFilter" onchange="renderImageLibrary()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;width:220px;max-width:100%;">
+        <option value="">All</option>
+        <option value="meowi">Meowijuana</option>
+        <option value="doggi">Doggijuana</option>
+        <option value="kkz">Kitty Ka-Zoom</option>
+        <option value="__none__">(No brand)</option>
+      </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
       <label style="margin:0;width:60px;flex-shrink:0;">Category:</label>
       <select id="imageLibraryCategoryFilter" onchange="renderImageLibrary()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;width:220px;max-width:100%;">
         <option value="">All</option>
@@ -604,7 +653,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="openManageCategoriesModal()" title="Add, rename, or delete categories">Manage Categories</button>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding-left:68px;">
-      <span style="font-size:11px;color:var(--muted);" title="How to combine the Category, Tag, and Search filters when more than one is active">Match:</span>
+      <span style="font-size:11px;color:var(--muted);" title="How to combine the Brand, Category, Tag, and Search filters when more than one is active">Match:</span>
       <div class="match-toggle">
         <button type="button" id="libraryMatchAndBtn" onclick="setLibraryMatchMode('AND')" title="Show items matching ALL active filters">AND</button>
         <button type="button" id="libraryMatchOrBtn" onclick="setLibraryMatchMode('OR')" title="Show items matching ANY active filter">OR</button>
@@ -9853,6 +9902,7 @@ var _libraryAllTagsCache = [];   // v142: unique sorted tag list for the filter 
 var _libraryVisibleItems = [];   // v152: last-rendered filtered set, used by Download ZIP
 var _libraryCurrentFilter = '';  // '' = All; '0' = Uncategorized; otherwise category id as string
 var _libraryCurrentTagFilter = '';  // v142: '' = All; otherwise specific tag string
+var _libraryCurrentBrandFilter = '';  // v175: '' = All; '__none__' = no brand; otherwise brand code
 // v144: how to combine category + tag + search when more than one is active. Persisted in
 // localStorage so the user's preference survives reloads. Default AND (current behavior).
 var _libraryMatchMode = (function(){
@@ -9868,6 +9918,23 @@ function setLibraryMatchMode(mode){
   renderImageLibrary();
 }
 var _libraryLastErrorText = '';  // v131: held for the [📋 Copy] button when an upload fails
+// v175: brand dimension for library items. Fixed enumeration (the DB column is plain text so this
+// JS list is the source of truth). value '' / null = unassigned. brandLabel() resolves a stored
+// value to its display name everywhere the library renders a brand.
+var LIBRARY_BRANDS = [
+  {value: 'meowi', label: 'Meowijuana'},
+  {value: 'doggi', label: 'Doggijuana'},
+  {value: 'kkz',   label: 'Kitty Ka-Zoom'}
+];
+function brandLabel(v){
+  if(!v) return '';
+  var b = LIBRARY_BRANDS.find(function(x){ return x.value === v; });
+  return b ? b.label : v;
+}
+// Pending upload context (v175): handleLibraryUpload stashes the selected files here, opens the
+// brand-picker modal, and the picker's brand buttons resume the upload via runLibraryUpload().
+var _pendingUploadFiles = null;
+var _pendingUploadInputEl = null;
 // v143: when set, the library modal is in "pick" mode — picking an item runs this callback
 // instead of adding a new image layer. Used by the per-layer Replace-image buttons so they
 // can route a library pick straight into the existing layer instead.
@@ -10112,7 +10179,7 @@ function cloudListLibraryItems(){
   // change) AND lets us derive the unique-tags list without a second query.
   if(!sb || !currentUser) return Promise.resolve([]);
   return sb.from('image_library_items')
-    .select('id, name, storage_path, category_id, tags, mime, file_size_bytes, created_at')
+    .select('id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, created_at')
     .order('created_at', {ascending: false})
     .then(function(res){
       if(res.error) throw new Error(res.error.message || 'Item list failed');
@@ -10175,7 +10242,7 @@ function cloudDeleteTag(name){
     });
 }
 
-function cloudUploadLibraryItem(file, categoryId, displayName){
+function cloudUploadLibraryItem(file, categoryId, displayName, brand){
   if(!sb || !currentUser) return Promise.reject(new Error('Sign in to upload.'));
   if(!file) return Promise.reject(new Error('No file provided.'));
   if(!window.crypto || !window.crypto.subtle) return Promise.reject(new Error('SubtleCrypto required (HTTPS only).'));
@@ -10213,10 +10280,11 @@ function cloudUploadLibraryItem(file, categoryId, displayName){
           name: displayName || file.name || 'Untitled',
           storage_path: path,
           category_id: categoryId != null ? categoryId : null,
+          brand: brand || null,
           mime: file.type || null,
           file_size_bytes: file.size,
           uploaded_by: currentUser.id
-        }).select('id, name, storage_path, category_id, mime, file_size_bytes, created_at').single();
+        }).select('id, name, storage_path, category_id, brand, mime, file_size_bytes, created_at').single();
       }).then(function(res){
         if(res.error) throw new Error(res.error.message || 'Library row insert failed');
         return res.data;
@@ -10356,8 +10424,10 @@ function populateLibraryTagFilter(){
 function renderImageLibrary(){
   var catSel = document.getElementById('imageLibraryCategoryFilter');
   var tagSel = document.getElementById('imageLibraryTagFilter');
+  var brandSel = document.getElementById('imageLibraryBrandFilter');
   _libraryCurrentFilter = catSel ? catSel.value : '';
   _libraryCurrentTagFilter = tagSel ? tagSel.value : '';
+  _libraryCurrentBrandFilter = brandSel ? brandSel.value : '';
 
   var grid = document.getElementById('imageLibraryGrid');
   grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:20px;font-size:12px;">Loading…</div>';
@@ -10390,13 +10460,18 @@ function renderImageLibrary(){
       if(!_libraryCurrentTagFilter) return null;
       return (it.tags || []).indexOf(_libraryCurrentTagFilter) >= 0;
     }
+    function checkBrand(it){
+      if(_libraryCurrentBrandFilter === '') return null;                    // inactive
+      if(_libraryCurrentBrandFilter === '__none__') return !it.brand;        // (No brand)
+      return it.brand === _libraryCurrentBrandFilter;
+    }
     function checkSearch(it){
       if(!searchQ) return null;
       if((it.name || '').toLowerCase().indexOf(searchQ) >= 0) return true;
       return (it.tags || []).some(function(tg){ return (tg || '').toLowerCase().indexOf(searchQ) >= 0; });
     }
     var visible = items.filter(function(it){
-      var results = [checkCategory(it), checkTag(it), checkSearch(it)];
+      var results = [checkBrand(it), checkCategory(it), checkTag(it), checkSearch(it)];
       var active = results.filter(function(r){ return r !== null; });
       if(!active.length) return true;   // no filters set → everything passes
       if(_libraryMatchMode === 'OR') return active.some(function(r){ return r === true; });
@@ -10430,6 +10505,9 @@ function renderImageLibrary(){
         tagsLine = '<div class="lib-tags">🏷 ' + escAttr(item.tags.join(', ')) + '</div>';
       }
       var metaParts = [];
+      // v175: brand badge leads the meta line (it's the broadest grouping)
+      var brandName = brandLabel(item.brand);
+      if(brandName) metaParts.push(brandName);
       if(catName) metaParts.push(catName);
       if(item.file_size_bytes) metaParts.push(_formatBytes(item.file_size_bytes));
       var typeShort = _formatMimeShort(item.mime || '');
@@ -10526,12 +10604,14 @@ function updateLibraryBulkActionBar(){
 // just before computing to be safe). cloudUpdateLibraryItem takes one row at a time; Promise.all
 // fans them out in parallel.
 function cloudBulkUpdateLibraryItems(ids, opts){
-  // opts = {categoryId: number|null|undefined ('undefined' = leave unchanged), addTags: string[], removeTagsSet: {tag:true}}
+  // opts = {categoryId, brand, addTags: string[], removeTagsSet: {tag:true}}
+  //   categoryId / brand: 'undefined' = leave unchanged; null = clear; value = set.
   if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
   if(!ids.length) return Promise.resolve({touched: 0});
   var add = opts.addTags || [];
   var removeSet = opts.removeTagsSet || {};
   var setCat = opts.categoryId !== undefined;
+  var setBrand = opts.brand !== undefined;
   var jobs = ids.map(function(id){
     var item = _libraryItemsCache.find(function(x){return x.id === +id;});
     if(!item) return Promise.resolve();
@@ -10553,6 +10633,7 @@ function cloudBulkUpdateLibraryItems(ids, opts){
     });
     var updates = {tags: newTags};
     if(setCat) updates.category_id = opts.categoryId;
+    if(setBrand) updates.brand = opts.brand;
     return cloudUpdateLibraryItem(+id, updates);
   });
   return Promise.all(jobs).then(function(){ return {touched: ids.length}; });
@@ -10574,6 +10655,8 @@ function openBulkEditModal(){
     sel.appendChild(opt);
   });
   sel.value = '__unchanged__';
+  var brandSel = document.getElementById('bulkEditBrandSel');
+  if(brandSel) brandSel.value = '__unchanged__';
   document.getElementById('bulkEditNewTagInput').value = '';
   document.getElementById('bulkEditError').classList.add('hidden');
   document.getElementById('bulkEditCount').textContent = '(' + ids.length + ' image' + (ids.length === 1 ? '' : 's') + ')';
@@ -10671,8 +10754,14 @@ function confirmBulkEdit(){
   } else {
     opts.categoryId = parseInt(catVal, 10);
   }
+  // v175: brand. '__unchanged__' leaves it alone; '' clears it; otherwise set the brand code.
+  var brandSel = document.getElementById('bulkEditBrandSel');
+  var brandVal = brandSel ? brandSel.value : '__unchanged__';
+  if(brandVal !== '__unchanged__'){
+    opts.brand = brandVal || null;
+  }
   // No-op early-exit so we don't spam the network when nothing actually changed
-  if(opts.categoryId === undefined && !addTags.length && !Object.keys(removeTagsSet).length){
+  if(opts.categoryId === undefined && opts.brand === undefined && !addTags.length && !Object.keys(removeTagsSet).length){
     closeBulkEditModal();
     return;
   }
@@ -10712,6 +10801,9 @@ function promptCreateLibraryCategory(){
   });
 }
 
+// v175: upload now goes through a brand picker first. handleLibraryUpload gathers + validates the
+// files, stashes them, and opens the brand modal. A brand button there calls runLibraryUpload(brand)
+// which does the actual compress + upload loop.
 function handleLibraryUpload(event){
   var files = event.target.files;
   if(!files || !files.length) return;
@@ -10721,13 +10813,35 @@ function handleLibraryUpload(event){
     return (f.type || '').indexOf('image/') === 0;
   });
   if(!files.length){
-    var statusEl = document.getElementById('imageLibraryStatus');
-    statusEl.classList.remove('hidden');
-    statusEl.textContent = 'No image files found in that folder.';
-    setTimeout(function(){ statusEl.classList.add('hidden'); }, 4000);
+    var statusEl0 = document.getElementById('imageLibraryStatus');
+    statusEl0.classList.remove('hidden');
+    statusEl0.textContent = 'No image files found in that folder.';
+    setTimeout(function(){ statusEl0.classList.add('hidden'); }, 4000);
     event.target.value = '';
     return;
   }
+  _pendingUploadFiles = files;
+  _pendingUploadInputEl = event.target;  // cleared (.value='') once the upload finishes
+  // Show the brand picker — the count tells the user how many files they're tagging
+  document.getElementById('uploadBrandCount').textContent =
+    files.length + ' image' + (files.length === 1 ? '' : 's') + ' selected';
+  document.getElementById('uploadBrandModal').classList.remove('hidden');
+}
+
+function cancelUploadBrand(){
+  document.getElementById('uploadBrandModal').classList.add('hidden');
+  if(_pendingUploadInputEl) _pendingUploadInputEl.value = '';
+  _pendingUploadFiles = null;
+  _pendingUploadInputEl = null;
+}
+
+function runLibraryUpload(brand){
+  document.getElementById('uploadBrandModal').classList.add('hidden');
+  var files = _pendingUploadFiles;
+  var inputEl = _pendingUploadInputEl;
+  _pendingUploadFiles = null;
+  _pendingUploadInputEl = null;
+  if(!files || !files.length) return;
   // Upload target category: current filter if a real category; null otherwise
   var catId = null;
   if(_libraryCurrentFilter && _libraryCurrentFilter !== '' && _libraryCurrentFilter !== '0'){
@@ -10767,7 +10881,7 @@ function handleLibraryUpload(event){
         statusEl.textContent = '✓ Uploaded ' + ok + savedMsg;
         setTimeout(function(){ statusEl.classList.add('hidden'); }, 4000);
       }
-      event.target.value = '';
+      if(inputEl) inputEl.value = '';
       renderImageLibrary();
       return;
     }
@@ -10781,7 +10895,7 @@ function handleLibraryUpload(event){
       statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + fileArr[i].name + compressMsg;
       bytesSaved += Math.max(0, result.originalSize - result.compressedSize);
       var displayName = (fileArr[i].name || 'Untitled').replace(/\.[^.]+$/, '');
-      return cloudUploadLibraryItem(result.file, catId, displayName);
+      return cloudUploadLibraryItem(result.file, catId, displayName, brand);
     }).then(function(){
       ok++;
     }).catch(function(e){
@@ -10911,6 +11025,9 @@ function openMoveLibraryItemModal(item){
     if(c.id === item.category_id) opt.selected = true;
     sel.appendChild(opt);
   });
+  // v175: brand select reflects the item's current brand (options are static in the HTML)
+  var brandSel = document.getElementById('moveLibraryItemBrand');
+  if(brandSel) brandSel.value = item.brand || '';
   // v148: initialize the editing tag set from the item's current tags and render the chip UI
   _editingTags = (item.tags || []).slice();
   renderEditTagsChips();
@@ -11403,9 +11520,12 @@ function confirmMoveLibraryItem(){
   var nameInput = document.getElementById('moveLibraryItemNameInput');
   var newName = nameInput ? (nameInput.value || '').trim() : '';
   if(!newName) newName = item.name || 'Untitled';
+  var brandSel = document.getElementById('moveLibraryItemBrand');
+  var newBrand = brandSel ? (brandSel.value || null) : null;
   cloudUpdateLibraryItem(item.id, {
     name: newName,
     category_id: newCatId,
+    brand: newBrand,
     tags: newTags
   }).then(function(){
     closeMoveLibraryItemModal();
