@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v172</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v173</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -7682,10 +7682,42 @@ function drawTextLayer(ctx, layer){
       ctx.restore();
     }
 
+    // ── PASS 1.5: OUTLINE (v173) ──
+    // The outline is drawn BEFORE the fill and at 2× the requested width. A canvas stroke is
+    // CENTERED on the glyph path, so half the stroke falls inside the letterform. The old code
+    // drew the outline last (after the fill), which meant the inward half painted over the glyph
+    // edge — thick outlines visibly eroded the letters (reported v172). Drawing it first means the
+    // upcoming fill repaints that inward half, so only the OUTWARD half shows — a clean outline at
+    // the requested width that hugs the letter instead of eating into it.
+    // The drop shadow (if any) is cast here, since the outline is now the outermost silhouette;
+    // PASS 2 then skips the shadow when an outline is present to avoid a doubled/overlapping shadow.
+    var hasOutline = !!layer.effectOutline;
+    if(hasOutline){
+      ctx.save();
+      if(layerHasShadow(layer)){
+        applyLayerShadow(ctx, layer);
+      } else {
+        ctx.shadowColor = 'rgba(0,0,0,0)';
+        ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      }
+      ctx.lineWidth = 2 * Math.max(0.5, layer.effectOutlineWidth || 4);
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      if(layer.effectOutlineMode === 'gradient'){
+        ctx.strokeStyle = buildEffectStrokeGradient(ctx, layer, x, y, totalH);
+      } else {
+        ctx.strokeStyle = layer.effectOutlineColor || '#000000';
+      }
+      eachLine(drawLineStroked);
+      ctx.restore();
+    }
+
     // ── PASS 2: MAIN FILL (with optional drop shadow) ──
     // Image fill is handled specially: 'tile' mode uses createPattern (simple, fast),
     // 'cover' mode uses an offscreen canvas with source-in compositing to mask one image
     // copy to the text bounding box. The two modes have different drop-shadow handling.
+    // v173: when an outline is present the shadow was already cast by PASS 1.5, so the fill
+    // skips it (drawing the fill's shadow here would render it ON TOP of the outline).
     var didImageFill = false;
     if(layer.effectImageFill && layer.effectImageFillSrc){
       var fimg = getFillImage(layer);
@@ -7702,7 +7734,7 @@ function drawTextLayer(ctx, layer){
                   .scale(sc, sc));
               } catch(e){}
             }
-            if(layerHasShadow(layer)) applyLayerShadow(ctx, layer);
+            if(!hasOutline && layerHasShadow(layer)) applyLayerShadow(ctx, layer);
             ctx.fillStyle = pat;
             eachLine(drawLineFilled);
             didImageFill = true;
@@ -7714,7 +7746,7 @@ function drawTextLayer(ctx, layer){
             align: align, font: weight+' '+size+'px '+family+', sans-serif',
             useManualKerning: useManualKerning, letterSpacing: letterSpacing
           };
-          if(layerHasShadow(layer)) applyLayerShadow(ctx, layer);
+          if(!hasOutline && layerHasShadow(layer)) applyLayerShadow(ctx, layer);
           if(paintImageFilledText(ctx, layer, lines, metrics)){
             didImageFill = true;
           }
@@ -7735,32 +7767,16 @@ function drawTextLayer(ctx, layer){
       } else {
         ctx.fillStyle = layer.color || '#222';
       }
-      if(layerHasShadow(layer)) applyLayerShadow(ctx, layer);
+      if(!hasOutline && layerHasShadow(layer)) applyLayerShadow(ctx, layer);
       eachLine(drawLineFilled);
     }
 
     // Track the actual rendered height on the layer so bounds/selection match
     layer._renderedH = totalH;
 
-    // ── PASS 3: OUTLINE / GRADIENT STROKE ──
-    // Drawn AFTER the fill so the stroke sits on top of the glyph edge cleanly. Half of the stroke
-    // overlays the fill (since canvas stroke centers on the path), the other half extends outside.
-    if(layer.effectOutline){
-      ctx.save();
-      // Clear shadow state — we don't want the outline to also cast the drop shadow.
-      ctx.shadowColor = 'rgba(0,0,0,0)';
-      ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
-      ctx.lineWidth = Math.max(0.5, layer.effectOutlineWidth || 4);
-      ctx.lineJoin = 'round';
-      ctx.miterLimit = 2;
-      if(layer.effectOutlineMode === 'gradient'){
-        ctx.strokeStyle = buildEffectStrokeGradient(ctx, layer, x, y, totalH);
-      } else {
-        ctx.strokeStyle = layer.effectOutlineColor || '#000000';
-      }
-      eachLine(drawLineStroked);
-      ctx.restore();
-    }
+    // v173: the outline is now drawn in PASS 1.5 (before the fill) so it only shows outside the
+    // glyph. The old PASS 3 (outline-on-top) was removed — drawing it after the fill is what
+    // caused the inward half of the centered stroke to erode the letterform.
 
     ctx.restore();
   });
