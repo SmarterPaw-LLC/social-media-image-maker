@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v175</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v176</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10422,6 +10422,9 @@ function populateLibraryTagFilter(){
 }
 
 function renderImageLibrary(){
+  // v176: the shift-click anchor is a position index; a re-render rebuilds the grid (possibly with
+  // a different filtered set), so the old index is meaningless — clear it.
+  _librarySelectAnchorIndex = null;
   var catSel = document.getElementById('imageLibraryCategoryFilter');
   var tagSel = document.getElementById('imageLibraryTagFilter');
   var brandSel = document.getElementById('imageLibraryBrandFilter');
@@ -10489,7 +10492,7 @@ function renderImageLibrary(){
     }
     var items = visible;  // alias so the rest of the function (below) keeps working unchanged
     grid.innerHTML = '';
-    items.forEach(function(item){
+    items.forEach(function(item, itemIndex){
       var div = document.createElement('div');
       div.className = 'lib-item';
       var url = cloudGetLibraryItemPublicUrl(item.storage_path);
@@ -10515,7 +10518,7 @@ function renderImageLibrary(){
       var metaLine = metaParts.length ? '<div class="lib-cat">' + escAttr(metaParts.join(' · ')) + '</div>' : '';
       var isChecked = !!_librarySelectedItemIds[item.id];
       div.innerHTML =
-        '<input type="checkbox" class="lib-check" data-action="check"' + (isChecked ? ' checked' : '') + ' title="Select for bulk edit">'
+        '<input type="checkbox" class="lib-check" data-action="check"' + (isChecked ? ' checked' : '') + ' title="Select for bulk edit (Ctrl-click a tile to toggle · Shift-click for a range)">'
         + '<button class="lib-del" data-action="delete" title="Delete from library">✕</button>'
         + '<button class="lib-move" data-action="move" title="Edit category + tags">📁</button>'
         + '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '">'
@@ -10534,13 +10537,30 @@ function renderImageLibrary(){
       if(checkEl){
         checkEl.onclick = function(e){
           e.stopPropagation();
-          if(checkEl.checked) _librarySelectedItemIds[item.id] = true;
-          else delete _librarySelectedItemIds[item.id];
-          div.classList.toggle('selected', checkEl.checked);
-          updateLibraryBulkActionBar();
+          setLibraryItemSelected(item.id, checkEl.checked);
+          _librarySelectAnchorIndex = itemIndex;  // anchor future shift-clicks here
         };
       }
-      div.onclick = function(){ pickLibraryItem(item); };
+      // v176: tile click. Plain click adds to canvas (or fires pickCallback). Ctrl/Cmd-click
+      // toggles this tile's selection. Shift-click selects the range from the last-clicked tile
+      // to this one — the standard file-manager multi-select gestures.
+      div.onclick = function(e){
+        if(e.shiftKey && _librarySelectAnchorIndex != null && _librarySelectAnchorIndex < items.length){
+          var a = Math.min(_librarySelectAnchorIndex, itemIndex);
+          var b = Math.max(_librarySelectAnchorIndex, itemIndex);
+          for(var k = a; k <= b; k++){ _librarySelectedItemIds[items[k].id] = true; }
+          syncLibrarySelectionDom();
+          updateLibraryBulkActionBar();
+          return;
+        }
+        if(e.ctrlKey || e.metaKey){
+          var nowSel = !_librarySelectedItemIds[item.id];
+          setLibraryItemSelected(item.id, nowSel);
+          _librarySelectAnchorIndex = itemIndex;
+          return;
+        }
+        pickLibraryItem(item);
+      };
       grid.appendChild(div);
     });
     // Keep the bulk-action bar's count + visibility in sync with whatever just rendered
@@ -10557,33 +10577,54 @@ function renderImageLibrary(){
 // + filter changes don't drop the user's selection — they can fan out across filters to build up a
 // set and then bulk-edit.
 var _librarySelectedItemIds = {};
+// v176: index (into _libraryVisibleItems) of the last tile whose selection was toggled. Anchors
+// shift-click range selection. Reset whenever the grid re-renders since indices would shift.
+var _librarySelectAnchorIndex = null;
 // v174: unified tag model for bulk edit. _bulkTagDesired maps tag → true (will be applied to ALL
 // selected) | false (will be removed from ALL selected) | absent (no change — leave each image's
 // current state alone, used for partial-coverage tags the user hasn't touched).
 var _bulkTagDesired = {};
 
+// v176: re-sync every rendered tile's checkbox + .selected class to _librarySelectedItemIds.
+// Used after a range (shift-click) or select-all that touches many tiles at once. Tiles map 1:1
+// by index to _libraryVisibleItems (the grid renders that exact array).
+function syncLibrarySelectionDom(){
+  document.querySelectorAll('#imageLibraryGrid .lib-item').forEach(function(el, idx){
+    var item = (_libraryVisibleItems || [])[idx];
+    if(!item) return;
+    var on = !!_librarySelectedItemIds[item.id];
+    el.classList.toggle('selected', on);
+    var cb = el.querySelector('input.lib-check');
+    if(cb) cb.checked = on;
+  });
+}
+
+// v176: select/deselect one item and reflect it on that item's tile.
+function setLibraryItemSelected(itemId, sel){
+  if(sel) _librarySelectedItemIds[itemId] = true;
+  else delete _librarySelectedItemIds[itemId];
+  var idx = (_libraryVisibleItems || []).findIndex(function(it){ return it.id === itemId; });
+  if(idx >= 0){
+    var el = document.querySelectorAll('#imageLibraryGrid .lib-item')[idx];
+    if(el){
+      el.classList.toggle('selected', sel);
+      var cb = el.querySelector('input.lib-check');
+      if(cb) cb.checked = sel;
+    }
+  }
+  updateLibraryBulkActionBar();
+}
+
 function bulkSelectAllVisible(){
   (_libraryVisibleItems || []).forEach(function(it){ _librarySelectedItemIds[it.id] = true; });
-  // Refresh visible state on the rendered tiles inline (no DB refetch). The checkbox on each tile
-  // also needs to flip to checked.
-  document.querySelectorAll('#imageLibraryGrid .lib-item').forEach(function(el, idx){
-    var item = _libraryVisibleItems[idx];
-    if(item && _librarySelectedItemIds[item.id]){
-      el.classList.add('selected');
-      var cb = el.querySelector('input.lib-check');
-      if(cb) cb.checked = true;
-    }
-  });
+  syncLibrarySelectionDom();
   updateLibraryBulkActionBar();
 }
 
 function bulkClearSelection(){
   _librarySelectedItemIds = {};
-  document.querySelectorAll('#imageLibraryGrid .lib-item').forEach(function(el){
-    el.classList.remove('selected');
-    var cb = el.querySelector('input.lib-check');
-    if(cb) cb.checked = false;
-  });
+  _librarySelectAnchorIndex = null;
+  syncLibrarySelectionDom();
   updateLibraryBulkActionBar();
 }
 
