@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v173</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v174</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -456,16 +456,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         </select>
       </div>
       <div>
-        <label>Add tags <span style="font-weight:400;color:var(--muted);font-size:11px;">(these will be added to every selected image; existing tags are kept)</span></label>
-        <div id="bulkEditAddTagsChips" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1.5px solid var(--border);border-radius:6px;min-height:38px;max-height:120px;overflow-y:auto;margin-top:4px;background:#fff;"></div>
+        <label>Tags <span style="font-weight:400;color:var(--muted);font-size:11px;">(✓ = every selected image has it · (2/4) = only some have it · click a tag to add/remove it across all selected)</span></label>
+        <div id="bulkEditTagsChips" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1.5px solid var(--border);border-radius:6px;min-height:38px;max-height:200px;overflow-y:auto;margin-top:4px;background:#fff;"></div>
         <div style="display:flex;gap:4px;margin-top:4px;">
-          <input type="text" id="bulkEditAddTagInput" placeholder="new tag…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();bulkEditAddTagFromInput();}" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
-          <button type="button" class="btn-cancel" onclick="bulkEditAddTagFromInput()" style="padding:5px 12px;font-size:12px;">+ Add</button>
+          <input type="text" id="bulkEditNewTagInput" placeholder="new tag…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();bulkEditAddNewTag();}" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+          <button type="button" class="btn-cancel" onclick="bulkEditAddNewTag()" style="padding:5px 12px;font-size:12px;">+ Add</button>
         </div>
-      </div>
-      <div>
-        <label>Remove tags <span style="font-weight:400;color:var(--muted);font-size:11px;">(click tags that appear on any selected image to remove them from those images)</span></label>
-        <div id="bulkEditRemoveTagsChips" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1.5px solid var(--border);border-radius:6px;min-height:38px;max-height:120px;overflow-y:auto;margin-top:4px;background:#fff;"></div>
       </div>
       <div id="bulkEditError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
     </div>
@@ -505,7 +501,13 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <div class="modal-overlay hidden" id="manageTagsModal" style="z-index:1100;">
   <div class="modal" style="max-width:640px;width:92vw;">
     <h2>Manage Tags</h2>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Rename, delete, or apply a tag across the library. Renaming to an existing tag merges them.</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Add, rename, delete, or apply a tag across the library. Renaming to an existing tag merges them.</div>
+    <!-- v174: + New tag. A tag only "exists" once it's on at least one image, so adding here opens
+         the Apply picker for the new name — the user checks which images get it, then Saves. -->
+    <div style="display:flex;gap:6px;margin-bottom:10px;">
+      <input type="text" id="manageTagNewName" autocomplete="off" placeholder="New tag name…" onkeydown="if(event.key==='Enter'){event.preventDefault();addTagFromManageModal();}" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+      <button type="button" class="btn-primary" onclick="addTagFromManageModal()" style="padding:5px 14px;font-size:12px;">+ Add</button>
+    </div>
     <div id="manageTagsList" style="display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto;">
       <!-- populated by renderManageTagsList -->
     </div>
@@ -10477,8 +10479,10 @@ function renderImageLibrary(){
 // + filter changes don't drop the user's selection — they can fan out across filters to build up a
 // set and then bulk-edit.
 var _librarySelectedItemIds = {};
-var _bulkEditAddTags = [];     // string[] — tags to add to every selected item
-var _bulkEditRemoveTags = {};  // {tag: true} — tags to strip from every selected item that has them
+// v174: unified tag model for bulk edit. _bulkTagDesired maps tag → true (will be applied to ALL
+// selected) | false (will be removed from ALL selected) | absent (no change — leave each image's
+// current state alone, used for partial-coverage tags the user hasn't touched).
+var _bulkTagDesired = {};
 
 function bulkSelectAllVisible(){
   (_libraryVisibleItems || []).forEach(function(it){ _librarySelectedItemIds[it.id] = true; });
@@ -10559,8 +10563,7 @@ function cloudBulkUpdateLibraryItems(ids, opts){
 function openBulkEditModal(){
   var ids = Object.keys(_librarySelectedItemIds);
   if(!ids.length){ alert('Select at least one image first.'); return; }
-  _bulkEditAddTags = [];
-  _bulkEditRemoveTags = {};
+  _bulkTagDesired = {};
   // Populate category dropdown from cache, preserving "(Leave unchanged)" + "(Uncategorized)" head
   var sel = document.getElementById('bulkEditCategorySel');
   sel.innerHTML = '<option value="__unchanged__">(Leave unchanged)</option><option value="">(Uncategorized)</option>';
@@ -10571,11 +10574,10 @@ function openBulkEditModal(){
     sel.appendChild(opt);
   });
   sel.value = '__unchanged__';
-  document.getElementById('bulkEditAddTagInput').value = '';
+  document.getElementById('bulkEditNewTagInput').value = '';
   document.getElementById('bulkEditError').classList.add('hidden');
   document.getElementById('bulkEditCount').textContent = '(' + ids.length + ' image' + (ids.length === 1 ? '' : 's') + ')';
-  renderBulkEditAddChips();
-  renderBulkEditRemoveChips();
+  renderBulkEditTagChips();
   document.getElementById('bulkEditModal').classList.remove('hidden');
 }
 
@@ -10583,73 +10585,71 @@ function closeBulkEditModal(){
   document.getElementById('bulkEditModal').classList.add('hidden');
 }
 
-function renderBulkEditAddChips(){
-  var box = document.getElementById('bulkEditAddTagsChips');
-  box.innerHTML = '';
-  if(!_bulkEditAddTags.length){
-    box.innerHTML = '<span style="font-size:11px;color:var(--muted);padding:4px;">No tags will be added.</span>';
-    return;
-  }
-  _bulkEditAddTags.forEach(function(t){
-    var chip = document.createElement('span');
-    chip.className = 'tag-chip selected';
-    chip.style.cursor = 'pointer';
-    chip.title = 'Click to remove from the add list';
-    chip.innerHTML = escAttr(t) + ' <span style="opacity:0.7;font-weight:400;">✕</span>';
-    chip.onclick = function(){
-      _bulkEditAddTags = _bulkEditAddTags.filter(function(x){return x !== t;});
-      renderBulkEditAddChips();
-    };
-    box.appendChild(chip);
-  });
-}
-
-function bulkEditAddTagFromInput(){
-  var inp = document.getElementById('bulkEditAddTagInput');
-  var raw = (inp.value || '').trim().toLowerCase();
-  if(!raw) return;
-  // Accept comma-separated entries so the user can paste several at once
-  raw.split(',').map(function(s){return s.trim();}).filter(Boolean).forEach(function(t){
-    if(_bulkEditAddTags.indexOf(t) < 0) _bulkEditAddTags.push(t);
-  });
-  inp.value = '';
-  inp.focus();
-  renderBulkEditAddChips();
-}
-
-function renderBulkEditRemoveChips(){
-  // Show every tag that appears on ANY selected item. Clicking marks it for removal (filled style);
-  // clicking again un-marks. This way the user only sees relevant tags, not every tag in the library.
-  var box = document.getElementById('bulkEditRemoveTagsChips');
+// v174: unified tag chip list. Shows EVERY tag in the library (plus any tag on a selected image
+// and any brand-new tag the user typed). Each chip's appearance reflects coverage across the
+// selection and the user's pending action:
+//   ✓ green   — every selected image will have this tag after Save
+//   (2/4)     — partial coverage, untouched (Save leaves each image as-is)
+//   plain     — no selected image has it (and the user hasn't added it)
+// Clicking flips the chip between "apply to all" and "remove from all".
+function renderBulkEditTagChips(){
+  var box = document.getElementById('bulkEditTagsChips');
   box.innerHTML = '';
   var ids = Object.keys(_librarySelectedItemIds);
-  var tagSet = {};
+  var total = ids.length;
+  // Coverage count per tag among the selected images
+  var count = {};
   ids.forEach(function(idStr){
     var item = _libraryItemsCache.find(function(x){return x.id === +idStr;});
     if(!item) return;
-    (item.tags || []).forEach(function(t){ if(t) tagSet[t] = (tagSet[t] || 0) + 1; });
+    (item.tags || []).forEach(function(t){ if(t) count[t] = (count[t] || 0) + 1; });
   });
+  // Union: all library tags + tags present on the selection + user-typed pending tags
+  var tagSet = {};
+  (_libraryAllTagsCache || []).forEach(function(t){ if(t) tagSet[t] = true; });
+  Object.keys(count).forEach(function(t){ tagSet[t] = true; });
+  Object.keys(_bulkTagDesired).forEach(function(t){ tagSet[t] = true; });
   var tags = Object.keys(tagSet).sort();
   if(!tags.length){
-    box.innerHTML = '<span style="font-size:11px;color:var(--muted);padding:4px;">No tags on the selected images.</span>';
+    box.innerHTML = '<span style="font-size:11px;color:var(--muted);padding:4px;">No tags in the library yet — type one below to create it.</span>';
     return;
   }
   tags.forEach(function(t){
+    var c = count[t] || 0;
+    var coversAll = (total > 0 && c === total);
+    var desired = _bulkTagDesired[t];  // true | false | undefined
+    // "shown checked" = the tag will end up on EVERY selected image after Save
+    var shownChecked = (desired === true) || (desired === undefined && coversAll);
     var chip = document.createElement('span');
-    var isMarked = !!_bulkEditRemoveTags[t];
-    chip.className = 'tag-chip' + (isMarked ? ' selected' : '');
+    chip.className = 'tag-chip' + (shownChecked ? ' selected' : '');
     chip.style.cursor = 'pointer';
-    // Distinguish "applies to all selected" vs "applies to some"
-    var countLabel = tagSet[t] === ids.length ? '' : ' (' + tagSet[t] + '/' + ids.length + ')';
-    chip.title = isMarked ? 'Click to keep this tag' : 'Click to mark for removal' + countLabel;
-    chip.textContent = t + countLabel;
+    var label = t;
+    // Partial-coverage badge — only when the user hasn't explicitly acted on this tag
+    if(desired === undefined && c > 0 && c < total) label += ' (' + c + '/' + total + ')';
+    chip.textContent = (shownChecked ? '✓ ' : '') + label;
+    chip.title = shownChecked
+      ? 'On all ' + total + ' selected — click to remove from all'
+      : 'Click to add to all ' + total + ' selected';
     chip.onclick = function(){
-      if(_bulkEditRemoveTags[t]) delete _bulkEditRemoveTags[t];
-      else _bulkEditRemoveTags[t] = true;
-      renderBulkEditRemoveChips();
+      // Flip: if it currently ends up on all, switch to remove-from-all; else add-to-all.
+      _bulkTagDesired[t] = !shownChecked;
+      renderBulkEditTagChips();
     };
     box.appendChild(chip);
   });
+}
+
+function bulkEditAddNewTag(){
+  var inp = document.getElementById('bulkEditNewTagInput');
+  var raw = (inp.value || '').trim().toLowerCase();
+  if(!raw){ inp.focus(); return; }
+  // Accept comma-separated entries so several can be pasted at once. Each becomes "apply to all".
+  raw.split(',').map(function(s){return s.trim();}).filter(Boolean).forEach(function(t){
+    _bulkTagDesired[t] = true;
+  });
+  inp.value = '';
+  inp.focus();
+  renderBulkEditTagChips();
 }
 
 function confirmBulkEdit(){
@@ -10657,7 +10657,13 @@ function confirmBulkEdit(){
   if(!ids.length){ closeBulkEditModal(); return; }
   var sel = document.getElementById('bulkEditCategorySel');
   var catVal = sel.value;
-  var opts = {addTags: _bulkEditAddTags, removeTagsSet: _bulkEditRemoveTags};
+  // Translate the desired-map into the addTags / removeTagsSet shape cloudBulkUpdateLibraryItems wants
+  var addTags = [], removeTagsSet = {};
+  Object.keys(_bulkTagDesired).forEach(function(t){
+    if(_bulkTagDesired[t] === true) addTags.push(t);
+    else if(_bulkTagDesired[t] === false) removeTagsSet[t] = true;
+  });
+  var opts = {addTags: addTags, removeTagsSet: removeTagsSet};
   if(catVal === '__unchanged__'){
     // no category change
   } else if(catVal === ''){
@@ -10666,7 +10672,7 @@ function confirmBulkEdit(){
     opts.categoryId = parseInt(catVal, 10);
   }
   // No-op early-exit so we don't spam the network when nothing actually changed
-  if(opts.categoryId === undefined && !_bulkEditAddTags.length && !Object.keys(_bulkEditRemoveTags).length){
+  if(opts.categoryId === undefined && !addTags.length && !Object.keys(removeTagsSet).length){
     closeBulkEditModal();
     return;
   }
@@ -11051,8 +11057,23 @@ function doDeleteCategory(cat, count){
 function openManageTagsModal(){
   if(!currentUser){ alert('Sign in.'); return; }
   document.getElementById('manageTagsStatus').classList.add('hidden');
+  var inp = document.getElementById('manageTagNewName');
+  if(inp) inp.value = '';
   document.getElementById('manageTagsModal').classList.remove('hidden');
   renderManageTagsList();
+}
+
+// v174: + New tag from the Manage Tags modal. Tags are stored as array elements on image rows,
+// so a tag with zero images doesn't persist anywhere. Adding here therefore opens the Apply Tag
+// picker pre-targeted at the new name — the user checks which images should get it and Saves,
+// which is what actually creates the tag. The Manage Tags list refreshes when Apply closes.
+function addTagFromManageModal(){
+  var inp = document.getElementById('manageTagNewName');
+  if(!inp) return;
+  var name = (inp.value || '').trim().toLowerCase();
+  if(!name){ inp.focus(); return; }
+  inp.value = '';
+  openApplyTagModal(name);
 }
 
 function closeManageTagsModal(){
