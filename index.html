@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v177</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v178</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10822,7 +10822,13 @@ function confirmBulkEdit(){
       _libraryAllTagsCache = Object.keys(tagSet).sort();
       populateLibraryTagFilter();
       closeBulkEditModal();
-      // Stay in select mode but reflect updated tile metadata
+      // v177: clear the selection after a successful bulk edit. Previously the selection persisted
+      // ("stay in select mode for follow-up batches"), but that was a silent footgun: a forgotten
+      // selection from an earlier bulk edit would get swept into the NEXT one — e.g. sprays
+      // categorized in batch 1 still being selected when batch 2 set a different category, so the
+      // sprays' category got overwritten. A bulk edit is a discrete action; start each one fresh.
+      _librarySelectedItemIds = {};
+      _librarySelectAnchorIndex = null;
       renderImageLibrary();
       showToast('✓ Updated ' + result.touched + ' image' + (result.touched === 1 ? '' : 's'));
     });
