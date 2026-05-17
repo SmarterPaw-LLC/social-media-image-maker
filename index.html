@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v176</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v177</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10447,6 +10447,11 @@ function renderImageLibrary(){
     });
     _libraryAllTagsCache = Object.keys(tagSet).sort();
     populateLibraryTagFilter();
+    // v177: also rebuild the category-filter dropdown each render. Without this, a rename/delete
+    // in Manage Categories updated _libraryCategoriesCache but the <option> text in the main
+    // filter stayed stale (the renamed category still showed its old name here). The current
+    // selection is preserved because populateLibraryCategoryFilter re-applies _libraryCurrentFilter.
+    populateLibraryCategoryFilter();
 
     // v144: each filter resolves to one of three states per item — null (filter inactive),
     // true (matches), false (doesn't match). AND mode = all active filters must be true;
