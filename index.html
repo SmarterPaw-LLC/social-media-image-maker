@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v178</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v179</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -670,6 +670,11 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadInput').click()" title="Upload one or more image files">+ Files</button>
       <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryUploadFolderInput').click()" title="Upload every image in a folder (non-image files are skipped)">+ Folder</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadVisibleLibraryItems()" title="Download all images currently visible in the grid as one .zip">⬇ ZIP</button>
+      <!-- v179: CSV round-trip for fast bulk metadata editing. Download every image's
+           id/name/brand/category/tags, edit in Excel, re-upload to apply. -->
+      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadLibraryCsv()" title="Download a CSV of every image's name, brand, category, and tags — edit it in Excel/Sheets, then re-upload to apply changes in bulk">⬇ CSV</button>
+      <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryCsvInput').click()" title="Upload an edited CSV to bulk-update brand, category, and tags (matched by the id column)">⬆ CSV</button>
+      <input type="file" id="libraryCsvInput" accept=".csv,text/csv" style="display:none;" onchange="handleLibraryCsvUpload(event)">
       <input type="file" id="libraryUploadInput" accept="image/*" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
            Safari, and Firefox — covers all browsers SmarterPaw uses. Non-image files in the folder
@@ -11658,6 +11663,227 @@ function downloadVisibleLibraryItems(){
     });
   }
   next();
+}
+
+// ── CSV ROUND-TRIP FOR BULK METADATA EDITING (v179) ──
+// Download every library item's id/name/brand/category/tags as a CSV, edit it in Excel/Sheets,
+// re-upload to apply. Rows match by the `id` column. The CSV columns present are authoritative:
+// whatever's in a cell becomes the value (empty cell = cleared), and a column absent entirely is
+// left untouched on every row. Category names not yet in the library are auto-created.
+
+// Minimal RFC-4180-ish CSV writer cell. Quotes only when needed (comma, quote, newline).
+function _csvCell(v){
+  v = (v == null) ? '' : String(v);
+  if(/[",\r\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+  return v;
+}
+
+// CSV parser → array of rows (each an array of string cells). Handles quoted fields, escaped
+// quotes (""), and \r\n / \n line endings. Good enough for spreadsheet-exported CSVs.
+function _parseCsv(text){
+  var rows = [], row = [], field = '', inQuotes = false;
+  for(var i = 0; i < text.length; i++){
+    var c = text[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(text[i+1] === '"'){ field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+      continue;
+    }
+    if(c === '"'){ inQuotes = true; }
+    else if(c === ','){ row.push(field); field = ''; }
+    else if(c === '\r'){ /* skip — \n handles row end */ }
+    else if(c === '\n'){ row.push(field); rows.push(row); row = []; field = ''; }
+    else field += c;
+  }
+  // Trailing row if the file doesn't end with a newline
+  if(field !== '' || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+
+// Brand cell → stored code. '' for empty (= no brand); a code for a recognized name/code;
+// `undefined` for unrecognized text (caller leaves brand unchanged + warns).
+function _csvBrandToCode(s){
+  s = (s || '').trim().toLowerCase();
+  if(!s) return '';
+  if(s === 'meowi' || s === 'doggi' || s === 'kkz') return s;
+  var b = LIBRARY_BRANDS.find(function(x){ return x.label.toLowerCase() === s; });
+  return b ? b.value : undefined;
+}
+
+function downloadLibraryCsv(){
+  if(!currentUser){ alert('Sign in.'); return; }
+  if(!_libraryItemsCache.length){ alert('Library is empty — nothing to export.'); return; }
+  var lines = ['id,name,brand,category,tags'];
+  _libraryItemsCache.forEach(function(it){
+    var catName = '';
+    if(it.category_id != null){
+      var c = _libraryCategoriesCache.find(function(x){ return x.id === it.category_id; });
+      catName = c ? c.name : '';
+    }
+    lines.push([
+      _csvCell(it.id),
+      _csvCell(it.name || ''),
+      _csvCell(brandLabel(it.brand)),
+      _csvCell(catName),
+      _csvCell((it.tags || []).join(', '))
+    ].join(','));
+  });
+  // Prepend a UTF-8 BOM so Excel opens accented characters correctly
+  var blob = new Blob(['﻿' + lines.join('\r\n')], {type: 'text/csv;charset=utf-8'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'image-library-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+}
+
+function handleLibraryCsvUpload(event){
+  var file = event.target.files && event.target.files[0];
+  event.target.value = '';  // reset so re-uploading the same file fires onchange again
+  if(!file) return;
+  var reader = new FileReader();
+  reader.onload = function(){
+    try { applyLibraryCsv(String(reader.result || '')); }
+    catch(e){
+      console.error('[csv] parse error:', e);
+      alert('Could not read that CSV: ' + (e.message || e));
+    }
+  };
+  reader.onerror = function(){ alert('Failed to read the file.'); };
+  reader.readAsText(file);
+}
+
+function applyLibraryCsv(text){
+  if(text && text.charCodeAt(0) === 0xFEFF) text = text.slice(1);  // strip BOM
+  var rows = _parseCsv(text);
+  if(rows.length < 2){ alert('CSV has no data rows.'); return; }
+  var header = rows[0].map(function(h){ return (h || '').trim().toLowerCase(); });
+  var ci = {
+    id: header.indexOf('id'),
+    name: header.indexOf('name'),
+    brand: header.indexOf('brand'),
+    category: header.indexOf('category'),
+    tags: header.indexOf('tags')
+  };
+  if(ci.id < 0){ alert('CSV must include an "id" column. Download a fresh CSV to get the correct format.'); return; }
+  if(ci.name < 0 && ci.brand < 0 && ci.category < 0 && ci.tags < 0){
+    alert('CSV has no editable columns. Include at least one of: name, brand, category, tags.');
+    return;
+  }
+
+  // Match data rows to library items by id
+  var matched = [], unmatched = 0;
+  for(var r = 1; r < rows.length; r++){
+    var cells = rows[r];
+    if(!cells || (cells.length === 1 && cells[0] === '')) continue;  // blank line
+    var id = parseInt((cells[ci.id] || '').trim(), 10);
+    if(isNaN(id)) continue;
+    var item = _libraryItemsCache.find(function(x){ return x.id === id; });
+    if(!item){ unmatched++; continue; }
+    matched.push({item: item, cells: cells});
+  }
+  if(!matched.length){ alert('No CSV rows matched a library image by id.'); return; }
+
+  // Which category names in the CSV don't exist yet → will be created
+  var newCats = {};  // lowercased → display name
+  if(ci.category >= 0){
+    matched.forEach(function(m){
+      var cn = (m.cells[ci.category] || '').trim();
+      if(!cn) return;
+      var exists = _libraryCategoriesCache.some(function(c){ return c.name.toLowerCase() === cn.toLowerCase(); });
+      if(!exists) newCats[cn.toLowerCase()] = cn;
+    });
+  }
+  var newCatList = Object.keys(newCats).map(function(k){ return newCats[k]; });
+
+  var summary = matched.length + ' image' + (matched.length === 1 ? '' : 's') + ' matched by id.';
+  if(unmatched) summary += '\n' + unmatched + ' row(s) skipped — id not found in the library.';
+  if(newCatList.length) summary += '\n\nThese new categories will be created:\n  • ' + newCatList.join('\n  • ');
+  summary += '\n\nApply these changes?';
+  if(!confirm(summary)) return;
+
+  var statusEl = document.getElementById('imageLibraryStatus');
+  statusEl.classList.remove('hidden');
+  statusEl.style.background = '#f4faf4';
+  statusEl.style.borderColor = '#d5e8bc';
+  statusEl.style.color = '#3a5e10';
+  statusEl.textContent = 'Applying CSV…';
+
+  // Step 1: create missing categories, then refresh the category cache for the name→id map
+  var createJobs = newCatList.map(function(name){
+    return cloudCreateLibraryCategory(name).catch(function(e){
+      // A duplicate (race / case difference) is harmless — the re-list below picks it up anyway
+      console.warn('[csv] category create skipped for "' + name + '":', e);
+    });
+  });
+  Promise.all(createJobs).then(function(){
+    return cloudListLibraryCategories();
+  }).then(function(cats){
+    _libraryCategoriesCache = cats;
+    var catByName = {};
+    cats.forEach(function(c){ catByName[c.name.toLowerCase()] = c.id; });
+
+    // Step 2: compute per-row updates — only fields whose column is present AND whose value differs
+    var updateJobs = [], changed = 0, brandWarn = 0;
+    matched.forEach(function(m){
+      var item = m.item, cells = m.cells, updates = {};
+      if(ci.name >= 0){
+        var nm = (cells[ci.name] || '').trim();
+        if(nm && nm !== item.name) updates.name = nm;  // blank name ignored — never wipe a name
+      }
+      if(ci.brand >= 0){
+        var code = _csvBrandToCode(cells[ci.brand]);
+        if(code === undefined){ brandWarn++; }  // unrecognized → leave brand alone
+        else if((code || '') !== (item.brand || '')) updates.brand = code || null;
+      }
+      if(ci.category >= 0){
+        var cn = (cells[ci.category] || '').trim();
+        var newCatId = cn ? (catByName[cn.toLowerCase()] || null) : null;
+        var curCatId = (item.category_id == null) ? null : item.category_id;
+        if(newCatId !== curCatId) updates.category_id = newCatId;
+      }
+      if(ci.tags >= 0){
+        var seen = {}, newTags = [];
+        (cells[ci.tags] || '').split(',').forEach(function(t){
+          t = t.trim().toLowerCase();
+          if(t && !seen[t]){ seen[t] = true; newTags.push(t); }
+        });
+        var cur = (item.tags || []).slice().sort().join('');
+        if(cur !== newTags.slice().sort().join('')) updates.tags = newTags;
+      }
+      if(Object.keys(updates).length){
+        changed++;
+        updateJobs.push(cloudUpdateLibraryItem(item.id, updates));
+      }
+    });
+
+    if(!updateJobs.length){
+      statusEl.textContent = '✓ CSV processed — no changes needed (everything already matched).';
+      setTimeout(function(){ statusEl.classList.add('hidden'); }, 6000);
+      return;
+    }
+    return Promise.all(updateJobs).then(function(){
+      return cloudListLibraryItems().then(function(items){
+        _libraryItemsCache = items;
+        renderImageLibrary();
+        var msg = '✓ CSV applied — ' + changed + ' image' + (changed === 1 ? '' : 's') + ' updated';
+        if(newCatList.length) msg += ', ' + newCatList.length + ' categor' + (newCatList.length === 1 ? 'y' : 'ies') + ' created';
+        if(brandWarn) msg += '. ⚠ ' + brandWarn + ' row(s) had an unrecognized brand — left unchanged';
+        statusEl.textContent = msg;
+        setTimeout(function(){ statusEl.classList.add('hidden'); }, 9000);
+      });
+    });
+  }).catch(function(e){
+    console.error('[csv] import failed:', e);
+    statusEl.style.background = '#fef2f0';
+    statusEl.style.borderColor = '#fbcaba';
+    statusEl.style.color = '#b3261e';
+    statusEl.textContent = '✗ CSV import failed: ' + (e.message || e);
+    setTimeout(function(){ statusEl.classList.add('hidden'); }, 10000);
+  });
 }
 
 function confirmDeleteLibraryItem(item){
