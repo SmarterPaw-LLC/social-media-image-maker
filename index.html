@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v182</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v183</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9659,11 +9659,15 @@ function _cloudUploadState(designId, state){
   var path = currentUser.id + '/' + designId + '.json';
   var json = JSON.stringify(state);
   var blob = new Blob([json], {type: 'application/json'});
+  // v183: timing diagnostics
+  console.log('[save-timing] uploading state.json ≈' + (json.length/1024).toFixed(0) + 'KB');
+  var _tUp = performance.now();
   return sb.storage.from('design-states').upload(path, blob, {
     upsert: true,                  // overwrite previous version of this design's state
     contentType: 'application/json',
     cacheControl: '0'              // skip caching so subsequent loads see the latest save
   }).then(function(res){
+    console.log('[save-timing] state.json upload took ' + (performance.now() - _tUp).toFixed(0) + 'ms');
     if(res.error) throw new Error(res.error.message || 'State upload failed');
   });
 }
@@ -9756,12 +9760,14 @@ function _externalizeStateImages(state){
   if(!state || !state.layers || !state.layers.length) return Promise.resolve(state);
   var jobs = [];
   var eligible = 0;
+  var totalBytes = 0;
   state.layers.forEach(function(layer, i){
     if(!layer) return;
     var src = layer._imgSrc;
     if(!src || typeof src !== 'string') return;
     if(src.indexOf('data:image/') !== 0) return;  // not a data URI image — skip (already a marker, blob URL, etc)
     eligible++;
+    totalBytes += src.length;
     if(VERBOSE) console.log('[cloud-save] externalize layer', i, layer.type, layer.name, src.length, 'chars');
     jobs.push(
       _cloudUploadImage(src).then(function(path){
@@ -9772,8 +9778,13 @@ function _externalizeStateImages(state){
       })
     );
   });
-  if(eligible) console.log('[cloud-save] externalizing ' + eligible + ' image' + (eligible === 1 ? '' : 's'));
-  return Promise.all(jobs).then(function(){ return state; });
+  // v183: timing diagnostics — measures the per-image upload phase, the usual save bottleneck.
+  if(eligible) console.log('[save-timing] externalizing ' + eligible + ' image(s), ≈' + (totalBytes/1048576).toFixed(2) + 'MB of base64');
+  var _tExt = performance.now();
+  return Promise.all(jobs).then(function(){
+    if(eligible) console.log('[save-timing] image uploads took ' + (performance.now() - _tExt).toFixed(0) + 'ms');
+    return state;
+  });
 }
 
 // Walk a state object's layers, fetch each `sb-image:{path}` marker from design-images,
@@ -9797,7 +9808,13 @@ function _internalizeStateImages(state){
       })
     );
   });
-  return Promise.all(jobs).then(function(){ return state; });
+  // v183: timing diagnostics — the per-image download phase, the usual load bottleneck.
+  if(jobs.length) console.log('[load-timing] fetching ' + jobs.length + ' externalized image(s)…');
+  var _tIn = performance.now();
+  return Promise.all(jobs).then(function(){
+    if(jobs.length) console.log('[load-timing] image fetches took ' + (performance.now() - _tIn).toFixed(0) + 'ms');
+    return state;
+  });
 }
 
 function cloudListDesigns(){
@@ -9823,16 +9840,21 @@ function cloudGetDesign(id){
   // resolved back to data URIs before returning so the caller (restoreDesignState) sees the same
   // shape it always did.
   if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  // v183: timing diagnostics across the load phases
+  var _tRow = performance.now();
   return sb.from('social_designs').select('state, user_id').eq('id', id).single().then(function(res){
+    console.log('[load-timing] row fetch took ' + (performance.now() - _tRow).toFixed(0) + 'ms');
     if(res.error) throw new Error(res.error.message || 'Cloud fetch failed');
     if(!res.data) throw new Error('Cloud row not found');
     // Legacy path: state in jsonb (no image externalization possible — those rows are pre-v122)
     if(res.data.state) return res.data.state;
     // v119+ path: fetch from design-states Storage
     var path = res.data.user_id + '/' + id + '.json';
+    var _tDl = performance.now();
     return sb.storage.from('design-states').download(path).then(function(dl){
       if(dl.error) throw new Error('Could not load state from storage: ' + (dl.error.message || dl.error));
       if(!dl.data) throw new Error('Storage returned empty state');
+      console.log('[load-timing] state.json download took ' + (performance.now() - _tDl).toFixed(0) + 'ms · ≈' + (dl.data.size/1024).toFixed(0) + 'KB');
       return dl.data.text().then(function(text){
         return JSON.parse(text);
       });
