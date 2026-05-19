@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v183</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v184</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1613,7 +1613,7 @@ function duplicateBoard(id){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){ redraw(); };
-      img.src = copy._imgSrc;
+      _assignImgSrc(img, copy._imgSrc, 'image layer "' + (copy.name || copy.id) + '"');
       copy.img = img;
       delete copy._imgSrc;
     }
@@ -1621,7 +1621,7 @@ function duplicateBoard(id){
       var fimg = new Image();
       fimg.crossOrigin = 'anonymous';
       fimg.onload = function(){ redraw(); };
-      fimg.src = copy._imgSrc;
+      _assignImgSrc(fimg, copy._imgSrc, 'framed image "' + (copy.name || copy.id) + '"');
       copy._img = fimg;
     }
     if(copy.type === 'video' && copy.videoSrc){
@@ -1722,7 +1722,7 @@ function pasteClipboard(){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){ redraw(); };
-      img.src = copy._imgSrc;
+      _assignImgSrc(img, copy._imgSrc, 'image layer "' + (copy.name || copy.id) + '"');
       copy.img = img;
       delete copy._imgSrc;
     }
@@ -1731,7 +1731,7 @@ function pasteClipboard(){
       var fimg = new Image();
       fimg.crossOrigin = 'anonymous';
       fimg.onload = function(){ redraw(); };
-      fimg.src = copy._imgSrc;
+      _assignImgSrc(fimg, copy._imgSrc, 'framed image "' + (copy.name || copy.id) + '"');
       copy._img = fimg;
     }
     // Video rehydration
@@ -1788,6 +1788,24 @@ window.addEventListener('DOMContentLoaded',function(){
 // undoStack/redoStack are per-board and exposed via window getters (see STATE block).
 var UNDO_LIMIT = 50;
 var _undoSuppressed = false; // used to prevent snapshots during programmatic re-applies
+
+// v184: media-source guard. The .MOV-download incidents trace to an <img> element being pointed
+// at a remote URL of a video file — the browser then logs a (canceled) download for EACH one, so
+// a design that contains many such layers floods the download manager the moment it loads. An
+// <img> must never load a video. This refuses such a src (the layer just renders empty, which is
+// the correct outcome for a non-image) and logs the offending layer loudly so the culprit that's
+// been hiding in saved designs is finally identifiable in the console. data:/blob: srcs are
+// always allowed through — they're inline and can't trigger a network download.
+function _assignImgSrc(imgEl, src, layerLabel){
+  if(typeof src === 'string' && src.indexOf('data:') !== 0 && src.indexOf('blob:') !== 0
+     && /\.(mov|mp4|m4v|webm|avi|qt|mkv|mpg|mpeg|m4p|3gp|wmv)(\?|#|$)/i.test(src)){
+    console.warn('[media-guard] BLOCKED an image element pointed at a video URL — '
+      + (layerLabel || 'layer') + ' → ' + String(src).slice(0, 240));
+    return false;
+  }
+  imgEl.src = src;
+  return true;
+}
 
 function serializeLayers(){
   // Deep-clone layers but strip non-JSON-safe parts (HTMLImageElement, HTMLVideoElement, transient flags).
@@ -1882,7 +1900,7 @@ function deserializeLayers(json){
         var img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = function(){ redraw(); };
-        img.src = o._imgSrc;
+        _assignImgSrc(img, o._imgSrc, 'image layer "' + (o.name || o.id) + '"');
         o.img = img;
         delete o._imgSrc;
       } else if(live && live.img){
@@ -1902,7 +1920,7 @@ function deserializeLayers(json){
           var fimg = new Image();
           fimg.crossOrigin = 'anonymous';
           fimg.onload = function(){ redraw(); };
-          fimg.src = o._imgSrc;
+          _assignImgSrc(fimg, o._imgSrc, 'framed image "' + (o.name || o.id) + '"');
           o._img = fimg;
         }
       }
