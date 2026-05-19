@@ -193,7 +193,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v179</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v180</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -302,6 +302,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
   </div>
   <div class="zoom-controls">
+    <button class="zoom-btn" id="snapBtn" onclick="toggleSnap()" title="Snap to canvas edges/center — click to toggle. Hold Alt while dragging or resizing to bypass.">🧲</button>
     <button class="zoom-btn" id="overscanBtn" onclick="toggleOverscan()" title="Show off-canvas content (so you can drag stray layers back). Doesn't affect export.">⤢</button>
     <button class="zoom-btn" onclick="zoom(-0.1)">−</button>
     <div class="zoom-label" id="zoomLabel">100%</div>
@@ -1408,6 +1409,13 @@ var _overscanOn = false;
 var _overscanPx = 300;          // pixels of off-canvas margin shown on each side, in canvas coords
 var nextId = 1;           // global layer id counter — unique across ALL boards so paste is safe
 var dragState = null, resizeState = null, cropState = null, rotateState = null, marqueeState = null;
+// v180: snap-to-canvas. When a dragged/resized layer's edge, center, or corner comes within
+// _SNAP_THRESHOLD_PX (screen pixels) of a canvas edge or the canvas center, it snaps there.
+// Hold Alt while dragging/resizing to bypass. _activeSnapLines holds the guide lines to draw
+// for the current frame (canvas coords); it's repopulated each mousemove and cleared on mouseup.
+var _snapEnabled = (function(){ try { return localStorage.getItem('snapEnabled') !== 'off'; } catch(e){ return true; } })();
+var _activeSnapLines = [];      // [{axis:'v'|'h', pos:number}]
+var _SNAP_THRESHOLD_PX = 8;     // screen px; divided by zoomLevel for the canvas-space threshold
 // Internal clipboard for copy/paste. Array of serialized layer objects.
 var clipboard = [];
 
@@ -1758,6 +1766,7 @@ window.addEventListener('DOMContentLoaded',function(){
   setBrand(currentBrand);   // initializes gradientPresets, renders logo buttons, etc.
   updateExportInfo();
   bindKeyboardShortcuts();
+  updateSnapBtn();   // v180: reflect persisted snap on/off state on the toolbar button
   renderBoardTabs();
   // Request persistent storage — on supported browsers this lifts the IndexedDB quota significantly,
   // which matters once you start saving designs with embedded video (tens of MB per design).
@@ -2869,6 +2878,60 @@ function toggleOverscan(){
   if(wrap) wrap.classList.toggle('overscan', _overscanOn);
   // Re-apply canvas sizing with new overscan amount
   setCanvasSize(canvasW, canvasH);
+}
+
+// ── SNAP TO CANVAS (v180) ──
+function toggleSnap(){
+  _snapEnabled = !_snapEnabled;
+  try { localStorage.setItem('snapEnabled', _snapEnabled ? 'on' : 'off'); } catch(e){}
+  updateSnapBtn();
+  showToast(_snapEnabled ? '🧲 Snapping on' : 'Snapping off');
+}
+function updateSnapBtn(){
+  var b = document.getElementById('snapBtn');
+  if(!b) return;
+  b.style.background = _snapEnabled ? 'var(--green)' : 'var(--panel)';
+  b.style.color = _snapEnabled ? '#fff' : '';
+  b.title = (_snapEnabled ? 'Snapping ON' : 'Snapping OFF')
+    + ' — click to toggle. Hold Alt while dragging/resizing to bypass.';
+}
+// Find the closest snap: for each probe point, against each target line, the smallest in-threshold
+// offset wins. Returns {delta, line} (delta = how far to nudge so a probe lands on the line), or
+// null if nothing is within threshold. "Easy to move beyond" falls out naturally — the snap is
+// computed from the raw cursor-driven position, so the moment the cursor passes the threshold the
+// snap simply stops applying; there's no sticky zone to fight.
+function _snapAxis(probes, targets, threshold){
+  var best = null;
+  probes.forEach(function(p){
+    targets.forEach(function(t){
+      var d = t - p;
+      if(Math.abs(d) <= threshold && (best === null || Math.abs(d) < Math.abs(best.delta))){
+        best = {delta: d, line: t};
+      }
+    });
+  });
+  return best;
+}
+// Snap the combined bounding box of the layers being dragged. Probes per axis: the box's min
+// edge, center, and max edge. Targets: canvas edge 0, canvas center, canvas far edge. Pushes the
+// matched guide line(s) into _activeSnapLines for drawing. Returns {dx,dy} correction or null.
+function _computeDragSnap(layersArr){
+  var minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+  layersArr.forEach(function(l){
+    var b = getLayerBounds(l);
+    if(b.x < minX) minX = b.x;
+    if(b.y < minY) minY = b.y;
+    if(b.x + b.w > maxX) maxX = b.x + b.w;
+    if(b.y + b.h > maxY) maxY = b.y + b.h;
+  });
+  if(minX === Infinity) return null;
+  var th = _SNAP_THRESHOLD_PX / zoomLevel;
+  var sx = _snapAxis([minX, (minX+maxX)/2, maxX], [0, canvasW/2, canvasW], th);
+  var sy = _snapAxis([minY, (minY+maxY)/2, maxY], [0, canvasH/2, canvasH], th);
+  if(sx) _activeSnapLines.push({axis:'v', pos:sx.line});
+  if(sy) _activeSnapLines.push({axis:'h', pos:sy.line});
+  if(!sx && !sy) return null;
+  return {dx: sx ? sx.delta : 0, dy: sy ? sy.delta : 0};
 }
 
 // ── ZOOM ──
@@ -6591,22 +6654,32 @@ function bindCanvasEvents(){
       return;
     }
     if(dragState){
+      _activeSnapLines = [];
       var dx = (e.clientX - dragState.startX) / zoomLevel;
       var dy = (e.clientY - dragState.startY) / zoomLevel;
       // Translate every captured layer by the same delta. Locked layers weren't captured, so they stay put.
       var primary = null;
+      var dragged = [];
       Object.keys(dragState.origPositions).forEach(function(id){
         var l = layers.find(function(x){return x.id === +id;});
         if(!l) return;
         var orig = dragState.origPositions[id];
-        l.x = Math.round(orig.x + dx);
-        l.y = Math.round(orig.y + dy);
+        l.x = orig.x + dx;
+        l.y = orig.y + dy;
+        dragged.push(l);
         if(+id === dragState.layerId) primary = l;
       });
+      // v180: snap the group's bounding box to canvas edges + center. Alt bypasses.
+      if(_snapEnabled && !e.altKey && dragged.length){
+        var sc = _computeDragSnap(dragged);
+        if(sc){ dragged.forEach(function(l){ l.x += sc.dx; l.y += sc.dy; }); }
+      }
+      dragged.forEach(function(l){ l.x = Math.round(l.x); l.y = Math.round(l.y); });
       if(primary) syncPropXY(primary);
       redrawSoon();
     }
     if(resizeState){
+      _activeSnapLines = [];
       var layer=layers.find(function(l){return l.id===resizeState.layerId;});if(!layer)return;
       // Mouse delta in WORLD coords (canvas-pixel space)
       var wdx=(e.clientX-resizeState.startX)/zoomLevel;
@@ -6627,6 +6700,17 @@ function bindCanvasEvents(){
       } else {
         var nw=Math.max(10,resizeState.origW+dw);
         var nh=e.shiftKey?nw/resizeState.aspect:Math.max(10,resizeState.origH+dh);
+        // v180: snap the bottom-right corner to canvas edges/center. Skipped for rotated layers
+        // (the corner isn't axis-aligned), group resizes, aspect-locked (Shift) resizes, and when
+        // Alt is held to bypass. Snapping nudges nw/nh so the corner lands exactly on the guide.
+        if(_snapEnabled && !e.altKey && !layer.rotation
+           && !(resizeState.groupIds && resizeState.groupIds.length > 1) && !e.shiftKey){
+          var th = _SNAP_THRESHOLD_PX / zoomLevel;
+          var sCx = _snapAxis([layer.x + nw], [0, canvasW/2, canvasW], th);
+          var sCy = _snapAxis([layer.y + nh], [0, canvasH/2, canvasH], th);
+          if(sCx){ nw = Math.max(10, nw + sCx.delta); _activeSnapLines.push({axis:'v', pos:sCx.line}); }
+          if(sCy){ nh = Math.max(10, nh + sCy.delta); _activeSnapLines.push({axis:'h', pos:sCy.line}); }
+        }
         layer.w=Math.round(nw);layer.h=Math.round(nh);
         syncPropWH(layer);
         // Group resize: scale every other selected layer proportionally around the group anchor.
@@ -6655,9 +6739,14 @@ function bindCanvasEvents(){
   window.addEventListener('mouseup',function(){
     dragState=null;resizeState=null;rotateState=null;
     if(cropState) cropState.dragHandle=null;
+    // v180: clear snap guide lines and redraw to erase them once the drag/resize ends.
+    var hadSnapLines = _activeSnapLines.length > 0;
+    _activeSnapLines = [];
     if(marqueeState){
       finalizeMarqueeSelection();
       marqueeState=null;
+      redraw();
+    } else if(hadSnapLines){
       redraw();
     }
   });
@@ -7141,6 +7230,22 @@ function redraw(){
     ctx.restore();
   }
   // Marquee rectangle while dragging
+  // v180: snap guide lines — drawn while a drag/resize is snapped to a canvas edge or center.
+  // Magenta to stand apart from the green selection chrome. Hairline + dashed, zoom-compensated
+  // so it stays a consistent ~1.5px on screen at any zoom.
+  if(_activeSnapLines && _activeSnapLines.length){
+    ctx.save();
+    ctx.strokeStyle='rgba(255,45,120,0.95)';
+    ctx.lineWidth=1.5/zoomLevel;
+    ctx.setLineDash([7/zoomLevel, 5/zoomLevel]);
+    _activeSnapLines.forEach(function(s){
+      ctx.beginPath();
+      if(s.axis==='v'){ ctx.moveTo(s.pos, 0); ctx.lineTo(s.pos, canvasH); }
+      else { ctx.moveTo(0, s.pos); ctx.lineTo(canvasW, s.pos); }
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
   if(marqueeState){
     var mx1=Math.min(marqueeState.startX, marqueeState.curX);
     var my1=Math.min(marqueeState.startY, marqueeState.curY);
