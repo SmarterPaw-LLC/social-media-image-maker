@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v181</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v182</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4018,19 +4018,19 @@ function drawFramedImageLayer(ctx, layer){
       ctx.translate(fcx, fcy); ctx.rotate(frameRot); ctx.translate(-fcx, -fcy);
     }
 
-    // ── 1. SHADOW BEHIND THE FRAME ──
-    // Draw the shape path with shadow properties set, then fill with any opaque color.
-    // The shadow renders to canvas; we then cover the shape interior with the image, so only
-    // the shadow remains visible behind the frame.
-    if(layer.shadowBlur > 0 || layer.shadowOffsetX || layer.shadowOffsetY){
+    // ── 1. SHADOW(S) BEHIND THE FRAME ──
+    // For each shadow, draw the frame's shape path with that shadow's properties set, filled with
+    // opaque black. The black fill is fully covered by the framed image later, so only the cast
+    // shadow remains visible. v182: loops getLayerShadows so multiple shadows can stack — the
+    // front-most (listed first) is filled LAST so it sits on top.
+    var frameShadows = getLayerShadows(layer);
+    for(var fsi = frameShadows.length - 1; fsi >= 0; fsi--){
+      var fsh = frameShadows[fsi];
       ctx.save();
-      // Combine the user's color (#RRGGBB) with the opacity slider (0-100) into an rgba() string.
-      // Default opacity is 50% if undefined.
-      var op = layer.shadowOpacity == null ? 50 : layer.shadowOpacity;
-      ctx.shadowColor = hexToRgba(layer.shadowColor || '#000000', op / 100);
-      ctx.shadowBlur = layer.shadowBlur || 0;
-      ctx.shadowOffsetX = layer.shadowOffsetX || 0;
-      ctx.shadowOffsetY = layer.shadowOffsetY || 0;
+      ctx.shadowColor = hexToRgba(fsh.color, fsh.opacity / 100);
+      ctx.shadowBlur = fsh.blur;
+      ctx.shadowOffsetX = fsh.offsetX;
+      ctx.shadowOffsetY = fsh.offsetY;
       ctx.fillStyle = '#000';
       applyFrameRot();
       buildShapePath(ctx, layer);
@@ -4156,6 +4156,7 @@ function buildFramedImageProps(l){
       +'<input type="color" id="pfimg_shadowColor" value="'+rgbaToHex(l.shadowColor)+'" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
       +'<input type="text" id="pfimg_shadowColorHex" value="'+rgbaToHex(l.shadowColor).toUpperCase()+'" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
     +'</div>'
+    +extraShadowsUI('pfimg_', l)
     // Standard transforms
     +'<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;font-size:11px;font-weight:700;color:var(--muted);">FRAME ON CANVAS</div>'
     +NUMPAIR('X (px)','npfimgx',l.x,'Y (px)','npfimgy',l.y)
@@ -4200,6 +4201,40 @@ function layerHasShadow(layer){
   return (layer.shadowBlur > 0) || (layer.shadowOffsetX|0) !== 0 || (layer.shadowOffsetY|0) !== 0;
 }
 
+// v182: multi-shadow support. The legacy flat fields (shadowBlur/OffsetX/OffsetY/Color/Opacity)
+// are "Shadow 1"; `layer.shadows` holds any additional shadows as {blur,offsetX,offsetY,color,
+// opacity} objects. getLayerShadows returns the full ordered list, dropping any spec that
+// wouldn't render anything (no blur, no offset, or 0 opacity). Used by image + framed-image
+// rendering. Other layer types still use the single-shadow layerHasShadow path.
+function getLayerShadows(layer){
+  if(!layer) return [];
+  function valid(s){
+    var op = (s.opacity == null) ? 50 : s.opacity;
+    if(op <= 0) return false;
+    return (s.blur > 0) || ((s.offsetX|0) !== 0) || ((s.offsetY|0) !== 0);
+  }
+  var list = [];
+  var primary = {
+    blur: layer.shadowBlur || 0,
+    offsetX: layer.shadowOffsetX || 0,
+    offsetY: layer.shadowOffsetY || 0,
+    color: layer.shadowColor || '#000000',
+    opacity: (layer.shadowOpacity == null) ? 50 : layer.shadowOpacity
+  };
+  if(valid(primary)) list.push(primary);
+  (layer.shadows || []).forEach(function(s){
+    var spec = {
+      blur: s.blur || 0,
+      offsetX: s.offsetX || 0,
+      offsetY: s.offsetY || 0,
+      color: s.color || '#000000',
+      opacity: (s.opacity == null) ? 50 : s.opacity
+    };
+    if(valid(spec)) list.push(spec);
+  });
+  return list;
+}
+
 // Configure ctx shadow* state from layer fields. Caller is responsible for ctx.save()/restore().
 function applyLayerShadow(ctx, layer){
   var op = (layer.shadowOpacity == null) ? 50 : layer.shadowOpacity;
@@ -4227,23 +4262,55 @@ function paintRectShadow(ctx, layer, x, y, w, h){
 // This makes PNG logos and transparent images cast a shadow with their real outline rather than
 // a generic rectangle.
 function paintImageShadow(ctx, layer, drawFn){
-  if(!layerHasShadow(layer)) return;
-  // Pad the offscreen so drawn image always fits, accounting for source crops etc.
+  var shadows = getLayerShadows(layer);
+  if(!shadows.length) return;
   var x = layer.x, y = layer.y, w = layer.w, h = layer.h;
-  // Account for shadow blur extending outside the layer bounds — the offscreen needs no extra
-  // padding for blur (the blur is applied when we drawImage onto ctx, not into the offscreen).
   if(w <= 0 || h <= 0) return;
+  // Render the layer once onto an offscreen — its alpha silhouette is what every shadow casts
+  // from (so transparent PNGs cast a shadow shaped like their real outline, not a rectangle).
   var off = document.createElement('canvas');
   off.width = Math.ceil(w);
   off.height = Math.ceil(h);
   var octx = off.getContext('2d');
-  // Translate so drawFn can use the layer's world coords directly.
-  octx.translate(-x, -y);
+  octx.translate(-x, -y);   // so drawFn can use the layer's world coords directly
   try { drawFn(octx); } catch(e){ return; }
-  ctx.save();
-  applyLayerShadow(ctx, layer);
-  ctx.drawImage(off, x, y);
-  ctx.restore();
+
+  if(shadows.length === 1){
+    // Fast path — identical to the pre-v182 single-shadow behavior.
+    var s = shadows[0];
+    ctx.save();
+    ctx.shadowColor = hexToRgba(s.color, s.opacity / 100);
+    ctx.shadowBlur = s.blur;
+    ctx.shadowOffsetX = s.offsetX;
+    ctx.shadowOffsetY = s.offsetY;
+    ctx.drawImage(off, x, y);
+    ctx.restore();
+    return;
+  }
+
+  // Multi-shadow: composite every shadow onto ONE padded offscreen, then blit it once. Drawing N
+  // shadowed copies straight onto ctx would stack N image copies and darken soft edges when the
+  // layer's own opacity is below 100%. Compositing first keeps exactly one copy underneath the
+  // real paint — same as the single-shadow path.
+  var pad = 0;
+  shadows.forEach(function(s){
+    pad = Math.max(pad, s.blur * 1.6 + Math.abs(s.offsetX), s.blur * 1.6 + Math.abs(s.offsetY));
+  });
+  pad = Math.ceil(pad) + 2;
+  var inter = document.createElement('canvas');
+  inter.width = Math.ceil(w) + pad * 2;
+  inter.height = Math.ceil(h) + pad * 2;
+  var ictx = inter.getContext('2d');
+  // Front shadow is listed first → draw it LAST so it lands on top (matches CSS multi-shadow order).
+  for(var i = shadows.length - 1; i >= 0; i--){
+    var sh = shadows[i];
+    ictx.shadowColor = hexToRgba(sh.color, sh.opacity / 100);
+    ictx.shadowBlur = sh.blur;
+    ictx.shadowOffsetX = sh.offsetX;
+    ictx.shadowOffsetY = sh.offsetY;
+    ictx.drawImage(off, pad, pad);
+  }
+  ctx.drawImage(inter, x - pad, y - pad);
 }
 
 function replaceFramedImage(layerId){
@@ -5091,6 +5158,94 @@ function bindShadowEvents(prefix, layer){
   });
 }
 
+// v182: additional-shadows UI. Renders below the single DROP SHADOW block for image and
+// framed-image layers. Each extra shadow gets the same controls as Shadow 1 (blur, offset X/Y,
+// opacity, color) plus a Remove button; an "+ Add shadow" button appends a new one. The legacy
+// flat shadow fields are "Shadow 1"; these extras live in layer.shadows[].
+function extraShadowsUI(prefix, layer){
+  var extras = layer.shadows || [];
+  var html = '<div style="margin-top:12px;font-size:11px;font-weight:700;color:var(--muted);">ADDITIONAL SHADOWS</div>';
+  extras.forEach(function(s, i){
+    var col = rgbaToHex(s.color || '#000000');
+    var iid = prefix + 'xs' + i + '_';
+    html += '<div style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#fafafa;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">'
+        + '<span style="font-size:11px;font-weight:700;color:var(--muted);">Shadow ' + (i + 2) + '</span>'
+        + '<button class="btn-sm danger" onclick="removeLayerShadow(' + layer.id + ',' + i + ')" title="Remove this shadow">✕ Remove</button>'
+      + '</div>'
+      + R('Blur',     iid + 'blur',    s.blur || 0,    0,   100, 1)
+      + R('Offset X', iid + 'offsetX', s.offsetX || 0, -100, 100, 1)
+      + R('Offset Y', iid + 'offsetY', s.offsetY || 0, -100, 100, 1)
+      + R('Opacity',  iid + 'opacity', s.opacity == null ? 50 : s.opacity, 0, 100, 1)
+      + '<label style="font-size:11px;">Shadow color</label>'
+      + '<div style="display:flex;gap:6px;align-items:center;">'
+        + '<input type="color" id="' + iid + 'color" value="' + col + '" style="width:42px;height:32px;border:1px solid var(--border);border-radius:5px;cursor:pointer;">'
+        + '<input type="text" id="' + iid + 'colorHex" value="' + col.toUpperCase() + '" maxlength="7" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font-family:monospace;font-size:12px;text-transform:uppercase;">'
+      + '</div>'
+    + '</div>';
+  });
+  html += '<button class="btn-add" style="margin-top:8px;width:100%;" onclick="addLayerShadow(' + layer.id + ')" title="Add another drop shadow to this layer">+ Add shadow</button>';
+  return html;
+}
+
+// Wiring for the extra-shadows controls. `prefix` matches what extraShadowsUI was called with.
+function bindExtraShadowsEvents(prefix, layer){
+  (layer.shadows || []).forEach(function(s, i){
+    var iid = prefix + 'xs' + i + '_';
+    function rng(id, fn){
+      var e = document.getElementById(id);
+      if(!e) return;
+      e.addEventListener('input', function(){
+        var v = document.getElementById(id + '_v'); if(v) v.textContent = e.value;
+        fn(+e.value);
+      });
+    }
+    rng(iid + 'blur',    function(v){ s.blur = v; redraw(); });
+    rng(iid + 'offsetX', function(v){ s.offsetX = v; redraw(); });
+    rng(iid + 'offsetY', function(v){ s.offsetY = v; redraw(); });
+    rng(iid + 'opacity', function(v){ s.opacity = v; redraw(); });
+    var pk = document.getElementById(iid + 'color');
+    var hx = document.getElementById(iid + 'colorHex');
+    if(pk) pk.addEventListener('input', function(){
+      s.color = pk.value;
+      if(hx) hx.value = pk.value.toUpperCase();
+      redraw();
+    });
+    if(hx) hx.addEventListener('input', function(){
+      var v = hx.value.trim();
+      if(/^#?[0-9a-fA-F]{6}$/.test(v)){
+        if(v[0] !== '#') v = '#' + v;
+        s.color = v;
+        if(pk) pk.value = v;
+        hx.style.borderColor = '';
+        redraw();
+      } else {
+        hx.style.borderColor = '#e53';
+      }
+    });
+  });
+}
+
+function addLayerShadow(layerId){
+  var l = layers.find(function(x){ return x.id === layerId; });
+  if(!l) return;
+  snapshotState();
+  if(!l.shadows) l.shadows = [];
+  // Default a new shadow to a visible offset so the user immediately sees it appear.
+  l.shadows.push({blur: 12, offsetX: 10, offsetY: 10, color: '#000000', opacity: 50});
+  renderProps();
+  redraw();
+}
+
+function removeLayerShadow(layerId, index){
+  var l = layers.find(function(x){ return x.id === layerId; });
+  if(!l || !l.shadows) return;
+  snapshotState();
+  l.shadows.splice(index, 1);
+  renderProps();
+  redraw();
+}
+
 // Lazily initialize the scale-slider baseline for image layers loaded from older saves
 // (which won't have _baseW/_baseH). Once set, the baseline is preserved on disk so
 // "Reset to 100%" always returns to the same recorded size.
@@ -5357,6 +5512,7 @@ function buildImageProps(l){
     +'<label style="display:flex;align-items:center;gap:5px;font-size:11px;"><input type="checkbox" id="pflipV"'+(l.flipV?' checked':'')+'>Flip V</label>'
     +'</div>'
     +shadowUI('pimg_', l)
+    +extraShadowsUI('pimg_', l)
     +moveBtns(l.id)+'</div>';
 }
 
@@ -5870,6 +6026,7 @@ function bindPropEvents(layer){
     on('pflipH','change',function(e){layer.flipH=e.target.checked;redraw();});
     on('pflipV','change',function(e){layer.flipV=e.target.checked;redraw();});
     bindShadowEvents('pimg_', layer);
+    bindExtraShadowsEvents('pimg_', layer);
   } else if(layer.type==='sticker'){
     document.querySelectorAll('.sl_text').forEach(function(el){
       el.addEventListener('input',function(){layer.lines[+el.dataset.li].text=el.value;redraw();});
@@ -6221,6 +6378,7 @@ function bindPropEvents(layer){
         e.target.style.borderColor = '#e53';
       }
     });
+    bindExtraShadowsEvents('pfimg_', layer);
     // Standard transforms
     num('npfimgx', function(v){layer.x=v;redraw();}, 'pfimg_x');
     num('npfimgy', function(v){layer.y=v;redraw();}, 'pfimg_y');
