@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v184</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v185</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -206,6 +206,9 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <button class="brand-opt" data-brand="kkz" onclick="setBrand('kkz')">Kitty Ka-Zoom</button>
   </div>
   <div class="header-btns">
+    <!-- v185: cloud-sync status pill. Hidden until the canvas has content; shows whether the
+         current design's latest edits have been saved to the cloud. -->
+    <span id="cloudSyncStatus" style="display:none;font-size:11px;font-weight:700;padding:5px 10px;border-radius:6px;border:1.5px solid transparent;white-space:nowrap;align-self:center;"></span>
     <button class="btn-hdr" onclick="openMyDesignsModal()" title="Load a saved design">📂 My Designs</button>
     <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
@@ -1772,6 +1775,7 @@ window.addEventListener('DOMContentLoaded',function(){
   updateExportInfo();
   bindKeyboardShortcuts();
   updateSnapBtn();   // v180: reflect persisted snap on/off state on the toolbar button
+  updateCloudSyncStatus();   // v185: initialize the cloud-sync status pill
   renderBoardTabs();
   // Request persistent storage — on supported browsers this lifts the IndexedDB quota significantly,
   // which matters once you start saving designs with embedded video (tens of MB per design).
@@ -2018,6 +2022,10 @@ var _currentDesignId = null;
 // keeps both ids in sync; offline / signed-out saves leave _currentCloudId null until the next
 // signed-in save.
 var _currentCloudId = null;
+// v185: cloud-sync dirty flag. Set true whenever an edit schedules an autosave (the local copy
+// is now ahead of the cloud copy); cleared on a successful Save to Cloud and on design load.
+// Drives the cloud-sync status pill in the header.
+var _cloudDirty = false;
 
 // Capture the full current design state as a plain JS object (JSON-safe).
 function gatherDesignState(){
@@ -2064,6 +2072,10 @@ function restoreDesignState(state){
     // If the design had a name, adopt it as the board's name
     if(state.name){ getBoard().name = state.name; }
     renderBoardTabs(); renderLayerList(); renderProps(); renderPresets(); redraw();
+    // v185: a freshly loaded design has no un-synced edits yet. The cloud-sync pill then reflects
+    // _currentCloudId (set by the loader) — synced if it came from the cloud, "not saved" if local.
+    _cloudDirty = false;
+    updateCloudSyncStatus();
     return true;
   } catch(e){
     console.error('[restore] failed:', e);
@@ -2239,6 +2251,9 @@ function saveToCloud(){
       _currentDesignId = idbId;
     });
   }).then(function(){
+    // v185: cloud copy now matches local — clear the dirty flag and refresh the header pill
+    _cloudDirty = false;
+    updateCloudSyncStatus();
     closeSaveModal();
     showToast('☁ Saved to Cloud · ' + name);
   }).catch(function(e){
@@ -2404,9 +2419,40 @@ function idbGetDesign(id){
 // ── Autosave ──
 // Fire on any change that matters: call scheduleAutosave() from key mutation sites.
 // For v1, hook into snapshotState() which is already called on every meaningful mutation.
+// v185: cloud-sync status pill in the header. Three states:
+//   • never cloud-saved  → amber "Not saved to cloud"
+//   • cloud-saved + edits → amber "Unsaved cloud changes" (local autosave has it; cloud doesn't)
+//   • cloud-saved + clean → green "Synced to cloud"
+// Hidden entirely when the canvas is empty (nothing to report).
+function updateCloudSyncStatus(){
+  var el = document.getElementById('cloudSyncStatus');
+  if(!el) return;
+  if(!layers || !layers.length){ el.style.display = 'none'; return; }
+  el.style.display = '';
+  if(_currentCloudId != null && !_cloudDirty){
+    el.textContent = '☁ Synced to cloud';
+    el.title = 'The latest edits are saved to the cloud.';
+    el.style.background = '#e7f3da'; el.style.color = '#3a5e10'; el.style.borderColor = '#cfe3b0';
+  } else {
+    el.textContent = (_currentCloudId != null) ? '⚠ Unsaved cloud changes' : '⚠ Not saved to cloud';
+    el.title = 'Autosaved on this browser, but the latest edits are NOT in the cloud yet. '
+      + 'Use 💾 Save → Save to Cloud to back it up.';
+    el.style.background = '#fff4d6'; el.style.color = '#7a5c00'; el.style.borderColor = '#f0d98a';
+  }
+}
+// Mark the design as having edits not yet pushed to the cloud, and refresh the pill. Cheap to
+// call repeatedly — only touches the DOM on the false→true transition.
+function markCloudDirty(){
+  if(!_cloudDirty){
+    _cloudDirty = true;
+    updateCloudSyncStatus();
+  }
+}
+
 function scheduleAutosave(){
   if(_undoSuppressed) return; // don't autosave during restore
   if(!layers.length) return;  // empty canvas — don't save
+  markCloudDirty();           // v185: an edit worth autosaving also makes the cloud copy stale
   clearTimeout(_autosaveTimer);
   _autosaveTimer = setTimeout(function(){
     var state = gatherDesignState();
@@ -9909,6 +9955,7 @@ function loadMergedDesign(m){
       // v114: remember which folder this design lived in, so next Save defaults to it
       _currentFolderIdForSave = (m.cloud && m.cloud.folder_id != null) ? m.cloud.folder_id
                               : (m.idb.folder_id != null ? m.idb.folder_id : null);
+      updateCloudSyncStatus();  // v185: refresh the pill now that _currentCloudId is set
       closeMyDesignsModal();
     }
     return;
@@ -9919,6 +9966,7 @@ function loadMergedDesign(m){
     if(!restoreDesignState(state)) throw new Error('Could not restore design');
     _lastDesignName = state.name || m.cloud.name || '';
     _currentCloudId = m.cloud.id;
+    updateCloudSyncStatus();  // v185: refresh the pill now that _currentCloudId is set
     _currentFolderIdForSave = m.cloud.folder_id != null ? m.cloud.folder_id : null;
     // Cache to IDB so next time it shows as "synced" rather than "cloud-only"
     state.cloud_id = m.cloud.id;
