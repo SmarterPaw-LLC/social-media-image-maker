@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v186</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v187</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2216,6 +2216,23 @@ function promptSaveDesign(){
   populateFolderSelect('saveDesignFolder', preselectId);
   document.getElementById('saveModal').classList.remove('hidden');
   setTimeout(function(){ document.getElementById('saveDesignName').focus(); document.getElementById('saveDesignName').select(); }, 50);
+  // v187: refresh the folder list from the cloud whenever the Save modal opens. Without this,
+  // _cachedFolders only gets populated when My Designs is opened — so if the user goes straight
+  // to Save in a fresh session, the dropdown shows only (Root). The modal opens immediately
+  // with whatever's cached; this fetch fills in the real list (or repopulates an empty cache)
+  // and re-renders the select with the same preselectId.
+  if(currentUser && sb){
+    cloudListFolders().then(function(folders){
+      _cachedFolders = folders || [];
+      // Only re-populate if the modal is still open (user hasn't already saved/cancelled)
+      var modal = document.getElementById('saveModal');
+      if(modal && !modal.classList.contains('hidden')){
+        populateFolderSelect('saveDesignFolder', preselectId);
+      }
+    }).catch(function(e){
+      console.warn('[save-modal] folder list refresh failed:', e);
+    });
+  }
 }
 function closeSaveModal(){ document.getElementById('saveModal').classList.add('hidden'); }
 var _lastDesignName = '';
