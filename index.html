@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v187</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v188</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -330,6 +330,14 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
   <div class="modal">
     <h2 id="exportModalTitle">⬇ Export</h2>
     <div style="display:flex;flex-direction:column;gap:10px;" id="exportControls">
+      <!-- v188: filename input — defaults to the board name when the modal opens. The size suffix
+           (e.g. -1080x1080) and the file extension are still appended automatically; this just
+           lets the user override the base name. -->
+      <div>
+        <label>File name</label>
+        <input type="text" id="exportFilename" autocomplete="off" placeholder="design name" style="width:100%;padding:7px 9px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:2px;">
+        <div style="font-size:10px;color:var(--muted);margin-top:2px;">The export size and file type are appended automatically (e.g. <code>name-1080x1080.png</code>).</div>
+      </div>
       <div>
         <label>Format</label>
         <select id="exportFormat">
@@ -9447,6 +9455,13 @@ function resetTextScale(id){
 function openExportModal(){
   document.getElementById('exportW').value=canvasW;
   document.getElementById('exportH').value=canvasH;
+  // v188: pre-fill the filename input from the current board's name so the default matches
+  // what the user is working on. They can edit before exporting.
+  var fnInp = document.getElementById('exportFilename');
+  if(fnInp){
+    var bname = (getBoard() && getBoard().name) ? getBoard().name : '';
+    fnInp.value = bname;
+  }
   toggleExportSize();
   toggleExportFormat();   // sets initial visibility based on selected format
   updateExportInfo();
@@ -9543,8 +9558,14 @@ function doExport(){
 // board name is empty or just whitespace. Strips characters illegal in filenames and trims length.
 // (Matches the sanitization used by downloadDesignFile.)
 function exportFilenameSlug(){
-  var name = (getBoard() && getBoard().name) ? getBoard().name : '';
-  var safe = name.replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
+  // v188: prefer whatever the user typed in the Export modal's filename field; fall back to the
+  // board name if the field is empty or unavailable. Either way the result is slugified into a
+  // filesystem-safe basename — the size suffix and extension get appended by the caller.
+  var raw = '';
+  var fnInp = document.getElementById('exportFilename');
+  if(fnInp && fnInp.value) raw = fnInp.value;
+  if(!raw) raw = (getBoard() && getBoard().name) ? getBoard().name : '';
+  var safe = raw.replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
   return safe || 'smarterpaw';
 }
 
