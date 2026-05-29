@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v190</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v191</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3609,6 +3609,10 @@ function addSprinkleLayer(){
     vBand: 100,                  // % of text height — narrower band = pieces clustered vertically
     vBandOffset: 0,              // -50..+50 — shift the band up (-) or down (+)
     seed: Math.floor(Math.random() * 9999) + 1,
+    // v191: when true, the renderer rejects candidate positions that would overlap any
+    // already-placed piece. Pieces that can't find a clear spot in ~30 attempts are dropped,
+    // so the visible count can be lower than `count` when the box is too small for what was asked.
+    noOverlap: false,
     // Tint
     tint: 0,
     tintColor: '#ffd24a',
@@ -5989,6 +5993,13 @@ function buildSprinkleProps(l){
           : '')
     + '</div>'
     + R('Count','psprCount', l.count==null?30:l.count, 1, 200, 1)
+    // v191: opt-in no-overlap mode. Drops candidate positions that would collide with any
+    // already-placed piece. If the box can't fit `count` non-overlapping pieces, the actual count
+    // ends up lower — that's the intended feedback.
+    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;margin:2px 0 8px 0;cursor:pointer;">'
+      +'<input type="checkbox" id="psprNoOverlap"'+(l.noOverlap?' checked':'')+'>'
+      +'<span>Avoid overlap <span style="color:var(--muted);font-weight:400;">(skip pieces that would collide; visible count may be lower)</span></span>'
+    + '</label>'
     + '<div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:5px;">'
       +'<div style="flex:1;margin-bottom:0;">'+R('Seed','psprSeed', l.seed||1, 1, 9999, 1)+'</div>'
       +'<button class="btn-sm" style="height:32px;white-space:nowrap;" onclick="rerollSprinkleLayer('+l.id+')" title="Re-randomize the layout">🎲</button>'
@@ -6484,6 +6495,7 @@ function bindPropEvents(layer){
     rng('psprVBandOffset', function(v){ layer.vBandOffset = v; redraw(); });
     // Distribution
     rng('psprCount',function(v){ layer.count = v; redraw(); });
+    on('psprNoOverlap','change',function(e){ layer.noOverlap = e.target.checked; redraw(); });
     rng('psprSeed', function(v){ layer.seed  = v; redraw(); });
     // Tint
     rng('psprTint', function(v){ layer.tint  = v; renderProps(); });
@@ -9259,20 +9271,46 @@ function drawSprinkleLayer(ctx, layer){
       pctx.translate(-clipOffOriginX, -clipOffOriginY);
     }
 
+    // v191: optional no-overlap mode. Each placed piece records a bounding circle (its larger
+    // dimension halved, with a small slack so the irregular catnip outlines can almost touch);
+    // candidates are rejected if they collide with any already-placed circle. Up to 30 sample
+    // attempts per piece — pieces that can't find a clear spot are dropped. Trade-off: the
+    // deterministic seed produces a different layout when noOverlap is toggled (sample() is
+    // called multiple times per piece), but the same seed + same noOverlap is still stable.
+    var placedCircles = layer.noOverlap ? [] : null;
+    var maxAttempts = placedCircles ? 30 : 1;
     for(var i = 0; i < count; i++){
       var imgIdx = Math.floor(rnd() * pieces.length) % pieces.length;
       var img = pieces[imgIdx];
       if(!img || !img.complete || !img.naturalWidth) continue;
 
-      var pos = sample();
-      if(!pos) continue;
-      var px = pos.px, py = pos.py;
-      var rot = (rnd() - 0.5) * Math.PI * 2;
-      // Per-piece size variation: ±sizeJitter%, so jitter=40 → 0.6× to 1.4×.
-      var jit = sizeJitter / 100;
-      var sz = avgPx * ((1 - jit) + rnd() * (2 * jit));
-      var aspect = img.naturalHeight / img.naturalWidth;
-      var dw = sz, dh = sz * aspect;
+      var pos, px, py, rot, sz, dw, dh, accepted = false;
+      for(var attempt = 0; attempt < maxAttempts; attempt++){
+        pos = sample();
+        if(!pos) break;
+        px = pos.px; py = pos.py;
+        rot = (rnd() - 0.5) * Math.PI * 2;
+        // Per-piece size variation: ±sizeJitter%, so jitter=40 → 0.6× to 1.4×.
+        var jit = sizeJitter / 100;
+        sz = avgPx * ((1 - jit) + rnd() * (2 * jit));
+        var aspect = img.naturalHeight / img.naturalWidth;
+        dw = sz; dh = sz * aspect;
+        if(!placedCircles){ accepted = true; break; }
+        // Collision test against already-placed pieces (bounding circles, 0.9× slack)
+        var r = Math.max(dw, dh) / 2 * 0.9;
+        var collides = false;
+        for(var pi = 0; pi < placedCircles.length; pi++){
+          var pc = placedCircles[pi];
+          var ddx = px - pc.cx, ddy = py - pc.cy, rs = r + pc.r;
+          if(ddx*ddx + ddy*ddy < rs * rs){ collides = true; break; }
+        }
+        if(!collides){
+          placedCircles.push({cx: px, cy: py, r: r});
+          accepted = true;
+          break;
+        }
+      }
+      if(!accepted) continue;
 
       pctx.save();
       pctx.translate(px, py);
