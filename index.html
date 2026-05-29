@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v189</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v190</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2048,6 +2048,21 @@ function snapshotState(){
   undoStack.push(snap);
   if(undoStack.length > UNDO_LIMIT) undoStack.shift();
   redoStack = []; // new action invalidates redo
+  if(typeof scheduleAutosave === 'function') scheduleAutosave();
+}
+
+// v190: full-state snapshot for replace-image operations. The standard snapshotState() above uses
+// serializeForUndo() which omits _imgSrc/videoSrc/svgText to keep memory cheap — perfect for
+// transform changes, but it means undoing an image REPLACE can't restore the previous image
+// (deserialize falls back to the live `img` element, which is now the new one). For replace flows
+// we accept one heavy snapshot per action so the pre-replace image bytes are recoverable on undo.
+function snapshotStateFull(){
+  if(_undoSuppressed) return;
+  var snap = serializeLayers();
+  if(undoStack.length && undoStack[undoStack.length-1] === snap) return;
+  undoStack.push(snap);
+  if(undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack = [];
   if(typeof scheduleAutosave === 'function') scheduleAutosave();
 }
 
@@ -4585,7 +4600,7 @@ function replaceFramedImage(layerId){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){
-        snapshotState();
+        snapshotStateFull();   // v190: full snapshot so undo restores the previous image
         l._img = img; l._imgSrc = ev.target.result;
         l.natW = img.naturalWidth; l.natH = img.naturalHeight;
         renderProps(); redraw();
@@ -5750,6 +5765,9 @@ function buildImageProps(l){
       +'<button class="btn-add" style="flex:1;" onclick="promptImageUpload('+l.id+')" title="Upload a new image from your computer">📁 From file…</button>'
       +'<button class="btn-add" style="flex:1;" onclick="replaceImageLayerFromLibrary('+l.id+')" title="Pick from the shared team library">📚 Library…</button>'
     +'</div>'
+    // v190: save this image into the shared Image Library so the team can reuse it. Only shown
+    // when the layer actually has image content (a fresh placeholder layer has nothing to upload).
+    +(l.img ? '<button class="btn-add" style="width:100%;margin-top:4px;" onclick="addImageLayerToLibrary('+l.id+')" title="Save this image to the shared team library">⬆ Add this image to library</button>' : '')
     +'<input type="file" id="fi_'+l.id+'" accept="image/*" style="display:none" onchange="handleFileInput(event,'+l.id+')">'
     +'<div class="col2" style="gap:5px;margin-top:5px;">'
     +'<button class="btn-add" onclick="enterCropMode('+l.id+')">✂ Crop</button>'
@@ -6772,6 +6790,10 @@ function handleFileInput(e,layerId){
       // (layer already had an img). New = compute fit-to-canvas sizing; replace = keep current
       // layer dimensions so the new image slots into the same on-canvas footprint as the old one.
       var wasPlaceholder = !l.img;
+      // v190: snapshot BEFORE the replace so undo can restore. Full snapshot (includes _imgSrc)
+      // because the standard undo snapshot strips image bytes and would only restore transforms,
+      // not the previous image itself.
+      snapshotStateFull();
       l.img = img;
       l.name = file.name.replace(/\.[^.]+$/, '');
       if(wasPlaceholder){
@@ -11596,11 +11618,45 @@ function pickLibraryItem(item){
 // One per layer type. Each opens the library modal in callback mode; on pick, applies the image
 // to the layer using the same field shape that the corresponding file-upload handler uses.
 
+// v190: upload an existing image layer's bytes into the shared Image Library, so the same image
+// can be reused later from the library. Reuses the upload pipeline that "+ Files" goes through —
+// the brand picker modal opens first, then runLibraryUpload() compresses + uploads (it tolerates
+// the library modal being closed; its post-upload renderImageLibrary() call just refreshes the
+// internal cache and updates the (hidden) grid for next time).
+function addImageLayerToLibrary(layerId){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l || !l.img){ alert('No image on this layer to add to the library yet.'); return; }
+  if(!currentUser){ alert('Sign in to add images to the library.'); return; }
+  var src = l.img.src;
+  if(!src){ alert('This image has no source data to upload.'); return; }
+  var baseName = (l.name || 'image').replace(/[^\w\-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,80) || 'image';
+  // Sniff mime + extension from the data URI when present; default to PNG for blob/URL sources.
+  var mime = 'image/png', ext = 'png';
+  var m = src.match(/^data:([^;,]+)[;,]/);
+  if(m){
+    mime = m[1];
+    var em = mime.split('/')[1] || 'png';
+    ext = em.replace(/\+.*$/, '').toLowerCase();   // e.g. svg+xml → svg
+  }
+  // fetch() handles data:, blob:, and same-origin URLs uniformly → blob → File
+  fetch(src).then(function(r){ return r.blob(); }).then(function(blob){
+    var file = new File([blob], baseName + '.' + ext, {type: blob.type || mime});
+    _pendingUploadFiles = [file];
+    _pendingUploadInputEl = null;   // no <input> to clear afterwards — we built the File ourselves
+    var cnt = document.getElementById('uploadBrandCount');
+    if(cnt) cnt.textContent = '1 image · "' + (l.name || baseName) + '"';
+    document.getElementById('uploadBrandModal').classList.remove('hidden');
+  }).catch(function(e){
+    console.error('[lib] prepare upload from layer failed:', e);
+    alert('Could not prepare this image for upload: ' + (e.message || e));
+  });
+}
+
 function replaceImageLayerFromLibrary(layerId){
   openImageLibraryModal(function(img, item){
     var l = layers.find(function(x){return x.id===layerId;});
     if(!l) return;
-    snapshotState();
+    snapshotStateFull();   // v190: full snapshot so undo restores the previous image bytes
     l.img = img;
     l.name = item.name || l.name;
     // v155: preserve existing layer position/size on replace (matches the file-replace path)
@@ -11613,7 +11669,7 @@ function replaceFramedImageFromLibrary(layerId){
   openImageLibraryModal(function(img, item){
     var l = layers.find(function(x){return x.id===layerId;});
     if(!l) return;
-    snapshotState();
+    snapshotStateFull();   // v190: full snapshot so undo restores the previous image bytes
     l._img = img;
     l._imgSrc = img.src;
     l.natW = img.naturalWidth;
