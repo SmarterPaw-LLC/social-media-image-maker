@@ -198,7 +198,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v188</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v189</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2352,6 +2352,15 @@ function saveToCloud(){
     // v185: cloud copy now matches local — clear the dirty flag and refresh the header pill
     _cloudDirty = false;
     updateCloudSyncStatus();
+    // v189: sync the board name to whatever was just saved. Without this, saving as a new copy
+    // (or just renaming in the dialog) leaves the board tab showing the OLD name while the cloud
+    // row carries the new one — confusing the next save and the tab labels. _gatherSaveStateAndName
+    // only renamed the board when it was still the default "Board N"; this covers the rest.
+    var curBoard = getBoard();
+    if(curBoard && curBoard.name !== name){
+      curBoard.name = name;
+      renderBoardTabs();
+    }
     closeSaveModal();
     showToast('☁ Saved to Cloud · ' + name);
   }).catch(function(e){
