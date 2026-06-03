@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v197</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v198</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4366,13 +4366,36 @@ function _redditCacheKey(){
   return (sub ? sub.value : 'petmemes') + ':' + (t ? t.value : 'week');
 }
 
-// v197: Reddit's .json endpoints stopped CORS-allowing browser fetches in mid-2023, so a direct
-// fetch dies with "Failed to fetch" before it ever gets a response. We route through corsproxy.io
-// (free, no auth, no API key) which just adds the CORS headers. If this proxy ever goes down or
-// gets rate-limited, swap to allorigins/cors.lol/etc., or stand up a Supabase Edge Function (the
-// "right" fix long-term) — only this one line changes.
-function _redditApiUrl(targetUrl){
-  return 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
+// v198: free CORS proxies are individually unreliable — any single one can be down, rate-limited,
+// or blocked by network policies. We race THREE of them in parallel via Promise.any: first one
+// to fulfill wins, the others get aborted as moot. Each has a 12s timeout so a hung proxy can't
+// stall the whole race. If all three fail simultaneously, the user gets a clear error pointing
+// them at the Popular/Library alternatives — at that point a Supabase Edge Function is the only
+// long-term fix.
+var _REDDIT_PROXIES = [
+  function(u){ return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u); },
+  function(u){ return 'https://api.codetabs.com/v1/proxy?quest=' + u; },
+  function(u){ return 'https://corsproxy.io/?' + u; }
+];
+function _fetchWithTimeout(url, ms){
+  return new Promise(function(resolve, reject){
+    var done = false;
+    var timer = setTimeout(function(){ if(done)return; done=true; reject(new Error('timeout')); }, ms || 12000);
+    fetch(url).then(function(r){
+      if(done) return; done = true; clearTimeout(timer);
+      if(!r.ok){ reject(new Error('HTTP ' + r.status)); return; }
+      resolve(r);
+    }).catch(function(e){
+      if(done) return; done = true; clearTimeout(timer);
+      reject(e);
+    });
+  });
+}
+function _fetchRedditJson(redditUrl){
+  var attempts = _REDDIT_PROXIES.map(function(makeUrl){
+    return _fetchWithTimeout(makeUrl(redditUrl), 12000).then(function(r){ return r.json(); });
+  });
+  return Promise.any(attempts);
 }
 
 function fetchRedditMemes(){
@@ -4393,9 +4416,7 @@ function fetchRedditMemes(){
   if(status) status.textContent = 'Fetching top of ' + t + ' from r/' + sub + '…';
   if(grid) grid.innerHTML = '';
   var redditUrl = 'https://www.reddit.com/r/' + encodeURIComponent(sub) + '/top.json?t=' + encodeURIComponent(t) + '&limit=50&raw_json=1';
-  var url = _redditApiUrl(redditUrl);
-  fetch(url)
-    .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  _fetchRedditJson(redditUrl)
     .then(function(res){
       _redditFetching = false;
       if(!res || !res.data || !Array.isArray(res.data.children)){
@@ -4427,10 +4448,18 @@ function fetchRedditMemes(){
     })
     .catch(function(e){
       _redditFetching = false;
-      console.error('[meme:reddit] fetch failed:', e);
+      // v198: Promise.any rejects with AggregateError; unpack the per-proxy failures so the
+      // console shows exactly which proxy said what (network/timeout/HTTP code) for diagnosis.
+      var detail;
+      if(e && e.errors && e.errors.length){
+        detail = e.errors.map(function(x, i){ return 'proxy ' + i + ': ' + (x.message || x); }).join(' · ');
+      } else {
+        detail = (e.message || String(e));
+      }
+      console.error('[meme:reddit] all proxies failed:', e, e && e.errors);
       if(status){
-        status.textContent = '✗ Reddit fetch failed: ' + (e.message || e)
-          + ' (the free CORS proxy may be down — try Refresh in a minute, or use the Popular tab / 📚 From Library).';
+        status.textContent = '✗ Reddit fetch failed (all proxies). ' + detail
+          + ' — try Refresh in a minute, or use the Popular tab / 📚 From Library instead.';
       }
     });
 }
