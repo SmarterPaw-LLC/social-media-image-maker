@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v199</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v200</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4378,10 +4378,17 @@ function _fetchRedditJson(sub, t, limit){
     body: { sub: sub, t: t, limit: limit || 50 }
   }).then(function(res){
     if(res.error){
-      // FunctionsHttpError exposes res.error.message; bring along context if possible
-      var msg = res.error.message || 'Edge function error';
-      if(res.data && res.data.error) msg = res.data.error + ' (' + msg + ')';
-      throw new Error(msg);
+      // supabase-js wraps the underlying Response in error.context — read its body for the
+      // actual status code + error message so the user (and console) see what really happened.
+      // v200: previously this just showed "non-2xx status code" which gave us nothing to debug.
+      if(res.error.context && typeof res.error.context.text === 'function'){
+        return res.error.context.text().then(function(body){
+          var status = res.error.context.status || '?';
+          console.error('[meme:reddit] Edge Function HTTP ' + status + ' body:', body);
+          throw new Error('HTTP ' + status + ' — ' + (body || res.error.message || 'no body').slice(0, 240));
+        });
+      }
+      throw new Error(res.error.message || 'Edge function error (no body)');
     }
     return res.data;
   });
