@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v200</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v201</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -732,10 +732,13 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <div class="modal-overlay hidden" id="memeBrowserModal">
   <div class="modal" style="max-width:880px;width:92vw;">
     <h2>🤣 Memes</h2>
-    <!-- v195: tab strip. Reddit pet meme feed is the default tab because pet-specific content
-         is what the user actually needed (Imgflip's top 100 is mostly human pop-culture). -->
+    <!-- v201: pivoted from Reddit to Tenor (Google's GIF API). Reddit's Responsible Builder
+         Policy explicitly forbids commercial use without written approval, which doesn't fit
+         SmarterPaw's marketing use case. Tenor's TOS permits commercial use in apps (it's the
+         GIF source for Slack/Twitter/Discord/iMessage — all commercial). CORS-allowed, free
+         tier comfortably covers the team's use, designed for exactly this. -->
     <div style="display:flex;gap:0;margin-bottom:10px;border-bottom:2px solid var(--border);">
-      <button type="button" id="memeTabReddit" onclick="switchMemeTab('reddit')" style="padding:8px 16px;border:none;border-bottom:3px solid var(--green);background:transparent;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit;margin-bottom:-2px;">🐾 Reddit Pet Memes</button>
+      <button type="button" id="memeTabTenor" onclick="switchMemeTab('tenor')" style="padding:8px 16px;border:none;border-bottom:3px solid var(--green);background:transparent;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit;margin-bottom:-2px;">🐾 Pet GIFs (Tenor)</button>
       <button type="button" id="memeTabPopular" onclick="switchMemeTab('imgflip')" style="padding:8px 16px;border:none;border-bottom:3px solid transparent;background:transparent;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-bottom:-2px;">🔥 Popular (Imgflip)</button>
     </div>
     <!-- Imgflip controls (Popular tab) — search + pet-only filter + refresh -->
@@ -747,29 +750,16 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       </label>
       <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="refreshMemeTemplates()" title="Re-fetch the top templates from Imgflip">🔄 Refresh</button>
     </div>
-    <!-- Reddit controls (Reddit tab) — subreddit + timeframe pickers. Reddit's .json endpoints
-         CORS-allow * so a browser fetch works without a key. -->
-    <div id="memeRedditControls" style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-      <label style="font-size:11px;color:var(--muted);">Subreddit:</label>
-      <select id="memeSubreddit" onchange="fetchRedditMemes()" style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;">
-        <option value="petmemes">r/PetMemes</option>
-        <option value="catmemes">r/CatMemes</option>
-        <option value="dogmemes">r/DogMemes</option>
-        <option value="animalmemes">r/AnimalMemes</option>
-        <option value="aww">r/aww</option>
-        <option value="cats">r/Cats</option>
-        <option value="dogpictures">r/DogPictures</option>
-        <option value="AnimalsBeingDerps">r/AnimalsBeingDerps</option>
-      </select>
-      <label style="font-size:11px;color:var(--muted);">Top of:</label>
-      <select id="memeTimeframe" onchange="fetchRedditMemes()" style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;">
-        <option value="day">Day</option>
-        <option value="week" selected>Week</option>
-        <option value="month">Month</option>
-        <option value="year">Year</option>
-        <option value="all">All time</option>
-      </select>
-      <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="refreshRedditMemes()" title="Re-fetch from Reddit">🔄 Refresh</button>
+    <!-- Tenor controls (Pet GIFs tab) — search field + quick-pick chips for common pet queries.
+         Tenor returns ranked-by-popularity results, so no timeframe selector needed. -->
+    <div id="memeTenorControls" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="memeTenorQuery" placeholder="Search pet GIFs… (e.g. cat surprise, dog blep, kitten zoomies)" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();fetchTenorMemes();}" style="flex:1;min-width:200px;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+        <button type="button" class="btn-primary" style="padding:6px 14px;font-size:12px;" onclick="fetchTenorMemes()">🔍 Search</button>
+      </div>
+      <div id="memeTenorChips" style="display:flex;gap:5px;flex-wrap:wrap;">
+        <!-- Quick-pick chips for common pet queries — click fills the search box and runs -->
+      </div>
     </div>
     <!-- v193: brand-curated path — pick any image from the shared Image Library as a meme
          template. Best for pet-specific content (the team uploads pet memes once, tags them
@@ -786,8 +776,8 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <!-- populated by renderMemeBrowser -->
     </div>
     <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.4;">
-      <b>Popular</b> tab: blank meme templates with caption layers ready to fill in.<br>
-      <b>Reddit</b> tab: top image posts from pet meme subreddits — usually finished memes you remix with your own overlay.
+      <b>Pet GIFs</b> tab: search Tenor for trending pet content (commercial-use OK per Tenor's TOS).<br>
+      <b>Popular</b> tab: blank meme templates with caption layers ready to fill in.
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMemeBrowser()">Close</button>
@@ -4330,173 +4320,189 @@ function useLibraryAsMemeTemplate(){
   });
 }
 
-// ── REDDIT PET MEME FEED (v195) ──
-// Pulls top image posts from a chosen pet-meme subreddit. Reddit's *.reddit.com/*.json endpoints
-// respond with Access-Control-Allow-Origin:* so a browser fetch works with no auth and no key.
-// Posts are typically finished memes (caption baked into the image), so we add them as image-
-// only (0 caption layers) rather than overlaying TOP/BOTTOM TEXT defaults that wouldn't fit.
-var _memeBrowserTab = 'reddit';        // 'reddit' | 'imgflip' — Reddit is the default since v195
-var _redditMemesCache = {};            // keyed by `${subreddit}:${timeframe}` → posts[]
-var _redditFetching = false;
+// ── TENOR PET MEME / GIF FEED (v201) ──
+// Replaces the v195-200 Reddit feed. Reddit's "Responsible Builder Policy" forbids commercial
+// use of their data without written approval — a non-starter for SmarterPaw's marketing work,
+// and they enforced it via IP-level blocks regardless of UA/OAuth setup. Tenor (Google) is built
+// for commercial app embedding (it powers GIF picking in Slack/Twitter/Discord/iMessage), CORS
+// is open, free tier covers our use comfortably, and pet content is extensive.
+//
+// TENOR_API_KEY setup (one-time):
+//   1. Sign in to Google Cloud Console (console.cloud.google.com).
+//   2. Create a new project OR pick an existing one (any name is fine).
+//   3. Enable the "Tenor API" — API Library → search "Tenor" → Enable.
+//   4. Credentials → "+ Create credentials" → "API key". Copy the key.
+//   5. (Recommended) Click the key → "Edit API key":
+//        Application restrictions: HTTP referrers → add:
+//          https://smarterpaw-llc.github.io/*
+//          http://localhost/*       (only if you ever test locally)
+//        API restrictions: "Restrict key" → check only "Tenor API".
+//      That makes the key useless to anyone who finds it in the public repo.
+//   6. Paste the key into TENOR_API_KEY below, commit, push.
+var TENOR_API_KEY = '';   // ← Jason: paste your Tenor API key between the quotes
+var TENOR_CLIENT_KEY = 'smarterpaw-design-tool';   // Tenor uses this for analytics; any string is fine
+
+var _memeBrowserTab = 'tenor';         // 'tenor' | 'imgflip' — Tenor is the default
+var _tenorMemesCache = {};             // keyed by query string → results[]
+var _tenorFetching = false;
+
+// Quick-pick search chips for common pet queries. Click → fill search box → run.
+var _TENOR_QUICK_QUERIES = [
+  '🐱 cat meme', '🐶 dog meme', '🐱 kitten zoomies', '🐶 puppy',
+  '😹 funny cat', '🦮 funny dog', '🐾 pet reaction', '🥰 cute pet',
+  '😺 catnip', '🐶 dog tilt', '😻 cat surprise', '🐕 dog blep'
+];
 
 function switchMemeTab(tab){
   _memeBrowserTab = tab;
   var imgflipBtn = document.getElementById('memeTabPopular');
-  var redditBtn = document.getElementById('memeTabReddit');
+  var tenorBtn = document.getElementById('memeTabTenor');
   var imgflipCtrl = document.getElementById('memeImgflipControls');
-  var redditCtrl = document.getElementById('memeRedditControls');
-  if(tab === 'reddit'){
-    if(redditBtn){ redditBtn.style.borderBottomColor = 'var(--green)'; redditBtn.style.color = 'var(--text)'; }
+  var tenorCtrl = document.getElementById('memeTenorControls');
+  if(tab === 'tenor'){
+    if(tenorBtn){ tenorBtn.style.borderBottomColor = 'var(--green)'; tenorBtn.style.color = 'var(--text)'; }
     if(imgflipBtn){ imgflipBtn.style.borderBottomColor = 'transparent'; imgflipBtn.style.color = 'var(--muted)'; }
-    if(redditCtrl) redditCtrl.classList.remove('hidden');
+    if(tenorCtrl) tenorCtrl.classList.remove('hidden');
     if(imgflipCtrl) imgflipCtrl.classList.add('hidden');
-    fetchRedditMemes();
+    _renderTenorChips();
+    // Auto-search on first open so the grid isn't empty
+    var qEl = document.getElementById('memeTenorQuery');
+    if(qEl && !qEl.value){ qEl.value = 'cat meme'; }
+    fetchTenorMemes();
   } else {
     if(imgflipBtn){ imgflipBtn.style.borderBottomColor = 'var(--green)'; imgflipBtn.style.color = 'var(--text)'; }
-    if(redditBtn){ redditBtn.style.borderBottomColor = 'transparent'; redditBtn.style.color = 'var(--muted)'; }
+    if(tenorBtn){ tenorBtn.style.borderBottomColor = 'transparent'; tenorBtn.style.color = 'var(--muted)'; }
     if(imgflipCtrl) imgflipCtrl.classList.remove('hidden');
-    if(redditCtrl) redditCtrl.classList.add('hidden');
+    if(tenorCtrl) tenorCtrl.classList.add('hidden');
     if(!_memeTemplatesCache) fetchImgflipMemes(); else renderMemeBrowser();
   }
 }
 
-function _redditCacheKey(){
-  var sub = document.getElementById('memeSubreddit');
-  var t = document.getElementById('memeTimeframe');
-  return (sub ? sub.value : 'petmemes') + ':' + (t ? t.value : 'week');
-}
-
-// v199: Reddit returns 403 to all browser-style requests (including public CORS proxies),
-// so we route through a Supabase Edge Function named `reddit-proxy` that holds a real,
-// identifiable User-Agent on the server side. The function lives in this repo at
-// supabase_edge_function_reddit_proxy.ts and needs to be deployed once via the Supabase
-// dashboard (Edge Functions → Deploy a new function → name reddit-proxy → paste → deploy).
-// supabase-js auto-includes the auth header since the app requires sign-in.
-function _fetchRedditJson(sub, t, limit){
-  if(!sb) return Promise.reject(new Error('Not signed in (Supabase client missing).'));
-  return sb.functions.invoke('reddit-proxy', {
-    body: { sub: sub, t: t, limit: limit || 50 }
-  }).then(function(res){
-    if(res.error){
-      // supabase-js wraps the underlying Response in error.context — read its body for the
-      // actual status code + error message so the user (and console) see what really happened.
-      // v200: previously this just showed "non-2xx status code" which gave us nothing to debug.
-      if(res.error.context && typeof res.error.context.text === 'function'){
-        return res.error.context.text().then(function(body){
-          var status = res.error.context.status || '?';
-          console.error('[meme:reddit] Edge Function HTTP ' + status + ' body:', body);
-          throw new Error('HTTP ' + status + ' — ' + (body || res.error.message || 'no body').slice(0, 240));
-        });
-      }
-      throw new Error(res.error.message || 'Edge function error (no body)');
-    }
-    return res.data;
+function _renderTenorChips(){
+  var box = document.getElementById('memeTenorChips');
+  if(!box || box.childElementCount) return;   // already rendered
+  _TENOR_QUICK_QUERIES.forEach(function(label){
+    var chip = document.createElement('span');
+    chip.className = 'tag-chip';
+    chip.style.cursor = 'pointer';
+    chip.textContent = label;
+    chip.onclick = function(){
+      // Strip the leading emoji + space when sending to Tenor
+      var q = label.replace(/^[^\w]+\s*/, '');
+      var qEl = document.getElementById('memeTenorQuery');
+      if(qEl) qEl.value = q;
+      fetchTenorMemes();
+    };
+    box.appendChild(chip);
   });
 }
 
-function fetchRedditMemes(){
-  if(_redditFetching) return;
-  var subEl = document.getElementById('memeSubreddit');
-  var tEl = document.getElementById('memeTimeframe');
-  if(!subEl || !tEl) return;
-  var sub = subEl.value, t = tEl.value;
-  var key = sub + ':' + t;
-  if(_redditMemesCache[key]){
-    // Cache hit — render instantly, no network
-    renderRedditMemes();
+function fetchTenorMemes(){
+  if(_tenorFetching) return;
+  if(!TENOR_API_KEY){
+    var status0 = document.getElementById('memeBrowserStatus');
+    if(status0){
+      status0.textContent = '⚠ No Tenor API key set. See the setup notes in index.html (search TENOR_API_KEY) — '
+        + '~3 minutes in Google Cloud Console. Until then, use the Popular tab or 📚 From Library.';
+    }
     return;
   }
-  _redditFetching = true;
+  var qEl = document.getElementById('memeTenorQuery');
+  var q = (qEl ? qEl.value : '').trim();
+  if(!q){ q = 'cat meme'; if(qEl) qEl.value = q; }
+  // Hit cache when re-searching the same query
+  if(_tenorMemesCache[q]){ renderTenorMemes(q); return; }
+  _tenorFetching = true;
   var status = document.getElementById('memeBrowserStatus');
   var grid = document.getElementById('memeBrowserGrid');
-  if(status) status.textContent = 'Fetching top of ' + t + ' from r/' + sub + '…';
+  if(status) status.textContent = 'Searching Tenor for "' + q + '"…';
   if(grid) grid.innerHTML = '';
-  _fetchRedditJson(sub, t, 50)
-    .then(function(res){
-      _redditFetching = false;
-      if(!res || !res.data || !Array.isArray(res.data.children)){
-        throw new Error('Unexpected Reddit response shape');
+  // Tenor v2 search. media_filter=gif,tinygif strips the larger MP4/HD variants out of the
+  // payload (we don't need them); contentfilter=high enforces SFW; limit=50 fills the grid.
+  var url = 'https://tenor.googleapis.com/v2/search'
+    + '?q=' + encodeURIComponent(q)
+    + '&key=' + encodeURIComponent(TENOR_API_KEY)
+    + '&client_key=' + encodeURIComponent(TENOR_CLIENT_KEY)
+    + '&limit=50'
+    + '&media_filter=gif,tinygif'
+    + '&contentfilter=high';
+  fetch(url)
+    .then(function(r){
+      if(!r.ok){
+        return r.text().then(function(body){
+          throw new Error('Tenor HTTP ' + r.status + ' — ' + body.slice(0, 200));
+        });
       }
-      // Keep only direct-image posts (i.redd.it / i.imgur.com / .jpg /.png/.gif/.webp).
-      // Skip NSFW, videos, galleries, link-only posts.
-      var posts = res.data.children.map(function(c){ return c.data; }).filter(function(p){
-        if(!p || p.over_18) return false;
-        var u = (p.url_overridden_by_dest || p.url || '').replace(/&amp;/g, '&');
-        if(!u) return false;
-        return /\.(jpe?g|png|gif|webp)(\?|$)/i.test(u);
-      }).map(function(p){
+      return r.json();
+    })
+    .then(function(res){
+      _tenorFetching = false;
+      if(!res || !Array.isArray(res.results)){
+        throw new Error('Unexpected Tenor response shape');
+      }
+      // Normalize: keep only items that have both tinygif (thumbnail) and gif (full) URLs.
+      var items = res.results.filter(function(g){
+        return g && g.media_formats && g.media_formats.gif && (g.media_formats.tinygif || g.media_formats.gif);
+      }).map(function(g){
+        var fmts = g.media_formats;
         return {
-          title: p.title || '',
-          url: (p.url_overridden_by_dest || p.url).replace(/&amp;/g, '&'),
-          permalink: 'https://reddit.com' + (p.permalink || ''),
-          subreddit: p.subreddit || sub,
-          score: p.score || 0
+          id: g.id,
+          title: (g.content_description || g.title || '').slice(0, 100),
+          thumbUrl: (fmts.tinygif || fmts.gif).url,
+          fullUrl: fmts.gif.url
         };
       });
-      _redditMemesCache[key] = posts;
+      _tenorMemesCache[q] = items;
       if(status){
-        status.textContent = posts.length
-          ? posts.length + ' image posts loaded from r/' + sub + ' (top of ' + t + ') · click one to use.'
-          : 'No direct-image posts found in r/' + sub + ' for "top of ' + t + '". Try a different subreddit or timeframe.';
+        status.textContent = items.length
+          ? items.length + ' results for "' + q + '" · click one to drop on the canvas.'
+          : 'No results for "' + q + '". Try a different query or pick a chip below.';
       }
-      renderRedditMemes();
+      renderTenorMemes(q);
     })
     .catch(function(e){
-      _redditFetching = false;
-      console.error('[meme:reddit] edge function call failed:', e);
+      _tenorFetching = false;
+      console.error('[meme:tenor] fetch failed:', e);
       if(status){
-        var msg = '✗ Reddit fetch failed: ' + (e.message || String(e));
-        // 404 from supabase-js typically means the function isn't deployed yet
-        if(/404|not found/i.test(e.message || '')){
-          msg += ' — looks like the "reddit-proxy" Edge Function hasn\'t been deployed. '
-            + 'See supabase_edge_function_reddit_proxy.ts in the repo for deployment steps.';
-        } else {
-          msg += ' — try Refresh in a moment, or use the Popular tab / 📚 From Library instead.';
-        }
-        status.textContent = msg;
+        status.textContent = '✗ Tenor fetch failed: ' + (e.message || String(e))
+          + ' — check that TENOR_API_KEY is set, the Tenor API is enabled on the Google project, '
+          + 'and that this domain is in the key\'s HTTP-referrer allowlist.';
       }
     });
 }
 
-function refreshRedditMemes(){
-  delete _redditMemesCache[_redditCacheKey()];
-  fetchRedditMemes();
-}
-
-function renderRedditMemes(){
+function renderTenorMemes(query){
   var grid = document.getElementById('memeBrowserGrid');
   if(!grid) return;
-  var posts = _redditMemesCache[_redditCacheKey()];
-  if(!posts){ return; }
+  var items = _tenorMemesCache[query];
+  if(!items) return;
   grid.innerHTML = '';
-  if(!posts.length){
-    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No image posts in this view.</div>';
+  if(!items.length){
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No GIFs match this query.</div>';
     return;
   }
-  posts.forEach(function(p){
+  items.forEach(function(g){
     var tile = document.createElement('div');
     tile.className = 'meme-tile';
-    var shortTitle = (p.title || '').slice(0, 80) + (p.title && p.title.length > 80 ? '…' : '');
-    tile.title = p.title + ' · r/' + p.subreddit + ' · ' + p.score + ' upvotes';
+    tile.title = g.title || query;
     tile.innerHTML =
-      '<img src="' + escAttr(p.url) + '" alt="" loading="lazy" crossorigin="anonymous">'
-      + '<div class="meme-name">' + escAttr(shortTitle) + '</div>'
-      + '<div class="meme-meta">r/' + escAttr(p.subreddit) + ' · ' + p.score + ' ↑</div>';
-    tile.onclick = function(){ useRedditMeme(p); };
+      '<img src="' + escAttr(g.thumbUrl) + '" alt="" loading="lazy" crossorigin="anonymous">'
+      + '<div class="meme-name">' + escAttr((g.title || query).slice(0, 60)) + '</div>'
+      + '<div class="meme-meta">via Tenor</div>';
+    tile.onclick = function(){ useTenorMeme(g); };
     grid.appendChild(tile);
   });
 }
 
-// Drop a Reddit meme post on the canvas. Same fetch-to-data-URL pipeline as useMemeTemplate so
-// the canvas stays untainted on export. Reddit posts are finished memes (caption baked in), so
-// we pass boxCount=0 — no overlay caption layers. User can add a text layer manually if they
-// want to remix with their own brand text.
-function useRedditMeme(post){
-  if(!post || !post.url){ alert('Bad post data.'); return; }
+// Drop a Tenor GIF on the canvas as an image layer. Same fetch→blob→data-URL pipeline as the
+// Imgflip and library paths, so the canvas stays untainted on export. Tenor GIFs are finished
+// content (no caption layers — pass 0). The current image layer system renders the first frame
+// of a GIF (animated playback would need video-layer integration — separate follow-up).
+function useTenorMeme(g){
+  if(!g || !g.fullUrl){ alert('Bad GIF data.'); return; }
   var status = document.getElementById('memeBrowserStatus');
-  var shortTitle = (post.title || 'meme').slice(0, 60);
-  if(status) status.textContent = 'Loading "' + shortTitle + (post.title.length > 60 ? '…' : '') + '"…';
-  fetch(post.url, {mode: 'cors'})
+  if(status) status.textContent = 'Loading "' + (g.title || 'GIF') + '"…';
+  fetch(g.fullUrl, {mode: 'cors'})
     .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
     .then(function(blob){
       return new Promise(function(resolve, reject){
@@ -4509,15 +4515,15 @@ function useRedditMeme(post){
     .then(function(dataUrl){
       var img = new Image();
       img.onload = function(){
-        _addMemeFromImage(img, shortTitle, 0);   // 0 boxes — Reddit posts are finished memes
+        _addMemeFromImage(img, (g.title || 'tenor').slice(0, 60), 0);   // finished content → 0 captions
         closeMemeBrowser();
       };
-      img.onerror = function(){ if(status) status.textContent = '✗ Image failed to decode.'; };
+      img.onerror = function(){ if(status) status.textContent = '✗ GIF failed to decode.'; };
       img.src = dataUrl;
     })
     .catch(function(e){
-      console.error('[meme:reddit] use failed:', e);
-      if(status) status.textContent = '✗ Could not load this post: ' + (e.message || e);
+      console.error('[meme:tenor] use failed:', e);
+      if(status) status.textContent = '✗ Could not load this GIF: ' + (e.message || e);
     });
 }
 
