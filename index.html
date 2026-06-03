@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v210</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v211</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -7827,6 +7827,9 @@ function bindCanvasEvents(){
       var shx=sbds.x+sbds.w, shy=sbds.y+sbds.h;
       if(Math.abs(lcx-shx)<hitR && Math.abs(lcy-shy)<hitR){
         snapshotState();
+        // v211: user is manually resizing — break the canvas auto-track binding so the layer
+        // keeps the size they drag it to instead of snapping back to canvas dims each frame.
+        if(selLayer._fillsCanvas) selLayer._fillsCanvas = false;
         resizeState={layerId:selLayer.id,startX:e.clientX,startY:e.clientY,origW:sbds.w,origH:sbds.h,aspect:sbds.w/sbds.h,origScale:selLayer.scale||1};
         // If we're in a multi-selection, capture each selected layer's original geometry so we
         // can scale the whole group proportionally. Anchor: top-left of the combined bounding
@@ -7889,6 +7892,8 @@ function bindCanvasEvents(){
       var l = layers.find(function(x){return x.id===id;});
       if(l && !l.locked && typeof l.x === 'number' && typeof l.y === 'number'){
         origPositions[id] = {x: l.x, y: l.y};
+        // v211: user is dragging — break the canvas auto-track binding on background layers
+        if(l._fillsCanvas) l._fillsCanvas = false;
       }
     });
     dragState = {
@@ -8455,6 +8460,26 @@ function redraw(){
   // Reset transform in case the previous redraw left one applied
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // v211: snap any "background" layer (created via + Background) to current canvas dimensions.
+  // The layer is tagged with _fillsCanvas at creation; if the canvas later resizes (brand switch,
+  // board switch, custom dims), this keeps the background covering the full area instead of
+  // leaving a checker strip exposed on the right/bottom. For image-type backgrounds (patterns,
+  // mesh gradients) the underlying image stretches via 'fit:cover' — acceptable for tiled
+  // patterns and visually fine for mesh blobs. Shape-type gradients re-compute cleanly because
+  // drawShapeLayer derives the gradient line from layer.x/y/w/h each frame.
+  for(var bi = 0; bi < layers.length; bi++){
+    var bl = layers[bi];
+    if(bl && bl._fillsCanvas){
+      if(bl.x !== 0) bl.x = 0;
+      if(bl.y !== 0) bl.y = 0;
+      if(bl.w !== canvasW) bl.w = canvasW;
+      if(bl.h !== canvasH) bl.h = canvasH;
+      if(bl.type === 'image'){
+        bl._baseW = canvasW;
+        bl._baseH = canvasH;
+      }
+    }
+  }
   var ovs = _overscanOn ? _overscanPx : 0;
   if(ovs > 0){
     // Fill the entire canvas (overscan area) with a darker grey background so the in-canvas
@@ -13324,7 +13349,8 @@ function applyPatternPreset(idx){
       img: img,
       x: 0, y: 0, w: canvasW, h: canvasH,
       _baseW: canvasW, _baseH: canvasH,
-      opacity: 100, fit: 'cover', flipH: false, flipV: false, rotation: 0
+      opacity: 100, fit: 'cover', flipH: false, flipV: false, rotation: 0,
+      _fillsCanvas: true   // v211: auto-resnap to canvas dims each redraw
     });
     selectLayer(id);
     renderLayerList(); redraw();
@@ -13443,7 +13469,8 @@ function applyMeshGradientPreset(idx){
       img: img,
       x: 0, y: 0, w: canvasW, h: canvasH,
       _baseW: canvasW, _baseH: canvasH,
-      opacity: 100, fit: 'cover', flipH: false, flipV: false, rotation: 0
+      opacity: 100, fit: 'cover', flipH: false, flipV: false, rotation: 0,
+      _fillsCanvas: true   // v211: auto-resnap to canvas dims each redraw
     });
     selectLayer(id);
     renderLayerList(); redraw();
@@ -13629,7 +13656,8 @@ function applyBackgroundPreset(section, idx){
     x: 0, y: 0, w: canvasW, h: canvasH,
     strokeColor: 'rgba(0,0,0,0)', strokeWidth: 0,
     opacity: 100, cornerRadius: 0, rotation: 0,
-    skewAngle: 15, topWidthPct: 60, polygonSides: 6, polygonRotation: 0
+    skewAngle: 15, topWidthPct: 60, polygonSides: 6, polygonRotation: 0,
+    _fillsCanvas: true   // v211: auto-resnap to canvas dims each redraw
   };
   if(p.color){
     layer.fillType = 'solid';
