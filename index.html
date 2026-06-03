@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v196</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v197</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4366,6 +4366,15 @@ function _redditCacheKey(){
   return (sub ? sub.value : 'petmemes') + ':' + (t ? t.value : 'week');
 }
 
+// v197: Reddit's .json endpoints stopped CORS-allowing browser fetches in mid-2023, so a direct
+// fetch dies with "Failed to fetch" before it ever gets a response. We route through corsproxy.io
+// (free, no auth, no API key) which just adds the CORS headers. If this proxy ever goes down or
+// gets rate-limited, swap to allorigins/cors.lol/etc., or stand up a Supabase Edge Function (the
+// "right" fix long-term) — only this one line changes.
+function _redditApiUrl(targetUrl){
+  return 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
+}
+
 function fetchRedditMemes(){
   if(_redditFetching) return;
   var subEl = document.getElementById('memeSubreddit');
@@ -4383,7 +4392,8 @@ function fetchRedditMemes(){
   var grid = document.getElementById('memeBrowserGrid');
   if(status) status.textContent = 'Fetching top of ' + t + ' from r/' + sub + '…';
   if(grid) grid.innerHTML = '';
-  var url = 'https://www.reddit.com/r/' + encodeURIComponent(sub) + '/top.json?t=' + encodeURIComponent(t) + '&limit=50';
+  var redditUrl = 'https://www.reddit.com/r/' + encodeURIComponent(sub) + '/top.json?t=' + encodeURIComponent(t) + '&limit=50&raw_json=1';
+  var url = _redditApiUrl(redditUrl);
   fetch(url)
     .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(res){
@@ -4418,7 +4428,10 @@ function fetchRedditMemes(){
     .catch(function(e){
       _redditFetching = false;
       console.error('[meme:reddit] fetch failed:', e);
-      if(status) status.textContent = '✗ Reddit fetch failed: ' + (e.message || e);
+      if(status){
+        status.textContent = '✗ Reddit fetch failed: ' + (e.message || e)
+          + ' (the free CORS proxy may be down — try Refresh in a minute, or use the Popular tab / 📚 From Library).';
+      }
     });
 }
 
