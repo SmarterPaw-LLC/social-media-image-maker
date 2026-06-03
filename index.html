@@ -155,6 +155,13 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
    with an attachment disposition, logs a (canceled) download for each one. The placeholder renders
    nothing fetchable. */
 .lib-item .lib-noimg{width:100%;height:96px;border-radius:5px;background:#f3f0e8;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);border:1px dashed var(--border);box-sizing:border-box;}
+/* v192: meme browser tile — mirrors .lib-item layout but pulls remote images so we set
+   crossorigin in JS. Click-to-use, hover lifts. */
+.meme-tile{position:relative;border:1.5px solid var(--border);border-radius:7px;background:#fafafa;padding:6px;cursor:pointer;transition:border-color 0.15s, box-shadow 0.15s, transform 0.15s;display:flex;flex-direction:column;gap:4px;}
+.meme-tile:hover{border-color:var(--green);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,0.08);}
+.meme-tile img{width:100%;height:120px;object-fit:contain;background:#eee;border-radius:5px;display:block;}
+.meme-tile .meme-name{font-size:11px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.meme-tile .meme-meta{font-size:10px;color:var(--muted);}
 .lib-item .lib-name{font-size:11px;font-weight:600;color:var(--text);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .lib-item .lib-cat{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 /* v142: tag pill row on library thumbnails */
@@ -198,7 +205,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v191</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v192</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -285,7 +292,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="col2">
       <button class="btn-add" onclick="addArrowLayer()" title="Hand-drawn marker-style arrow (style varies by brand)">+ Arrow</button>
-      <div></div>
+      <button class="btn-add" onclick="openMemeBrowser()" title="Pick a popular meme template (live from Imgflip) and drop it on the canvas with caption layers ready to edit">+ Meme 🤣</button>
     </div>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
     <!-- Shape picker (hidden by default) -->
@@ -680,6 +687,33 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 
 <!-- Image Library modal (v126+) — shared team-wide library of reusable images.
      Backed by image_library_items/_categories tables + image-library Storage bucket. -->
+<!-- v192: Meme Browser. Fetches Imgflip's top 100 templates live (no auth needed, CORS-allowed)
+     and lets the user pick one to drop on the canvas. The picked template lands as an image layer
+     fit to the canvas, plus N text layers per box_count, pre-styled meme-classic (white fill,
+     thick black outline). Single-template metadata only — multi-panel positions aren't returned
+     by the API, so for multi-panel/object-labeling templates the user gets the right NUMBER of
+     text layers and positions them. Animated GIF templates load as a static first frame for now. -->
+<div class="modal-overlay hidden" id="memeBrowserModal">
+  <div class="modal" style="max-width:880px;width:92vw;">
+    <h2>🤣 Meme Templates <span style="font-weight:400;color:var(--muted);font-size:13px;">— popular right now (Imgflip)</span></h2>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+      <input type="text" id="memeSearch" placeholder="🔍 Filter by name…" autocomplete="off" oninput="renderMemeBrowser()" style="flex:1;min-width:200px;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+      <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="refreshMemeTemplates()" title="Re-fetch the top templates from Imgflip">🔄 Refresh</button>
+    </div>
+    <div id="memeBrowserStatus" style="font-size:11px;color:var(--muted);margin-bottom:6px;"></div>
+    <div id="memeBrowserGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;max-height:56vh;overflow-y:auto;padding:4px;border:1px solid var(--border);border-radius:6px;background:#fafafa;">
+      <!-- populated by renderMemeBrowser -->
+    </div>
+    <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.4;">
+      Click a template to add it to the canvas with caption layers ready to edit.
+      Multi-panel templates (Drake, Galaxy Brain) get the right number of text boxes — you position them on the image.
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeMemeBrowser()">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay hidden" id="imageLibraryModal">
   <div class="modal" style="max-width:760px;width:90vw;">
     <h2>📚 Image Library</h2>
@@ -3981,6 +4015,186 @@ function addImageLayer(imgEl,filename){
   });
   selectLayer(id);renderLayerList();redraw();
   if(!imgEl)promptImageUpload(id);
+}
+
+// ── MEME BROWSER (v192) ──
+// Live-fetches Imgflip's top ~100 meme templates on first open (cached for the session). User
+// clicks a tile to drop the template image + N pre-styled caption text layers on the canvas.
+// The API doesn't return per-box positions, so for multi-panel/object-labeling templates the
+// user gets the right NUMBER of text boxes and positions them. Animated GIF templates load as
+// a static first frame (animation is a follow-up — would need video-layer integration).
+var _memeTemplatesCache = null;       // array of {id, name, url, width, height, box_count} or null
+var _memeBrowserFetching = false;
+
+function openMemeBrowser(){
+  document.getElementById('memeBrowserModal').classList.remove('hidden');
+  var sBox = document.getElementById('memeSearch');
+  if(sBox) sBox.value = '';
+  if(!_memeTemplatesCache){
+    fetchImgflipMemes();
+  } else {
+    renderMemeBrowser();
+  }
+}
+function closeMemeBrowser(){
+  document.getElementById('memeBrowserModal').classList.add('hidden');
+}
+function refreshMemeTemplates(){
+  _memeTemplatesCache = null;
+  fetchImgflipMemes();
+}
+
+function fetchImgflipMemes(){
+  if(_memeBrowserFetching) return;
+  _memeBrowserFetching = true;
+  var status = document.getElementById('memeBrowserStatus');
+  var grid = document.getElementById('memeBrowserGrid');
+  status.textContent = 'Fetching top templates from Imgflip…';
+  grid.innerHTML = '';
+  // get_memes returns the top-100 most-used templates. No auth, CORS-allowed, ~10KB response.
+  fetch('https://api.imgflip.com/get_memes')
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      _memeBrowserFetching = false;
+      if(!res || !res.success || !res.data || !Array.isArray(res.data.memes)){
+        throw new Error('Unexpected API response shape');
+      }
+      _memeTemplatesCache = res.data.memes;
+      status.textContent = _memeTemplatesCache.length + ' templates loaded · click one to use it.';
+      renderMemeBrowser();
+    })
+    .catch(function(e){
+      _memeBrowserFetching = false;
+      console.error('[meme] template fetch failed:', e);
+      status.textContent = '✗ Could not fetch templates: ' + (e.message || e) + '. Try Refresh, or check your network.';
+    });
+}
+
+function renderMemeBrowser(){
+  var grid = document.getElementById('memeBrowserGrid');
+  if(!grid || !_memeTemplatesCache) return;
+  var q = (document.getElementById('memeSearch').value || '').trim().toLowerCase();
+  var items = _memeTemplatesCache.filter(function(m){
+    if(!q) return true;
+    return (m.name || '').toLowerCase().indexOf(q) >= 0;
+  });
+  grid.innerHTML = '';
+  if(!items.length){
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No templates match "' + escAttr(q) + '".</div>';
+    return;
+  }
+  items.forEach(function(m){
+    var tile = document.createElement('div');
+    tile.className = 'meme-tile';
+    tile.title = m.name + ' · ' + m.box_count + ' text box' + (m.box_count === 1 ? '' : 'es');
+    tile.innerHTML =
+      '<img src="' + escAttr(m.url) + '" alt="' + escAttr(m.name) + '" loading="lazy" crossorigin="anonymous">'
+      + '<div class="meme-name">' + escAttr(m.name) + '</div>'
+      + '<div class="meme-meta">' + m.box_count + ' caption' + (m.box_count === 1 ? '' : 's') + '</div>';
+    tile.onclick = function(){ useMemeTemplate(m); };
+    grid.appendChild(tile);
+  });
+}
+
+// Drops the chosen template on the canvas. Fetches the image as a blob → data URL → Image so
+// the canvas stays untainted on export regardless of Imgflip's CORS posture. Text-layer positions
+// are heuristic strips based on box_count (no per-box coords in the API):
+//   1 box  → bottom strip
+//   2 boxes → top + bottom (classic image macro)
+//   3+     → evenly stacked top → bottom
+// Multi-panel templates (Drake et al.) get the right count of layers but the user re-positions.
+function useMemeTemplate(template){
+  if(!template || !template.url){ alert('Bad template data.'); return; }
+  var status = document.getElementById('memeBrowserStatus');
+  status.textContent = 'Loading "' + template.name + '"…';
+  fetch(template.url, {mode: 'cors'})
+    .then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    })
+    .then(function(blob){
+      return new Promise(function(resolve, reject){
+        var reader = new FileReader();
+        reader.onload = function(){ resolve(reader.result); };
+        reader.onerror = function(){ reject(new Error('FileReader failed')); };
+        reader.readAsDataURL(blob);
+      });
+    })
+    .then(function(dataUrl){
+      var img = new Image();
+      img.onload = function(){
+        snapshotState();
+        var sizing = _computeImageLayerSize(img);
+        var imgId = nextId++;
+        layers.push({
+          id: imgId, type: 'image', name: template.name || 'Meme',
+          img: img,
+          x: sizing.x, y: sizing.y, w: sizing.w, h: sizing.h,
+          _baseW: sizing._baseW, _baseH: sizing._baseH,
+          opacity: 100, fit: 'cover', flipH: false, flipV: false, rotation: 0
+        });
+        var nBoxes = Math.max(1, Math.min(8, template.box_count || 2));
+        var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+        var defaultFont = fontList[0];
+        for(var i = 0; i < nBoxes; i++){
+          var bandH, bandY;
+          if(nBoxes === 1){
+            bandY = sizing.y + sizing.h * 0.78;
+            bandH = sizing.h * 0.18;
+          } else if(nBoxes === 2){
+            bandY = sizing.y + (i === 0 ? sizing.h * 0.03 : sizing.h * 0.79);
+            bandH = sizing.h * 0.18;
+          } else {
+            var slice = sizing.h / nBoxes;
+            bandY = sizing.y + slice * i + slice * 0.15;
+            bandH = slice * 0.7;
+          }
+          var fontSize = Math.max(24, Math.round(bandH * 0.45));
+          var captionText = (nBoxes === 2 && i === 0) ? 'TOP TEXT'
+                          : (nBoxes === 2 && i === 1) ? 'BOTTOM TEXT'
+                          : 'TEXT ' + (i + 1);
+          layers.push({
+            id: nextId++, type: 'text',
+            name: 'Caption ' + (i + 1),
+            text: captionText,
+            fontFamily: defaultFont.family,
+            fontWeight: defaultFont.weights[defaultFont.weights.length - 1],   // boldest available
+            fontSize: fontSize,
+            fillMode: 'solid',
+            color: '#ffffff',
+            gradTop: '#ffffff', gradBottom: '#cccccc', gradAngle: 90,
+            align: 'center',
+            lineHeight: 1.1,
+            letterSpacing: 0,
+            x: sizing.x + sizing.w * 0.03,
+            y: bandY,
+            w: sizing.w * 0.94,
+            h: bandH,
+            opacity: 100,
+            rotation: 0,
+            // Meme classic: thick black outline so the text stays readable over any background
+            effectOutline: true,
+            effectOutlineMode: 'solid',
+            effectOutlineColor: '#000000',
+            effectOutlineWidth: Math.max(2, Math.round(fontSize * 0.08))
+          });
+        }
+        selectLayer(imgId);
+        renderLayerList();
+        renderProps();
+        redraw();
+        closeMemeBrowser();
+        showToast('🤣 Added: ' + (template.name || 'meme') + ' (' + nBoxes + ' caption' + (nBoxes === 1 ? '' : 's') + ')');
+      };
+      img.onerror = function(){
+        status.textContent = '✗ Image failed to decode after download.';
+      };
+      img.src = dataUrl;
+    })
+    .catch(function(e){
+      console.error('[meme] use-template failed:', e);
+      status.textContent = '✗ Could not load this template: ' + (e.message || e);
+    });
 }
 
 // ── VIDEO LAYER ──
