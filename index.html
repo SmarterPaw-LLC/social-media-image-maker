@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v201</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v203</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -732,14 +732,21 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <div class="modal-overlay hidden" id="memeBrowserModal">
   <div class="modal" style="max-width:880px;width:92vw;">
     <h2>🤣 Memes</h2>
-    <!-- v201: pivoted from Reddit to Tenor (Google's GIF API). Reddit's Responsible Builder
-         Policy explicitly forbids commercial use without written approval, which doesn't fit
-         SmarterPaw's marketing use case. Tenor's TOS permits commercial use in apps (it's the
-         GIF source for Slack/Twitter/Discord/iMessage — all commercial). CORS-allowed, free
-         tier comfortably covers the team's use, designed for exactly this. -->
+    <!-- v203: GIPHY tab added. GIPHY's developer signup is independent of Google Cloud (which
+         was failing across personal + workspace accounts in v201), and their Beta tier supports
+         commercial use in apps with attribution. Tab structure stays minimal — GIPHY for pet
+         content, Imgflip for the occasional generic-meme need, Library banner above the grid. -->
     <div style="display:flex;gap:0;margin-bottom:10px;border-bottom:2px solid var(--border);">
-      <button type="button" id="memeTabTenor" onclick="switchMemeTab('tenor')" style="padding:8px 16px;border:none;border-bottom:3px solid var(--green);background:transparent;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit;margin-bottom:-2px;">🐾 Pet GIFs (Tenor)</button>
+      <button type="button" id="memeTabGiphy" onclick="switchMemeTab('giphy')" style="padding:8px 16px;border:none;border-bottom:3px solid var(--green);background:transparent;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit;margin-bottom:-2px;">🐾 Pet GIFs (GIPHY)</button>
       <button type="button" id="memeTabPopular" onclick="switchMemeTab('imgflip')" style="padding:8px 16px;border:none;border-bottom:3px solid transparent;background:transparent;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-bottom:-2px;">🔥 Popular (Imgflip)</button>
+    </div>
+    <!-- GIPHY controls (Pet GIFs tab) — search field + quick-pick chips for common pet queries -->
+    <div id="memeGiphyControls" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="memeGiphyQuery" placeholder="Search pet GIFs… (e.g. cat surprise, dog blep, kitten zoomies)" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();fetchGiphyMemes();}" style="flex:1;min-width:200px;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+        <button type="button" class="btn-primary" style="padding:6px 14px;font-size:12px;" onclick="fetchGiphyMemes()">🔍 Search</button>
+      </div>
+      <div id="memeGiphyChips" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
     </div>
     <!-- Imgflip controls (Popular tab) — search + pet-only filter + refresh -->
     <div id="memeImgflipControls" class="hidden" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
@@ -750,34 +757,26 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       </label>
       <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="refreshMemeTemplates()" title="Re-fetch the top templates from Imgflip">🔄 Refresh</button>
     </div>
-    <!-- Tenor controls (Pet GIFs tab) — search field + quick-pick chips for common pet queries.
-         Tenor returns ranked-by-popularity results, so no timeframe selector needed. -->
-    <div id="memeTenorControls" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;">
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-        <input type="text" id="memeTenorQuery" placeholder="Search pet GIFs… (e.g. cat surprise, dog blep, kitten zoomies)" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();fetchTenorMemes();}" style="flex:1;min-width:200px;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
-        <button type="button" class="btn-primary" style="padding:6px 14px;font-size:12px;" onclick="fetchTenorMemes()">🔍 Search</button>
+    <!-- v202: Library workflow is now the primary, recommended path for pet-specific memes.
+         The team uploads pet meme images they have rights to use, tags them `meme` for filtering,
+         and they become reusable templates for everyone — no external dependencies, fully under
+         your control. The Imgflip grid below is a fallback for occasional generic-meme needs. -->
+    <div style="margin-bottom:10px;padding:12px 14px;background:linear-gradient(135deg, #f4faf4 0%, #e8f3d8 100%);border:1.5px solid var(--green);border-radius:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:240px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:3px;">📚 Pet memes from your shared Library</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.4;">Upload pet meme images you have rights to (tag them <code>meme</code> for easy filtering), then pick one here — it drops on the canvas with caption layers ready to fill in. Recommended path; fully under your control.</div>
       </div>
-      <div id="memeTenorChips" style="display:flex;gap:5px;flex-wrap:wrap;">
-        <!-- Quick-pick chips for common pet queries — click fills the search box and runs -->
-      </div>
-    </div>
-    <!-- v193: brand-curated path — pick any image from the shared Image Library as a meme
-         template. Best for pet-specific content (the team uploads pet memes once, tags them
-         "meme", and they become reusable templates for everyone). -->
-    <div style="margin-bottom:8px;padding:8px 10px;background:#f4faf4;border-left:3px solid var(--green);border-radius:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <div style="flex:1;min-width:200px;font-size:11px;color:var(--text);">
-        <b>Want pet-specific memes?</b><br>
-        <span style="color:var(--muted);">Upload pet meme images to the shared Image Library (tag them <code>meme</code> for easy filtering), then use them as templates here.</span>
-      </div>
-      <button type="button" class="btn-primary" style="padding:6px 12px;font-size:12px;white-space:nowrap;" onclick="useLibraryAsMemeTemplate()">📚 From Library</button>
+      <button type="button" class="btn-primary" style="padding:8px 16px;font-size:13px;white-space:nowrap;font-weight:700;" onclick="useLibraryAsMemeTemplate()">📚 Pick from Library →</button>
     </div>
     <div id="memeBrowserStatus" style="font-size:11px;color:var(--muted);margin-bottom:6px;"></div>
     <div id="memeBrowserGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;max-height:56vh;overflow-y:auto;padding:4px;border:1px solid var(--border);border-radius:6px;background:#fafafa;">
       <!-- populated by renderMemeBrowser -->
     </div>
     <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.4;">
-      <b>Pet GIFs</b> tab: search Tenor for trending pet content (commercial-use OK per Tenor's TOS).<br>
-      <b>Popular</b> tab: blank meme templates with caption layers ready to fill in.
+      <b>Pet GIFs</b>: search GIPHY's pet content (commercial-use OK with their attribution).<br>
+      <b>📚 Library</b>: team-curated pet memes — most reliable path, full control.<br>
+      <b>Popular</b>: Imgflip's top 100 blank meme templates for the occasional generic-meme need.
+      <div style="margin-top:4px;font-size:9px;color:var(--muted);">Powered by GIPHY</div>
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMemeBrowser()">Close</button>
@@ -4104,8 +4103,8 @@ function openMemeBrowser(){
   // v193: restore the pet-filter checkbox state across opens
   var pet = document.getElementById('memePetOnly');
   if(pet) pet.checked = !!_memePetFilterOn;
-  // v195: render whichever tab the user last had open (default 'reddit' on first open)
-  switchMemeTab(_memeBrowserTab);
+  // v203: open on the last-active tab (GIPHY by default).
+  switchMemeTab(_memeBrowserTab || 'giphy');
 }
 function closeMemeBrowser(){
   document.getElementById('memeBrowserModal').classList.add('hidden');
@@ -4320,161 +4319,163 @@ function useLibraryAsMemeTemplate(){
   });
 }
 
-// ── TENOR PET MEME / GIF FEED (v201) ──
-// Replaces the v195-200 Reddit feed. Reddit's "Responsible Builder Policy" forbids commercial
-// use of their data without written approval — a non-starter for SmarterPaw's marketing work,
-// and they enforced it via IP-level blocks regardless of UA/OAuth setup. Tenor (Google) is built
-// for commercial app embedding (it powers GIF picking in Slack/Twitter/Discord/iMessage), CORS
-// is open, free tier covers our use comfortably, and pet content is extensive.
+// ── GIPHY PET MEME FEED (v203) ──
+// GIPHY's developer signup is independent of Google Cloud (Tenor failed there) and their Beta
+// API key tier supports commercial use in apps with attribution. CORS-friendly, no Workspace
+// permissions, no Edge Function needed.
 //
-// TENOR_API_KEY setup (one-time):
-//   1. Sign in to Google Cloud Console (console.cloud.google.com).
-//   2. Create a new project OR pick an existing one (any name is fine).
-//   3. Enable the "Tenor API" — API Library → search "Tenor" → Enable.
-//   4. Credentials → "+ Create credentials" → "API key". Copy the key.
-//   5. (Recommended) Click the key → "Edit API key":
-//        Application restrictions: HTTP referrers → add:
-//          https://smarterpaw-llc.github.io/*
-//          http://localhost/*       (only if you ever test locally)
-//        API restrictions: "Restrict key" → check only "Tenor API".
-//      That makes the key useless to anyone who finds it in the public repo.
-//   6. Paste the key into TENOR_API_KEY below, commit, push.
-var TENOR_API_KEY = '';   // ← Jason: paste your Tenor API key between the quotes
-var TENOR_CLIENT_KEY = 'smarterpaw-design-tool';   // Tenor uses this for analytics; any string is fine
+// GIPHY_API_KEY setup (one-time):
+//   1. Go to https://developers.giphy.com
+//   2. Click "Create Account" (or sign in if you have one). Email/password, no Google account
+//      needed. Confirm via the verification email.
+//   3. Once signed in, click "Create an App".
+//   4. Pick "API" (NOT "SDK"). Acknowledge their terms.
+//   5. Fill in:
+//        App name:        SmarterPaw Design Tool
+//        Description:     Internal social-media design tool for SmarterPaw LLC brands
+//                         (Meowijuana, Doggijuana, Kitty Ka-Zoom). Uses GIPHY to fetch
+//                         pet GIFs for use in our brand social posts.
+//   6. Submit. The Beta API key appears on the next page (and on your dashboard going forward).
+//      Copy it.
+//   7. Paste it into GIPHY_API_KEY below, commit, push.
+//
+// Notes:
+//   • Beta tier: ~1000 requests/day, more than enough for the team. If you ever need higher
+//     limits, GIPHY has a separate "Production Key" review process — submit the same app.
+//   • Per GIPHY's terms, the "Powered by GIPHY" attribution must stay visible somewhere in the
+//     UI. It's in the modal footer.
+var GIPHY_API_KEY = '';   // ← Jason: paste your GIPHY Beta API key between the quotes
 
-var _memeBrowserTab = 'tenor';         // 'tenor' | 'imgflip' — Tenor is the default
-var _tenorMemesCache = {};             // keyed by query string → results[]
-var _tenorFetching = false;
+var _memeBrowserTab = 'giphy';         // 'giphy' | 'imgflip' — GIPHY is the default
+var _giphyMemesCache = {};             // keyed by query string → results[]
+var _giphyFetching = false;
 
-// Quick-pick search chips for common pet queries. Click → fill search box → run.
-var _TENOR_QUICK_QUERIES = [
-  '🐱 cat meme', '🐶 dog meme', '🐱 kitten zoomies', '🐶 puppy',
+var _GIPHY_QUICK_QUERIES = [
+  '🐱 cat meme', '🐶 dog meme', '🐱 kitten', '🐶 puppy',
   '😹 funny cat', '🦮 funny dog', '🐾 pet reaction', '🥰 cute pet',
-  '😺 catnip', '🐶 dog tilt', '😻 cat surprise', '🐕 dog blep'
+  '😺 catnip', '🐶 dog tilt head', '😻 cat surprise', '🐕 dog blep'
 ];
 
 function switchMemeTab(tab){
   _memeBrowserTab = tab;
+  var giphyBtn = document.getElementById('memeTabGiphy');
   var imgflipBtn = document.getElementById('memeTabPopular');
-  var tenorBtn = document.getElementById('memeTabTenor');
+  var giphyCtrl = document.getElementById('memeGiphyControls');
   var imgflipCtrl = document.getElementById('memeImgflipControls');
-  var tenorCtrl = document.getElementById('memeTenorControls');
-  if(tab === 'tenor'){
-    if(tenorBtn){ tenorBtn.style.borderBottomColor = 'var(--green)'; tenorBtn.style.color = 'var(--text)'; }
+  if(tab === 'giphy'){
+    if(giphyBtn){ giphyBtn.style.borderBottomColor = 'var(--green)'; giphyBtn.style.color = 'var(--text)'; }
     if(imgflipBtn){ imgflipBtn.style.borderBottomColor = 'transparent'; imgflipBtn.style.color = 'var(--muted)'; }
-    if(tenorCtrl) tenorCtrl.classList.remove('hidden');
+    if(giphyCtrl) giphyCtrl.classList.remove('hidden');
     if(imgflipCtrl) imgflipCtrl.classList.add('hidden');
-    _renderTenorChips();
-    // Auto-search on first open so the grid isn't empty
-    var qEl = document.getElementById('memeTenorQuery');
+    _renderGiphyChips();
+    var qEl = document.getElementById('memeGiphyQuery');
     if(qEl && !qEl.value){ qEl.value = 'cat meme'; }
-    fetchTenorMemes();
+    fetchGiphyMemes();
   } else {
     if(imgflipBtn){ imgflipBtn.style.borderBottomColor = 'var(--green)'; imgflipBtn.style.color = 'var(--text)'; }
-    if(tenorBtn){ tenorBtn.style.borderBottomColor = 'transparent'; tenorBtn.style.color = 'var(--muted)'; }
+    if(giphyBtn){ giphyBtn.style.borderBottomColor = 'transparent'; giphyBtn.style.color = 'var(--muted)'; }
     if(imgflipCtrl) imgflipCtrl.classList.remove('hidden');
-    if(tenorCtrl) tenorCtrl.classList.add('hidden');
+    if(giphyCtrl) giphyCtrl.classList.add('hidden');
     if(!_memeTemplatesCache) fetchImgflipMemes(); else renderMemeBrowser();
   }
 }
 
-function _renderTenorChips(){
-  var box = document.getElementById('memeTenorChips');
-  if(!box || box.childElementCount) return;   // already rendered
-  _TENOR_QUICK_QUERIES.forEach(function(label){
+function _renderGiphyChips(){
+  var box = document.getElementById('memeGiphyChips');
+  if(!box || box.childElementCount) return;
+  _GIPHY_QUICK_QUERIES.forEach(function(label){
     var chip = document.createElement('span');
     chip.className = 'tag-chip';
     chip.style.cursor = 'pointer';
     chip.textContent = label;
     chip.onclick = function(){
-      // Strip the leading emoji + space when sending to Tenor
       var q = label.replace(/^[^\w]+\s*/, '');
-      var qEl = document.getElementById('memeTenorQuery');
+      var qEl = document.getElementById('memeGiphyQuery');
       if(qEl) qEl.value = q;
-      fetchTenorMemes();
+      fetchGiphyMemes();
     };
     box.appendChild(chip);
   });
 }
 
-function fetchTenorMemes(){
-  if(_tenorFetching) return;
-  if(!TENOR_API_KEY){
+function fetchGiphyMemes(){
+  if(_giphyFetching) return;
+  if(!GIPHY_API_KEY){
     var status0 = document.getElementById('memeBrowserStatus');
     if(status0){
-      status0.textContent = '⚠ No Tenor API key set. See the setup notes in index.html (search TENOR_API_KEY) — '
-        + '~3 minutes in Google Cloud Console. Until then, use the Popular tab or 📚 From Library.';
+      status0.textContent = '⚠ No GIPHY API key set. See setup notes in index.html '
+        + '(search GIPHY_API_KEY) — ~3 minutes at developers.giphy.com. '
+        + 'Until then, use the Popular tab or 📚 From Library.';
     }
     return;
   }
-  var qEl = document.getElementById('memeTenorQuery');
+  var qEl = document.getElementById('memeGiphyQuery');
   var q = (qEl ? qEl.value : '').trim();
   if(!q){ q = 'cat meme'; if(qEl) qEl.value = q; }
-  // Hit cache when re-searching the same query
-  if(_tenorMemesCache[q]){ renderTenorMemes(q); return; }
-  _tenorFetching = true;
+  if(_giphyMemesCache[q]){ renderGiphyMemes(q); return; }
+  _giphyFetching = true;
   var status = document.getElementById('memeBrowserStatus');
   var grid = document.getElementById('memeBrowserGrid');
-  if(status) status.textContent = 'Searching Tenor for "' + q + '"…';
+  if(status) status.textContent = 'Searching GIPHY for "' + q + '"…';
   if(grid) grid.innerHTML = '';
-  // Tenor v2 search. media_filter=gif,tinygif strips the larger MP4/HD variants out of the
-  // payload (we don't need them); contentfilter=high enforces SFW; limit=50 fills the grid.
-  var url = 'https://tenor.googleapis.com/v2/search'
-    + '?q=' + encodeURIComponent(q)
-    + '&key=' + encodeURIComponent(TENOR_API_KEY)
-    + '&client_key=' + encodeURIComponent(TENOR_CLIENT_KEY)
+  // GIPHY v1 search. rating=g keeps it safe; limit=50 fills the grid.
+  var url = 'https://api.giphy.com/v1/gifs/search'
+    + '?api_key=' + encodeURIComponent(GIPHY_API_KEY)
+    + '&q=' + encodeURIComponent(q)
     + '&limit=50'
-    + '&media_filter=gif,tinygif'
-    + '&contentfilter=high';
+    + '&rating=g'
+    + '&lang=en';
   fetch(url)
     .then(function(r){
       if(!r.ok){
         return r.text().then(function(body){
-          throw new Error('Tenor HTTP ' + r.status + ' — ' + body.slice(0, 200));
+          throw new Error('GIPHY HTTP ' + r.status + ' — ' + body.slice(0, 200));
         });
       }
       return r.json();
     })
     .then(function(res){
-      _tenorFetching = false;
-      if(!res || !Array.isArray(res.results)){
-        throw new Error('Unexpected Tenor response shape');
+      _giphyFetching = false;
+      if(!res || !Array.isArray(res.data)){
+        throw new Error('Unexpected GIPHY response shape');
       }
-      // Normalize: keep only items that have both tinygif (thumbnail) and gif (full) URLs.
-      var items = res.results.filter(function(g){
-        return g && g.media_formats && g.media_formats.gif && (g.media_formats.tinygif || g.media_formats.gif);
+      // Use fixed_width (~200px wide) for tile thumbnails to keep the grid load light.
+      // Use original for the full version when the user picks one.
+      var items = res.data.filter(function(g){
+        return g && g.images && g.images.original && (g.images.fixed_width || g.images.fixed_width_small);
       }).map(function(g){
-        var fmts = g.media_formats;
+        var imgs = g.images;
+        var thumb = imgs.fixed_width || imgs.fixed_width_small || imgs.original;
         return {
           id: g.id,
-          title: (g.content_description || g.title || '').slice(0, 100),
-          thumbUrl: (fmts.tinygif || fmts.gif).url,
-          fullUrl: fmts.gif.url
+          title: (g.title || '').slice(0, 100),
+          thumbUrl: thumb.url,
+          fullUrl: imgs.original.url
         };
       });
-      _tenorMemesCache[q] = items;
+      _giphyMemesCache[q] = items;
       if(status){
         status.textContent = items.length
-          ? items.length + ' results for "' + q + '" · click one to drop on the canvas.'
+          ? items.length + ' GIPHY results for "' + q + '" · click one to drop on the canvas.'
           : 'No results for "' + q + '". Try a different query or pick a chip below.';
       }
-      renderTenorMemes(q);
+      renderGiphyMemes(q);
     })
     .catch(function(e){
-      _tenorFetching = false;
-      console.error('[meme:tenor] fetch failed:', e);
+      _giphyFetching = false;
+      console.error('[meme:giphy] fetch failed:', e);
       if(status){
-        status.textContent = '✗ Tenor fetch failed: ' + (e.message || String(e))
-          + ' — check that TENOR_API_KEY is set, the Tenor API is enabled on the Google project, '
-          + 'and that this domain is in the key\'s HTTP-referrer allowlist.';
+        status.textContent = '✗ GIPHY fetch failed: ' + (e.message || String(e))
+          + ' — check that GIPHY_API_KEY is set and the Beta key from developers.giphy.com '
+          + 'hasn\'t been revoked.';
       }
     });
 }
 
-function renderTenorMemes(query){
+function renderGiphyMemes(query){
   var grid = document.getElementById('memeBrowserGrid');
   if(!grid) return;
-  var items = _tenorMemesCache[query];
+  var items = _giphyMemesCache[query];
   if(!items) return;
   grid.innerHTML = '';
   if(!items.length){
@@ -4488,17 +4489,17 @@ function renderTenorMemes(query){
     tile.innerHTML =
       '<img src="' + escAttr(g.thumbUrl) + '" alt="" loading="lazy" crossorigin="anonymous">'
       + '<div class="meme-name">' + escAttr((g.title || query).slice(0, 60)) + '</div>'
-      + '<div class="meme-meta">via Tenor</div>';
-    tile.onclick = function(){ useTenorMeme(g); };
+      + '<div class="meme-meta">via GIPHY</div>';
+    tile.onclick = function(){ useGiphyMeme(g); };
     grid.appendChild(tile);
   });
 }
 
-// Drop a Tenor GIF on the canvas as an image layer. Same fetch→blob→data-URL pipeline as the
-// Imgflip and library paths, so the canvas stays untainted on export. Tenor GIFs are finished
-// content (no caption layers — pass 0). The current image layer system renders the first frame
-// of a GIF (animated playback would need video-layer integration — separate follow-up).
-function useTenorMeme(g){
+// Drop a GIPHY GIF on the canvas as an image layer. Same fetch→blob→data-URL pipeline as the
+// Imgflip and library paths, so the canvas stays untainted on export. GIPHY GIFs are finished
+// content (no caption layers — pass 0). Animated playback not supported (first frame only) —
+// would need video-layer integration as a separate follow-up.
+function useGiphyMeme(g){
   if(!g || !g.fullUrl){ alert('Bad GIF data.'); return; }
   var status = document.getElementById('memeBrowserStatus');
   if(status) status.textContent = 'Loading "' + (g.title || 'GIF') + '"…';
@@ -4515,14 +4516,14 @@ function useTenorMeme(g){
     .then(function(dataUrl){
       var img = new Image();
       img.onload = function(){
-        _addMemeFromImage(img, (g.title || 'tenor').slice(0, 60), 0);   // finished content → 0 captions
+        _addMemeFromImage(img, (g.title || 'giphy').slice(0, 60), 0);
         closeMemeBrowser();
       };
       img.onerror = function(){ if(status) status.textContent = '✗ GIF failed to decode.'; };
       img.src = dataUrl;
     })
     .catch(function(e){
-      console.error('[meme:tenor] use failed:', e);
+      console.error('[meme:giphy] use failed:', e);
       if(status) status.textContent = '✗ Could not load this GIF: ' + (e.message || e);
     });
 }
