@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v212</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v213</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8486,20 +8486,29 @@ function redraw(){
   // v211: snap any "background" layer (created via + Background) to current canvas dimensions.
   // The layer is tagged with _fillsCanvas at creation; if the canvas later resizes (brand switch,
   // board switch, custom dims), this keeps the background covering the full area instead of
-  // leaving a checker strip exposed on the right/bottom. For image-type backgrounds (patterns,
-  // mesh gradients) the underlying image stretches via 'fit:cover' — acceptable for tiled
-  // patterns and visually fine for mesh blobs. Shape-type gradients re-compute cleanly because
-  // drawShapeLayer derives the gradient line from layer.x/y/w/h each frame.
+  // leaving a checker strip exposed on the right/bottom.
+  // v213: also auto-flag any layer with the '🎨 ' name prefix (the marker every + Background
+  // path applies). This migrates designs that were saved with backgrounds created BEFORE the
+  // _fillsCanvas flag existed — the layer self-corrects on the next redraw without requiring
+  // delete-and-recreate. Position is set to (-1, -1) and dims to (canvasW+2, canvasH+2) so the
+  // background always overshoots the canvas by 1px on every side, eliminating any sub-pixel
+  // edge artifacts where rounding could leave a hairline of checkerboard exposed.
   for(var bi = 0; bi < layers.length; bi++){
     var bl = layers[bi];
-    if(bl && bl._fillsCanvas){
-      if(bl.x !== 0) bl.x = 0;
-      if(bl.y !== 0) bl.y = 0;
-      if(bl.w !== canvasW) bl.w = canvasW;
-      if(bl.h !== canvasH) bl.h = canvasH;
+    if(!bl) continue;
+    if(!bl._fillsCanvas && bl.name && bl.name.indexOf('🎨 ') === 0){
+      bl._fillsCanvas = true;
+    }
+    if(bl._fillsCanvas){
+      var targetX = -1, targetY = -1;
+      var targetW = canvasW + 2, targetH = canvasH + 2;
+      if(bl.x !== targetX) bl.x = targetX;
+      if(bl.y !== targetY) bl.y = targetY;
+      if(bl.w !== targetW) bl.w = targetW;
+      if(bl.h !== targetH) bl.h = targetH;
       if(bl.type === 'image'){
-        bl._baseW = canvasW;
-        bl._baseH = canvasH;
+        bl._baseW = targetW;
+        bl._baseH = targetH;
       }
     }
   }
