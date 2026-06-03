@@ -189,6 +189,42 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
    continues to add the image to the canvas — selection is an orthogonal action. */
 .lib-item .lib-check{position:absolute;top:5px;left:5px;width:20px;height:20px;cursor:pointer;z-index:5;margin:0;}
 .lib-item.selected{border-color:var(--green);box-shadow:0 0 0 1.5px var(--green) inset;background:#f0f9e3;}
+/* v196: prominent center-top progress card for background-removal jobs. Replaces v194's
+   plain corner toast with an animated spinner and progress bar so users actually notice that
+   work is happening (model download or inference) without having to glance at the corner. */
+@keyframes bgRemoveSpin { to { transform: rotate(360deg); } }
+@keyframes bgRemovePulse {
+  0%, 100% { box-shadow: 0 6px 28px rgba(60, 142, 20, 0.4); }
+  50%      { box-shadow: 0 6px 36px rgba(60, 142, 20, 0.85); }
+}
+#bgRemoveProgress {
+  position:fixed; top:78px; left:50%; transform:translateX(-50%);
+  z-index:9999;
+  background:var(--green-dark); color:#fff;
+  padding:14px 22px; border-radius:12px;
+  font-size:13px; font-weight:700;
+  display:flex; align-items:center; gap:14px;
+  min-width:300px; max-width:90vw;
+  animation: bgRemovePulse 1.8s ease-in-out infinite;
+}
+#bgRemoveProgress .bg-remove-spinner {
+  width:26px; height:26px;
+  border:3px solid rgba(255,255,255,0.25);
+  border-top-color:#fff;
+  border-radius:50%;
+  animation: bgRemoveSpin 0.85s linear infinite;
+  flex-shrink:0;
+}
+#bgRemoveProgress .bg-remove-text { flex:1; line-height:1.3; }
+#bgRemoveProgress .bg-remove-sub {
+  font-weight:400; font-size:11px; opacity:0.85; margin-top:2px;
+}
+#bgRemoveProgress .bg-remove-bar {
+  height:6px; background:rgba(255,255,255,0.22); border-radius:3px; overflow:hidden; margin-top:7px;
+}
+#bgRemoveProgress .bg-remove-bar-fill {
+  height:100%; background:#fff; transition:width 0.25s ease-out;
+}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -205,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v195</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v196</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -12242,15 +12278,15 @@ function removeImageLayerBackground(layerId){
       localStorage.setItem('bgRemoveAccepted', '1');
     }
   } catch(e){}
-  _showBgRemoveProgress('Loading background-removal model…');
+  _showBgRemoveProgress('🪄 Loading background-removal model…', 'First-time download — about 44MB, then it caches.', null);
   _removeBackgroundFromImage(layer.img, function(progress){
     if(!progress) return;
     if(progress.status === 'progress' && progress.progress != null){
       var pct = Math.round(progress.progress);
       var file = (progress.file || '').split('/').pop();
-      _showBgRemoveProgress('Downloading model · ' + file + ' · ' + pct + '%');
+      _showBgRemoveProgress('🪄 Downloading model · ' + pct + '%', file, pct);
     } else if(progress.status === 'ready'){
-      _showBgRemoveProgress('Processing image…');
+      _showBgRemoveProgress('🪄 Removing background…', 'This usually takes 5–15 seconds.', null);
     }
   }).then(function(dataUrl){
     snapshotStateFull();   // v190 full snapshot so undo restores the pre-removal image
@@ -12273,15 +12309,33 @@ function removeImageLayerBackground(layerId){
   });
 }
 
-function _showBgRemoveProgress(text){
+// v196: animated, center-top progress card. mainText is the headline; subText is a small
+// gray-on-green caption (e.g. file name during download, "5–15s" during inference); pct draws
+// a fill bar 0–100 when provided. All three update in place — no flicker — so the spinner and
+// pulse animations keep running smoothly across status changes.
+function _showBgRemoveProgress(mainText, subText, pct){
   var el = document.getElementById('bgRemoveProgress');
   if(!el){
     el = document.createElement('div');
     el.id = 'bgRemoveProgress';
-    el.style.cssText = 'position:fixed;top:60px;right:16px;z-index:9999;background:var(--green-dark);color:#fff;padding:12px 16px;border-radius:7px;font-size:12px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.25);max-width:380px;';
+    el.innerHTML =
+        '<div class="bg-remove-spinner"></div>'
+      + '<div class="bg-remove-text">'
+        + '<div class="bg-remove-main"></div>'
+        + '<div class="bg-remove-sub"></div>'
+        + '<div class="bg-remove-bar" style="display:none;"><div class="bg-remove-bar-fill" style="width:0%;"></div></div>'
+      + '</div>';
     document.body.appendChild(el);
   }
-  el.innerHTML = '<span style="display:inline-block;margin-right:6px;">⟳</span> ' + text;
+  el.querySelector('.bg-remove-main').textContent = mainText || '';
+  el.querySelector('.bg-remove-sub').textContent  = subText  || '';
+  var bar = el.querySelector('.bg-remove-bar');
+  if(pct != null){
+    bar.style.display = '';
+    el.querySelector('.bg-remove-bar-fill').style.width = Math.max(0, Math.min(100, pct)) + '%';
+  } else {
+    bar.style.display = 'none';
+  }
 }
 
 function _hideBgRemoveProgress(){
