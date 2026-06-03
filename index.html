@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v204</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v205</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1617,7 +1617,7 @@ var zoomLevel = 0.5;
 var _overscanOn = false;
 var _overscanPx = 300;          // pixels of off-canvas margin shown on each side, in canvas coords
 var nextId = 1;           // global layer id counter — unique across ALL boards so paste is safe
-var dragState = null, resizeState = null, cropState = null, rotateState = null, marqueeState = null;
+var dragState = null, resizeState = null, cropState = null, rotateState = null, marqueeState = null, eraseState = null;
 // v180: snap-to-canvas. When a dragged/resized layer's edge, center, or corner comes within
 // _SNAP_THRESHOLD_PX (screen pixels) of a canvas edge or the canvas center, it snaps there.
 // Hold Alt while dragging/resizing to bypass. _activeSnapLines holds the guide lines to draw
@@ -1789,7 +1789,7 @@ function switchBoard(id){
   // applied correctly. Without this, switching boards while overscan is on would leave the
   // canvas pixel buffer at canvasW × canvasH (no overscan) while applyZoom sized the CSS for
   // the overscanned dimensions — resulting in distorted, squished, or shifted-looking content.
-  cropState = null; rotateState = null; dragState = null; resizeState = null;
+  cropState = null; rotateState = null; dragState = null; resizeState = null; if(typeof eraseState !== 'undefined' && eraseState) { hideEraseToolbar(); eraseState = null; }
   setCanvasSize(b.canvasW, b.canvasH);
   renderBoardTabs(); renderLayerList(); renderProps(); renderPresets();
   updateExportInfo();
@@ -2228,7 +2228,7 @@ function undo(){
   _undoSuppressed = true;
   layers = deserializeLayers(prior);
   if(!layers.find(function(l){return l.id===selectedId;})) selectedId = null;
-  cropState = null; dragState = null; resizeState = null; rotateState = null;
+  cropState = null; dragState = null; resizeState = null; rotateState = null; if(typeof eraseState !== 'undefined' && eraseState) { hideEraseToolbar(); eraseState = null; }
   hideCropToolbar();
   renderLayerList(); renderProps(); redraw();
   _undoSuppressed = false;
@@ -2242,7 +2242,7 @@ function redo(){
   _undoSuppressed = true;
   layers = deserializeLayers(next);
   if(!layers.find(function(l){return l.id===selectedId;})) selectedId = null;
-  cropState = null; dragState = null; resizeState = null; rotateState = null;
+  cropState = null; dragState = null; resizeState = null; rotateState = null; if(typeof eraseState !== 'undefined' && eraseState) { hideEraseToolbar(); eraseState = null; }
   hideCropToolbar();
   renderLayerList(); renderProps(); redraw();
   _undoSuppressed = false;
@@ -6375,6 +6375,10 @@ function buildImageProps(l){
     // placeholder has nothing to process yet). Undo restores the pre-removal image via
     // snapshotStateFull() called inside removeImageLayerBackground.
     +(l.img ? '<button class="btn-add" style="width:100%;margin-top:5px;" onclick="removeImageLayerBackground('+l.id+')" title="Make the background transparent using an in-browser AI model. First use downloads ~44MB; after that it works offline.">🪄 Remove Background (AI)</button>' : '')
+    // v205: Manual erase tool — paint to remove pixels (useful after AI bg-removal for cleanup,
+    // or for blending photos by erasing edges). Brush size + hardness sliders in a bottom toolbar.
+    // A single undo snapshot covers the whole erase session.
+    +(l.img ? '<button class="btn-add" style="width:100%;margin-top:5px;" onclick="enterEraseMode('+l.id+')" title="Erase pixels manually with a brush. Useful for cleaning up stragglers after AI background removal.">🧽 Erase Tool</button>' : '')
     +NUMPAIR('X (px)','nx',l.x,'Y (px)','ny',l.y)
     +NUMPAIR('W (px)','nw',l.w,'H (px)','nh',l.h)
     +R('X','px',l.x,-canvasW,canvasW*2,1)+R('Y','py',l.y,-canvasH,canvasH*2,1)
@@ -7551,6 +7555,20 @@ function bindCanvasEvents(){
       }
       return; // in crop mode, no layer selection / drag / resize
     }
+    // v205: Erase mode also takes precedence — mousedown on the layer starts a stroke.
+    // Stroke ends on mouseup; mousemove between extends it. We stamp the click point first
+    // so a single click (no drag) still erases a dot.
+    if(eraseState){
+      if(_pointInLayerBounds(cx, cy, eraseState.layer)){
+        eraseState.drawing = true;
+        eraseState.lastX = cx;
+        eraseState.lastY = cy;
+        _eraseStampAt(cx, cy);
+        redrawSoon();
+      }
+      e.preventDefault();
+      return;
+    }
     // First check: is there a selected layer with handles nearby?
     // Because the layer may be rotated, we transform the click into layer-local coords
     // (the coord space the handles are drawn in pre-rotation).
@@ -7680,6 +7698,22 @@ function bindCanvasEvents(){
       updateCropHandle(cropState.dragHandle, cx, cy);
       return;
     }
+    // v205: Track cursor for the brush preview circle, and if drawing, interpolate
+    // a stroke from the last position to the current one so fast drags stay continuous.
+    if(eraseState){
+      var rect=wrap.getBoundingClientRect();
+      var ovs = _overscanOn ? _overscanPx : 0;
+      var cx=(e.clientX-rect.left)/zoomLevel - ovs, cy=(e.clientY-rect.top)/zoomLevel - ovs;
+      eraseState.hoverX = cx;
+      eraseState.hoverY = cy;
+      if(eraseState.drawing){
+        _eraseStampLine(eraseState.lastX, eraseState.lastY, cx, cy);
+        eraseState.lastX = cx;
+        eraseState.lastY = cy;
+      }
+      redrawSoon();
+      return;
+    }
     if(marqueeState){
       var rect=wrap.getBoundingClientRect();
       var ovs = _overscanOn ? _overscanPx : 0;
@@ -7793,6 +7827,7 @@ function bindCanvasEvents(){
   window.addEventListener('mouseup',function(){
     dragState=null;resizeState=null;rotateState=null;
     if(cropState) cropState.dragHandle=null;
+    if(eraseState) eraseState.drawing = false;   // v205: end stroke; cursor still tracked for hover preview
     // v180: clear snap guide lines and redraw to erase them once the drag/resize ends.
     var hadSnapLines = _activeSnapLines.length > 0;
     _activeSnapLines = [];
@@ -8315,6 +8350,23 @@ function redraw(){
     ctx.restore();
   }
   if(cropState) drawCropOverlay(ctx);
+  // v205: brush cursor preview for erase mode — a 2-stroke ring (white over black) so it stays
+  // legible against any image. Drawn in world coords so it scales with zoom naturally.
+  if(eraseState && eraseState.hoverX != null){
+    ctx.save();
+    var r = eraseState.brushSize / 2;
+    ctx.lineWidth = 2 / zoomLevel;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.beginPath();
+    ctx.arc(eraseState.hoverX, eraseState.hoverY, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 1 / zoomLevel;
+    ctx.strokeStyle = 'rgba(255,255,255,1)';
+    ctx.beginPath();
+    ctx.arc(eraseState.hoverX, eraseState.hoverY, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Overscan visual markers — drawn AFTER all layers and selection chrome so they sit on top.
   // The dim overlay over the off-canvas region makes "outside the export area" visually obvious;
@@ -8410,6 +8462,22 @@ document.addEventListener('keydown', function(e){
     _perfStats = {moveCount: 0, redrawCount: 0, redrawTotalMs: 0, redrawMaxMs: 0, lastLog: 0};
     console.log('[perf] diagnostic ' + (_perfDiag ? 'ON — drag a layer; numbers will log every 500ms' : 'OFF'));
     e.preventDefault();
+  }
+  // v205: Esc exits erase mode (without applying). Bracket keys [ and ] shrink/grow the brush.
+  // Bail if a text input is focused so these don't intercept normal typing.
+  if(eraseState){
+    var t = e.target;
+    var inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || (t.isContentEditable));
+    if(e.key === 'Escape'){ exitEraseMode(); e.preventDefault(); return; }
+    if(!inField && (e.key === '[' || e.key === ']')){
+      var bs = document.getElementById('eraseBrushSize');
+      if(bs){
+        var v = +bs.value + (e.key === ']' ? 5 : -5);
+        bs.value = Math.max(5, Math.min(200, v));
+        eraseUpdateBrush();
+        e.preventDefault();
+      }
+    }
   }
 });
 
@@ -9027,12 +9095,17 @@ function drawTextWithLetterSpacing(ctx, text, x, y, letterSpacing, align, boxW){
 function drawImageLayer(ctx,layer){
   if(!layer.img)return;
   withRotation(ctx,layer,function(){
-    var img=layer.img,x=layer.x,y=layer.y,w=layer.w,h=layer.h;
+    // v205: while in erase mode, draw from the in-progress working canvas instead of layer.img
+    // so each stroke is visible immediately. The canvas's .width/.height stand in for naturalWidth.
+    var img = (eraseState && eraseState.layerId === layer.id) ? eraseState.workingCanvas : layer.img;
+    var natW = img.naturalWidth || img.width;
+    var natH = img.naturalHeight || img.height;
+    var x=layer.x,y=layer.y,w=layer.w,h=layer.h;
     // Crop source rectangle defaults to full image
     var sx=(layer.cropX!=null)?layer.cropX:0;
     var sy=(layer.cropY!=null)?layer.cropY:0;
-    var sw=(layer.cropW!=null)?layer.cropW:img.naturalWidth;
-    var sh=(layer.cropH!=null)?layer.cropH:img.naturalHeight;
+    var sw=(layer.cropW!=null)?layer.cropW:natW;
+    var sh=(layer.cropH!=null)?layer.cropH:natH;
     // Drop shadow that follows the image's alpha silhouette (so transparent PNG logos cast a
     // shadow shaped like the logo, not a rectangle). Done before the clip + paint.
     paintImageShadow(ctx, layer, function(c){
@@ -12534,6 +12607,214 @@ function bgRefineApply(){
 function bgRefineCancel(){
   _bgRefineState = null;
   document.getElementById('bgRefineModal').classList.add('hidden');
+}
+
+// ── ERASE TOOL (v205) ──
+// Paint-to-erase tool that operates on an image layer's pixels via a working canvas. The
+// working canvas is initialized at the source image's native dimensions and is drawn in place
+// of layer.img while erase mode is active (see drawImageLayer). On Apply, the canvas is
+// converted to a data URL and loaded into a new Image that replaces layer.img. A single
+// snapshotStateFull() at enter time means undo backs out the entire erase session.
+//
+// Coordinate mapping (_eraseScreenToSource): the click is unrotated around the layer's center,
+// optionally mirrored for flipH/flipV, then mapped through the same fit logic drawImageLayer
+// uses (cover/contain/fill) to land in source-image pixels. The brush radius in screen px is
+// scaled by the same source-per-screen ratio so the stroke covers what the user sees.
+
+function _pointInLayerBounds(cx, cy, layer){
+  var lx = cx, ly = cy;
+  if(layer.rotation){
+    var rot = layer.rotation * Math.PI / 180;
+    var ccx = layer.x + layer.w/2, ccy = layer.y + layer.h/2;
+    var dx = cx - ccx, dy = cy - ccy;
+    var cs = Math.cos(-rot), sn = Math.sin(-rot);
+    lx = ccx + dx*cs - dy*sn;
+    ly = ccy + dx*sn + dy*cs;
+  }
+  return lx >= layer.x && lx <= layer.x + layer.w
+      && ly >= layer.y && ly <= layer.y + layer.h;
+}
+
+function _eraseScreenToSource(layer, cx, cy){
+  // Unrotate the click into the layer's local axis-aligned space
+  var lx = cx, ly = cy;
+  if(layer.rotation){
+    var rot = layer.rotation * Math.PI / 180;
+    var ccx = layer.x + layer.w/2, ccy = layer.y + layer.h/2;
+    var dx = cx - ccx, dy = cy - ccy;
+    var cs = Math.cos(-rot), sn = Math.sin(-rot);
+    lx = ccx + dx*cs - dy*sn;
+    ly = ccy + dx*sn + dy*cs;
+  }
+  // Mirror for flipH/flipV — the displayed pixel at screen-X corresponds to the source pixel
+  // at (layerWidth - X) when the layer is horizontally flipped, and likewise for vertical.
+  if(layer.flipH) lx = (layer.x + layer.w) - (lx - layer.x);
+  if(layer.flipV) ly = (layer.y + layer.h) - (ly - layer.y);
+  // Crop window (defaults to full image)
+  var src = (eraseState && eraseState.layerId === layer.id) ? eraseState.workingCanvas : layer.img;
+  var natW = src.naturalWidth || src.width;
+  var natH = src.naturalHeight || src.height;
+  var cropX = layer.cropX != null ? layer.cropX : 0;
+  var cropY = layer.cropY != null ? layer.cropY : 0;
+  var cropW = layer.cropW != null ? layer.cropW : natW;
+  var cropH = layer.cropH != null ? layer.cropH : natH;
+  // Destination rect on canvas (matches drawImageLayer's fit math)
+  var dx, dy, dw, dh;
+  if(layer.fit === 'fill'){
+    dx = layer.x; dy = layer.y; dw = layer.w; dh = layer.h;
+  } else {
+    var sc = layer.fit === 'cover'
+      ? Math.max(layer.w / cropW, layer.h / cropH)
+      : Math.min(layer.w / cropW, layer.h / cropH);
+    dw = cropW * sc; dh = cropH * sc;
+    dx = layer.x + (layer.w - dw) / 2;
+    dy = layer.y + (layer.h - dh) / 2;
+  }
+  var fx = (lx - dx) / dw;
+  var fy = (ly - dy) / dh;
+  return {
+    sx: cropX + fx * cropW,
+    sy: cropY + fy * cropH,
+    scale: cropW / dw   // source pixels per screen pixel
+  };
+}
+
+function _eraseStampAt(cx, cy){
+  if(!eraseState) return;
+  var coords = _eraseScreenToSource(eraseState.layer, cx, cy);
+  var srcRadius = (eraseState.brushSize / 2) * coords.scale;
+  if(srcRadius < 0.5) return;
+  var c = eraseState.workingCtx;
+  c.save();
+  c.globalCompositeOperation = 'destination-out';
+  if(eraseState.hardness >= 99){
+    // Fully hard brush — flat alpha=1 destination-out → clean binary erase
+    c.fillStyle = 'rgba(0,0,0,1)';
+    c.beginPath();
+    c.arc(coords.sx, coords.sy, srcRadius, 0, Math.PI * 2);
+    c.fill();
+  } else {
+    // Soft brush — radial gradient where alpha falls off outside the hardness ring
+    var hardStop = Math.max(0, Math.min(0.95, eraseState.hardness / 100));
+    var grad = c.createRadialGradient(coords.sx, coords.sy, 0, coords.sx, coords.sy, srcRadius);
+    grad.addColorStop(0, 'rgba(0,0,0,1)');
+    grad.addColorStop(hardStop, 'rgba(0,0,0,1)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = grad;
+    c.beginPath();
+    c.arc(coords.sx, coords.sy, srcRadius, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.restore();
+}
+
+function _eraseStampLine(fromX, fromY, toX, toY){
+  // Interpolate between two screen-space points so fast drags don't leave gaps. Step size is
+  // 1/4 of the brush diameter — small enough to overlap cleanly, large enough to stay fast.
+  var dx = toX - fromX, dy = toY - fromY;
+  var dist = Math.sqrt(dx*dx + dy*dy);
+  var step = Math.max(1, eraseState.brushSize / 4);
+  var n = Math.max(1, Math.ceil(dist / step));
+  for(var i = 1; i <= n; i++){
+    var t = i / n;
+    _eraseStampAt(fromX + dx * t, fromY + dy * t);
+  }
+}
+
+function enterEraseMode(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer || !layer.img){ alert('No image on this layer to erase.'); return; }
+  // Mutually exclusive with crop mode
+  if(cropState) exitCropMode();
+  // Single snapshot for the entire session — undo restores the pre-erase image
+  snapshotStateFull();
+  var natW = layer.img.naturalWidth || layer.img.width;
+  var natH = layer.img.naturalHeight || layer.img.height;
+  var wc = document.createElement('canvas');
+  wc.width = natW; wc.height = natH;
+  var wctx = wc.getContext('2d');
+  wctx.drawImage(layer.img, 0, 0);
+  eraseState = {
+    layerId: layer.id,
+    layer: layer,
+    workingCanvas: wc,
+    workingCtx: wctx,
+    brushSize: 40,
+    hardness: 80,
+    drawing: false,
+    lastX: null, lastY: null,
+    hoverX: null, hoverY: null
+  };
+  showEraseToolbar();
+  redraw();
+}
+
+function exitEraseMode(){
+  eraseState = null;
+  hideEraseToolbar();
+  redraw();
+}
+
+function applyErase(){
+  if(!eraseState) return;
+  var layer = eraseState.layer;
+  if(!layer){ exitEraseMode(); return; }
+  var dataUrl = eraseState.workingCanvas.toDataURL('image/png');
+  var newImg = new Image();
+  newImg.onload = function(){
+    layer.img = newImg;
+    exitEraseMode();
+    redraw();
+    showToast('🧽 Erase applied');
+  };
+  newImg.onerror = function(){
+    alert('Could not apply erase.');
+    exitEraseMode();
+  };
+  newImg.src = dataUrl;
+}
+
+function eraseUpdateBrush(){
+  if(!eraseState) return;
+  eraseState.brushSize = +document.getElementById('eraseBrushSize').value;
+  eraseState.hardness  = +document.getElementById('eraseHardness').value;
+  document.getElementById('eraseBrushSizeVal').textContent = eraseState.brushSize;
+  document.getElementById('eraseHardnessVal').textContent  = eraseState.hardness;
+  redraw();
+}
+
+function showEraseToolbar(){
+  var bar = document.getElementById('eraseToolbar');
+  if(!bar){
+    bar = document.createElement('div');
+    bar.id = 'eraseToolbar';
+    bar.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:8px;display:flex;gap:14px;align-items:center;z-index:900;box-shadow:0 4px 16px rgba(0,0,0,0.4);font-size:13px;flex-wrap:wrap;justify-content:center;max-width:calc(100vw - 40px);';
+    bar.innerHTML =
+        '<span style="opacity:0.85;">🧽 Erase — drag on image to remove pixels</span>'
+      + '<label style="display:flex;align-items:center;gap:6px;">Size '
+        + '<input type="range" id="eraseBrushSize" min="5" max="200" value="40" oninput="eraseUpdateBrush()" style="width:120px;">'
+        + '<span id="eraseBrushSizeVal" style="font-family:monospace;width:30px;text-align:right;">40</span>'
+      + '</label>'
+      + '<label style="display:flex;align-items:center;gap:6px;">Hardness '
+        + '<input type="range" id="eraseHardness" min="0" max="100" value="80" oninput="eraseUpdateBrush()" style="width:100px;">'
+        + '<span id="eraseHardnessVal" style="font-family:monospace;width:30px;text-align:right;">80</span>'
+      + '</label>'
+      + '<button onclick="applyErase()" style="background:#8ab81d;color:#fff;border:none;padding:6px 14px;border-radius:5px;cursor:pointer;font-weight:600;">✓ Apply</button>'
+      + '<button onclick="exitEraseMode()" style="background:#555;color:#fff;border:none;padding:6px 14px;border-radius:5px;cursor:pointer;">✕ Cancel</button>';
+    document.body.appendChild(bar);
+  } else {
+    // Re-sync sliders to current state (in case of repeated entry)
+    var bs = document.getElementById('eraseBrushSize'), hd = document.getElementById('eraseHardness');
+    if(bs) bs.value = eraseState ? eraseState.brushSize : 40;
+    if(hd) hd.value = eraseState ? eraseState.hardness  : 80;
+    document.getElementById('eraseBrushSizeVal').textContent = eraseState ? eraseState.brushSize : 40;
+    document.getElementById('eraseHardnessVal').textContent  = eraseState ? eraseState.hardness  : 80;
+  }
+  bar.style.display = 'flex';
+}
+function hideEraseToolbar(){
+  var bar = document.getElementById('eraseToolbar');
+  if(bar) bar.style.display = 'none';
 }
 
 function removeImageLayerBackground(layerId){
