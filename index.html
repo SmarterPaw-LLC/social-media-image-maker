@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v205</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v207</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -330,6 +330,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button class="btn-add" onclick="addArrowLayer()" title="Hand-drawn marker-style arrow (style varies by brand)">+ Arrow</button>
       <button class="btn-add" onclick="openMemeBrowser()" title="Pick a popular meme template (live from Imgflip) and drop it on the canvas with caption layers ready to edit">+ Meme 🤣</button>
     </div>
+    <button class="btn-add" onclick="openBackgroundPicker()" title="Pick a brand gradient, mood gradient, or solid color background that fills the canvas — slides to the bottom of your layers">+ Background 🎨</button>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
     <!-- Shape picker (hidden by default) -->
     <div id="shapeMenu" class="hidden" style="border:1.5px solid var(--border);border-radius:8px;padding:8px;background:#fafafa;">
@@ -1005,6 +1006,57 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div class="modal-btns">
       <button type="button" class="btn-cancel" onclick="bgRefineCancel()">Cancel</button>
       <button type="button" class="btn-primary" onclick="bgRefineApply()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- v207: Background picker. Opens from sidebar "+ Background 🎨". Curated brand-themed and
+     mood gradients plus solid colors; clicking a tile creates a canvas-filling shape layer at
+     the bottom of the layer stack (visible behind everything else). Editable afterward via the
+     shape layer's normal property panel — angle, colors, etc. -->
+<div class="modal-overlay hidden" id="backgroundPickerModal">
+  <div class="modal" style="max-width:820px;max-height:90vh;overflow-y:auto;">
+    <h2>🎨 Background</h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">Pick a background — it'll fill the canvas and slide to the bottom of your layers. Edit the colors, angle, or gradient type afterward in the layer's properties.</div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Brand Gradients</div>
+      <div id="bgPresetBrand" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Mood Gradients</div>
+      <div id="bgPresetMood" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Solid Colors</div>
+      <div id="bgPresetSolid" style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;"></div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeBackgroundPicker()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- v206: GIF frame picker. Opens when a GIPHY tile is clicked (if the GIF has an MP4 version,
+     which 99% of GIPHY content does). Loads the MP4 into a <video>, exposes scrub + play +
+     frame-step controls, and on confirm captures the current frame to a canvas → image layer.
+     z-index above the meme browser modal so it stacks on top. -->
+<div class="modal-overlay hidden" id="gifFrameModal" style="z-index:1100;">
+  <div class="modal" style="max-width:680px;">
+    <h2>🎞️ Pick a Frame</h2>
+    <div style="text-align:center;background:#000;border-radius:6px;padding:8px;margin-bottom:10px;">
+      <video id="gifFrameVideo" muted playsinline crossorigin="anonymous" style="max-width:100%;max-height:380px;display:block;margin:0 auto;"></video>
+    </div>
+    <div id="gifFrameStatus" style="font-size:11px;color:var(--muted);margin-bottom:8px;text-align:center;min-height:14px;"></div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
+      <button type="button" onclick="gifFrameStep(-1)" title="Previous frame (~30fps step)" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer;">⏮</button>
+      <button type="button" onclick="gifFrameTogglePlay()" id="gifFramePlayBtn" style="padding:6px 12px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer;min-width:80px;">▶ Play</button>
+      <button type="button" onclick="gifFrameStep(1)" title="Next frame (~30fps step)" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:#fff;cursor:pointer;">⏭</button>
+      <input type="range" id="gifFrameScrub" min="0" max="1000" value="0" oninput="gifFrameScrubChange()" style="flex:1;">
+      <span id="gifFrameTime" style="font-family:monospace;font-size:11px;color:var(--muted);min-width:100px;text-align:right;">0.00s / 0.00s</span>
+    </div>
+    <div class="modal-btns">
+      <button type="button" class="btn-cancel" onclick="gifFrameCancel()">Cancel</button>
+      <button type="button" class="btn-primary" onclick="gifFrameUse()">✓ Use this frame</button>
     </div>
   </div>
 </div>
@@ -4495,11 +4547,15 @@ function fetchGiphyMemes(){
       }).map(function(g){
         var imgs = g.images;
         var thumb = imgs.fixed_width || imgs.fixed_width_small || imgs.original;
+        // v206: original_mp4 is GIPHY's MP4-encoded copy of the same animation. Loading it into
+        // a <video> lets the user scrub to any frame for capture, which a plain <img> can't do.
+        // Falls back to first-frame-only behavior if no MP4 is present (rare on GIPHY).
         return {
           id: g.id,
           title: (g.title || '').slice(0, 100),
           thumbUrl: thumb.url,
-          fullUrl: imgs.original.url
+          fullUrl: imgs.original.url,
+          mp4Url: (imgs.original_mp4 && imgs.original_mp4.mp4) || null
         };
       });
       _giphyMemesCache[q] = items;
@@ -4544,12 +4600,18 @@ function renderGiphyMemes(query){
   });
 }
 
-// Drop a GIPHY GIF on the canvas as an image layer. Same fetch→blob→data-URL pipeline as the
-// Imgflip and library paths, so the canvas stays untainted on export. GIPHY GIFs are finished
-// content (no caption layers — pass 0). Animated playback not supported (first frame only) —
-// would need video-layer integration as a separate follow-up.
+// v206: GIPHY tile click opens the frame picker modal. The MP4 version loads into a <video>
+// element, the user scrubs to any frame, then clicking Use captures that frame to canvas and
+// drops it as an image layer. If the GIF has no MP4 version, we fall back to the previous
+// behavior (load the GIF directly — only first frame visible).
 function useGiphyMeme(g){
   if(!g || !g.fullUrl){ alert('Bad GIF data.'); return; }
+  if(g.mp4Url){ openGifFramePicker(g); return; }
+  // Fallback: no MP4 available — drop the first frame as before
+  _useGiphyMemeFirstFrameOnly(g);
+}
+
+function _useGiphyMemeFirstFrameOnly(g){
   var status = document.getElementById('memeBrowserStatus');
   if(status) status.textContent = 'Loading "' + (g.title || 'GIF') + '"…';
   fetch(g.fullUrl, {mode: 'cors'})
@@ -4575,6 +4637,166 @@ function useGiphyMeme(g){
       console.error('[meme:giphy] use failed:', e);
       if(status) status.textContent = '✗ Could not load this GIF: ' + (e.message || e);
     });
+}
+
+// ── GIF FRAME PICKER (v206) ──
+// Loads the GIPHY MP4 version into a <video>, exposes a scrub slider + play/pause + frame-step
+// buttons, and on confirm captures the current video frame to a canvas → dataURL → Image →
+// _addMemeFromImage. crossorigin='anonymous' on the video element + GIPHY's permissive CORS
+// keeps the capture canvas untainted so toDataURL() succeeds.
+var _gifFramePicker = null;
+
+function openGifFramePicker(g){
+  _gifFramePicker = { gifData: g, isPlaying: false };
+  var modal = document.getElementById('gifFrameModal');
+  var video = document.getElementById('gifFrameVideo');
+  var scrub = document.getElementById('gifFrameScrub');
+  var status = document.getElementById('gifFrameStatus');
+  if(status) status.textContent = 'Loading "' + (g.title || 'GIF') + '"…';
+  scrub.value = 0;
+  scrub.max = 1000;
+  // Reset video element fully — orphaned src/handlers from a previous open cause subtle bugs
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  video.muted = true;
+  video.playsInline = true;
+  video.loop = true;
+  video.crossOrigin = 'anonymous';
+  video.onloadedmetadata = function(){
+    if(!_gifFramePicker) return;
+    // currentTime is stored in 1/100s units in the slider (max ≈ duration*100). Lets us scrub
+    // at ~10ms granularity which is finer than typical GIF frame durations.
+    scrub.max = Math.max(1, Math.round(video.duration * 100));
+    scrub.value = 0;
+    video.currentTime = 0;
+    gifFrameUpdateTimeDisplay();
+    if(status) status.textContent = 'Scrub to the frame you want, or use the step buttons. Click Use this frame when ready.';
+  };
+  video.onerror = function(){
+    if(status) status.textContent = '✗ Could not load video. Falling back to first frame.';
+    setTimeout(function(){ gifFrameCancel(); _useGiphyMemeFirstFrameOnly(g); }, 1200);
+  };
+  // When playing, ontimeupdate moves the slider; while scrubbing we drive currentTime instead
+  video.ontimeupdate = function(){
+    if(_gifFramePicker && _gifFramePicker.isPlaying){
+      scrub.value = Math.round(video.currentTime * 100);
+      gifFrameUpdateTimeDisplay();
+    }
+  };
+  video.src = g.mp4Url;
+  video.load();
+  modal.classList.remove('hidden');
+}
+
+function gifFrameUpdateTimeDisplay(){
+  var video = document.getElementById('gifFrameVideo');
+  var disp = document.getElementById('gifFrameTime');
+  if(!video || !disp) return;
+  var cur = isFinite(video.currentTime) ? video.currentTime : 0;
+  var dur = isFinite(video.duration) ? video.duration : 0;
+  disp.textContent = cur.toFixed(2) + 's / ' + dur.toFixed(2) + 's';
+}
+
+function gifFrameScrubChange(){
+  if(!_gifFramePicker) return;
+  var video = document.getElementById('gifFrameVideo');
+  var scrub = document.getElementById('gifFrameScrub');
+  if(!video.paused){
+    video.pause();
+    _gifFramePicker.isPlaying = false;
+    var btn = document.getElementById('gifFramePlayBtn');
+    if(btn) btn.textContent = '▶ Play';
+  }
+  video.currentTime = +scrub.value / 100;
+  gifFrameUpdateTimeDisplay();
+}
+
+function gifFrameStep(dir){
+  if(!_gifFramePicker) return;
+  var video = document.getElementById('gifFrameVideo');
+  var scrub = document.getElementById('gifFrameScrub');
+  if(!video.paused){
+    video.pause();
+    _gifFramePicker.isPlaying = false;
+    var btn = document.getElementById('gifFramePlayBtn');
+    if(btn) btn.textContent = '▶ Play';
+  }
+  // ~30fps step; most GIPHY GIFs are 12–25fps so this lands solidly on the next/prev frame
+  var step = 1/30;
+  var dur = isFinite(video.duration) ? video.duration : 0;
+  var newTime = Math.max(0, Math.min(dur, video.currentTime + dir * step));
+  video.currentTime = newTime;
+  scrub.value = Math.round(newTime * 100);
+  gifFrameUpdateTimeDisplay();
+}
+
+function gifFrameTogglePlay(){
+  if(!_gifFramePicker) return;
+  var video = document.getElementById('gifFrameVideo');
+  var btn = document.getElementById('gifFramePlayBtn');
+  if(video.paused){
+    video.play().catch(function(){});
+    _gifFramePicker.isPlaying = true;
+    if(btn) btn.textContent = '⏸ Pause';
+  } else {
+    video.pause();
+    _gifFramePicker.isPlaying = false;
+    if(btn) btn.textContent = '▶ Play';
+  }
+}
+
+function gifFrameCancel(){
+  if(_gifFramePicker){
+    var video = document.getElementById('gifFrameVideo');
+    if(video){
+      try { if(!video.paused) video.pause(); } catch(e){}
+      video.onloadedmetadata = null;
+      video.ontimeupdate = null;
+      video.onerror = null;
+      video.removeAttribute('src');
+      try { video.load(); } catch(e){}
+    }
+  }
+  _gifFramePicker = null;
+  var modal = document.getElementById('gifFrameModal');
+  if(modal) modal.classList.add('hidden');
+}
+
+function gifFrameUse(){
+  if(!_gifFramePicker) return;
+  var video = document.getElementById('gifFrameVideo');
+  var g = _gifFramePicker.gifData;
+  try { if(!video.paused) video.pause(); } catch(e){}
+  if(!video.videoWidth || !video.videoHeight){
+    alert('Video not ready yet — give it a second to load and try again.');
+    return;
+  }
+  var canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  var ctx = canvas.getContext('2d');
+  try {
+    ctx.drawImage(video, 0, 0);
+  } catch(e){
+    alert('Could not capture frame: ' + (e.message || e));
+    return;
+  }
+  var dataUrl;
+  try {
+    dataUrl = canvas.toDataURL('image/png');
+  } catch(e){
+    alert('Could not export this frame — the GIF source rejected CORS. Try a different GIF, or use the first-frame fallback by re-clicking the tile.');
+    return;
+  }
+  var img = new Image();
+  img.onload = function(){
+    _addMemeFromImage(img, (g.title || 'giphy').slice(0, 60), 0);
+    gifFrameCancel();
+    closeMemeBrowser();
+  };
+  img.onerror = function(){ alert('Frame image failed to load.'); };
+  img.src = dataUrl;
 }
 
 // ── VIDEO LAYER ──
@@ -12815,6 +13037,131 @@ function showEraseToolbar(){
 function hideEraseToolbar(){
   var bar = document.getElementById('eraseToolbar');
   if(bar) bar.style.display = 'none';
+}
+
+// ── BACKGROUND PICKER (v207) ──
+// Curated catalog of brand-themed and mood gradients plus solid colors. Each preset becomes a
+// canvas-filling shape layer (the existing shape layer system already supports linear/radial/
+// conic gradients with multi-stop arrays — see addLayerGradientStops) inserted at the BOTTOM
+// of the layer array so the redraw order paints it first, behind everything else. The created
+// layer is locked-position by default (lockedPosition:false initially; user can toggle) but
+// remains a normal shape layer they can edit, duplicate, or delete.
+var BACKGROUND_PRESETS = {
+  brand: [
+    {name:'Meowi Vibrant',  type:'linear',angle:135,stops:['#c5e039','#6ba415']},
+    {name:'Meowi Forest',   type:'linear',angle:135,stops:['#a8d188','#4a7c2d','#1f3b0e']},
+    {name:'Meowi Sage Glow',type:'radial',          stops:['#cdd99a','#8ab81d','#3c8e14']},
+    {name:'Meowi Sunlit',   type:'linear',angle:180,stops:['#fffbd9','#e8e09a','#8ab81d']},
+    {name:'Doggi Sunset',   type:'linear',angle:135,stops:['#ffb866','#f07830','#c83e1a']},
+    {name:'Doggi Sky',      type:'linear',angle:180,stops:['#87ceeb','#4682b4']},
+    {name:'Doggi Coral',    type:'linear',angle:135,stops:['#ffd0b8','#ff9a8c','#ff5a44']},
+    {name:'Doggi Fire',     type:'radial',          stops:['#fff4c4','#f07830','#7a1a0a']},
+    {name:'KKZ Teal Dream', type:'linear',angle:135,stops:['#cdf2f0','#5ec6c6','#2a8e8e']},
+    {name:'KKZ Pink Cloud', type:'linear',angle:135,stops:['#ffdce8','#f5a0c5','#e05098']},
+    {name:'KKZ Aqua',       type:'linear',angle:180,stops:['#a8e0f0','#6ec5e8','#3da0d8']},
+    {name:'KKZ Twilight',   type:'linear',angle:135,stops:['#f5a0c5','#9678c8','#3a4070']}
+  ],
+  mood: [
+    {name:'Sunrise',        type:'linear',angle:135,stops:['#ffe9a8','#ffd86c','#ff9a8c','#ff6868']},
+    {name:'Sunset Beach',   type:'linear',angle:180,stops:['#fbb040','#e63946','#5a1a4a']},
+    {name:'Ocean Depth',    type:'linear',angle:180,stops:['#a8e0f0','#2a5a9e','#0d1a3a']},
+    {name:'Mint Cream',     type:'linear',angle:135,stops:['#e8f8ee','#b8e9c8','#6cb88c']},
+    {name:'Lavender Mist',  type:'linear',angle:135,stops:['#f8eaf8','#d4b8e8','#9678c8']},
+    {name:'Berry Smoothie', type:'linear',angle:135,stops:['#ffe0ea','#e2a3d2','#7d2a8e']},
+    {name:'Forest Floor',   type:'linear',angle:135,stops:['#dde6b0','#6a8b3a','#2d5a3d']},
+    {name:'Cream Paper',    type:'linear',angle:180,stops:['#fdf8ec','#f9f3e3','#e8dcc0']},
+    {name:'Soft Mono',      type:'linear',angle:180,stops:['#ffffff','#e8e8e8','#c8c8c8']},
+    {name:'Dark Mode',      type:'linear',angle:180,stops:['#3a3a3a','#222','#0d0d0d']},
+    {name:'Spotlight',      type:'radial',          stops:['#ffffff','#ededed','#bababa']},
+    {name:'Vignette Dark',  type:'radial',          stops:['#5a5a5a','#222','#000']}
+  ],
+  solid: [
+    {name:'White',        color:'#ffffff'},
+    {name:'Cream',        color:'#f9f3e3'},
+    {name:'Soft Gray',    color:'#dcdcdc'},
+    {name:'Slate',        color:'#3a3a3a'},
+    {name:'Black',        color:'#111111'},
+    {name:'Meowi Green',  color:'#8ab81d'},
+    {name:'Meowi Dark',   color:'#3c8e14'},
+    {name:'Doggi Orange', color:'#f07830'},
+    {name:'Doggi Sky',    color:'#4fa8d8'},
+    {name:'KKZ Teal',     color:'#5ec6c6'},
+    {name:'KKZ Pink',     color:'#e05098'},
+    {name:'Warm Coral',   color:'#ff8c70'}
+  ]
+};
+
+function _bgPresetToCss(p){
+  if(p.color) return p.color;
+  var stopStr = p.stops.map(function(c, i){
+    return c + ' ' + Math.round((i / (p.stops.length - 1)) * 100) + '%';
+  }).join(', ');
+  if(p.type === 'radial') return 'radial-gradient(circle, ' + stopStr + ')';
+  return 'linear-gradient(' + (p.angle || 135) + 'deg, ' + stopStr + ')';
+}
+
+function openBackgroundPicker(){
+  var modal = document.getElementById('backgroundPickerModal');
+  if(!modal) return;
+  // Render the three preset sections once when opened — fast enough that we don't bother caching
+  ['brand','mood','solid'].forEach(function(section){
+    var container = document.getElementById('bgPreset' + section.charAt(0).toUpperCase() + section.slice(1));
+    if(!container) return;
+    container.innerHTML = '';
+    BACKGROUND_PRESETS[section].forEach(function(p, idx){
+      var tile = document.createElement('div');
+      tile.style.cssText = 'cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid transparent;transition:border-color 0.15s,transform 0.15s;background:#fff;';
+      tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.02)'; };
+      tile.onmouseleave = function(){ tile.style.borderColor = 'transparent'; tile.style.transform = ''; };
+      tile.onclick = function(){ applyBackgroundPreset(section, idx); };
+      tile.innerHTML =
+          '<div style="height:' + (section === 'solid' ? '50px' : '64px') + ';background:' + _bgPresetToCss(p) + ';"></div>'
+        + '<div style="padding:5px 6px;font-size:10px;font-weight:600;color:#333;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + p.name + '</div>';
+      container.appendChild(tile);
+    });
+  });
+  modal.classList.remove('hidden');
+}
+
+function closeBackgroundPicker(){
+  var modal = document.getElementById('backgroundPickerModal');
+  if(modal) modal.classList.add('hidden');
+}
+
+function applyBackgroundPreset(section, idx){
+  var p = BACKGROUND_PRESETS[section] && BACKGROUND_PRESETS[section][idx];
+  if(!p) return;
+  snapshotState();
+  var id = nextId++;
+  var layer = {
+    id: id, type: 'shape', name: '🎨 ' + p.name,
+    shape: 'rect',
+    x: 0, y: 0, w: canvasW, h: canvasH,
+    strokeColor: 'rgba(0,0,0,0)', strokeWidth: 0,
+    opacity: 100, cornerRadius: 0, rotation: 0,
+    skewAngle: 15, topWidthPct: 60, polygonSides: 6, polygonRotation: 0
+  };
+  if(p.color){
+    layer.fillType = 'solid';
+    layer.fillColor = p.color;
+    layer.gradTop = p.color; layer.gradBottom = p.color;
+  } else {
+    layer.fillType = 'gradient';
+    layer.gradType = p.type || 'linear';
+    layer.gradAngle = p.angle != null ? p.angle : 135;
+    layer.gradStops = p.stops.slice();
+    // Keep legacy 2-stop fields populated from the ends so existing UI doesn't show blanks
+    layer.gradTop = p.stops[0];
+    layer.gradBottom = p.stops[p.stops.length - 1];
+    layer.fillColor = p.stops[0];
+  }
+  // Insert at the BOTTOM of the stack so it paints first (behind everything). The redraw loop
+  // iterates layers.forEach in array order, so index 0 = bottom of the visual stack.
+  layers.unshift(layer);
+  selectLayer(id);
+  renderLayerList(); redraw();
+  closeBackgroundPicker();
+  showToast('🎨 Background: ' + p.name);
 }
 
 function removeImageLayerBackground(layerId){
