@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v208</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v209</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -13342,6 +13342,22 @@ var BACKGROUND_PRESETS = {
     {name:'Meowi Forest',   type:'linear',angle:135,stops:['#a8d188','#4a7c2d','#1f3b0e']},
     {name:'Meowi Sage Glow',type:'radial',          stops:['#cdd99a','#8ab81d','#3c8e14']},
     {name:'Meowi Sunlit',   type:'linear',angle:180,stops:['#fffbd9','#e8e09a','#8ab81d']},
+    // v209: Canonical Meowijuana blog hero gradients (from SmarterPaw Blog Gradients.pdf —
+    // colors drawn from product packaging). The PDF spec uses CSS gradient angle convention
+    // (170° = mostly top-to-bottom with slight left lean). The canvas shape code uses math
+    // convention (0° = east, +90° = south), so we store these as canvas-80° to match what the
+    // blog hero renders. Mapping: canvas_angle = (css_angle - 90 + 360) % 360.
+    {name:'Meowi Waui',           type:'linear',angle:80,stops:['#c8e830','#1a7a30']},
+    {name:'Meowi Garden Pawty',   type:'linear',angle:80,stops:['#c8f0b8','#5aa830']},
+    {name:'Meowi Mice Dreams',    type:'linear',angle:80,stops:['#d4b8e0','#7b2d8b']},
+    {name:'Meowi Kalico Kush',    type:'linear',angle:80,stops:['#f5c842','#d4540a']},
+    {name:'Meowi Cloud 9',        type:'linear',angle:80,stops:['#5ec8f0','#8abf2a']},
+    {name:'Meowi Whisker Tickler',type:'linear',angle:80,stops:['#f5d020','#e8540a']},
+    {name:'Meowi Purrple Passion',type:'linear',angle:80,stops:['#f472b6','#7c1fa1']},
+    {name:'Meowi Sierra Sunshine',type:'linear',angle:80,stops:['#f5e020','#e87820']},
+    {name:'Meowi Winter Lift',    type:'linear',angle:80,stops:['#a8d8f0','#2090b8']},
+    {name:'Meowi Harvest Moon',   type:'linear',angle:80,stops:['#f5c030','#c85010']},
+    {name:'Meowi Thyme Out',      type:'linear',angle:80,stops:['#f08050','#6040a8']},
     {name:'Doggi Sunset',   type:'linear',angle:135,stops:['#ffb866','#f07830','#c83e1a']},
     {name:'Doggi Sky',      type:'linear',angle:180,stops:['#87ceeb','#4682b4']},
     {name:'Doggi Coral',    type:'linear',angle:135,stops:['#ffd0b8','#ff9a8c','#ff5a44']},
@@ -13387,7 +13403,15 @@ function _bgPresetToCss(p){
     return c + ' ' + Math.round((i / (p.stops.length - 1)) * 100) + '%';
   }).join(', ');
   if(p.type === 'radial') return 'radial-gradient(circle, ' + stopStr + ')';
-  return 'linear-gradient(' + (p.angle || 135) + 'deg, ' + stopStr + ')';
+  // v209: convert preset angle (canvas math convention — 0° = east, +90° = south) to CSS
+  // gradient angle (0° = up, +90° = right) so the preview tile matches the actual canvas
+  // render. Mapping: css = (canvas + 90) mod 360. Without this, every preview was rotated 90°
+  // relative to what got drawn on the canvas — most visible on the new PDF Meowi entries
+  // (canvas-80 = CSS-170, nearly top-to-bottom) which would otherwise preview as a near-
+  // horizontal sweep.
+  var canvasAngle = p.angle == null ? 135 : p.angle;
+  var cssAngle = (canvasAngle + 90) % 360;
+  return 'linear-gradient(' + cssAngle + 'deg, ' + stopStr + ')';
 }
 
 function openBackgroundPicker(){
