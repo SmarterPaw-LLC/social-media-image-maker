@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v198</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v199</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4366,36 +4366,25 @@ function _redditCacheKey(){
   return (sub ? sub.value : 'petmemes') + ':' + (t ? t.value : 'week');
 }
 
-// v198: free CORS proxies are individually unreliable — any single one can be down, rate-limited,
-// or blocked by network policies. We race THREE of them in parallel via Promise.any: first one
-// to fulfill wins, the others get aborted as moot. Each has a 12s timeout so a hung proxy can't
-// stall the whole race. If all three fail simultaneously, the user gets a clear error pointing
-// them at the Popular/Library alternatives — at that point a Supabase Edge Function is the only
-// long-term fix.
-var _REDDIT_PROXIES = [
-  function(u){ return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u); },
-  function(u){ return 'https://api.codetabs.com/v1/proxy?quest=' + u; },
-  function(u){ return 'https://corsproxy.io/?' + u; }
-];
-function _fetchWithTimeout(url, ms){
-  return new Promise(function(resolve, reject){
-    var done = false;
-    var timer = setTimeout(function(){ if(done)return; done=true; reject(new Error('timeout')); }, ms || 12000);
-    fetch(url).then(function(r){
-      if(done) return; done = true; clearTimeout(timer);
-      if(!r.ok){ reject(new Error('HTTP ' + r.status)); return; }
-      resolve(r);
-    }).catch(function(e){
-      if(done) return; done = true; clearTimeout(timer);
-      reject(e);
-    });
+// v199: Reddit returns 403 to all browser-style requests (including public CORS proxies),
+// so we route through a Supabase Edge Function named `reddit-proxy` that holds a real,
+// identifiable User-Agent on the server side. The function lives in this repo at
+// supabase_edge_function_reddit_proxy.ts and needs to be deployed once via the Supabase
+// dashboard (Edge Functions → Deploy a new function → name reddit-proxy → paste → deploy).
+// supabase-js auto-includes the auth header since the app requires sign-in.
+function _fetchRedditJson(sub, t, limit){
+  if(!sb) return Promise.reject(new Error('Not signed in (Supabase client missing).'));
+  return sb.functions.invoke('reddit-proxy', {
+    body: { sub: sub, t: t, limit: limit || 50 }
+  }).then(function(res){
+    if(res.error){
+      // FunctionsHttpError exposes res.error.message; bring along context if possible
+      var msg = res.error.message || 'Edge function error';
+      if(res.data && res.data.error) msg = res.data.error + ' (' + msg + ')';
+      throw new Error(msg);
+    }
+    return res.data;
   });
-}
-function _fetchRedditJson(redditUrl){
-  var attempts = _REDDIT_PROXIES.map(function(makeUrl){
-    return _fetchWithTimeout(makeUrl(redditUrl), 12000).then(function(r){ return r.json(); });
-  });
-  return Promise.any(attempts);
 }
 
 function fetchRedditMemes(){
@@ -4415,8 +4404,7 @@ function fetchRedditMemes(){
   var grid = document.getElementById('memeBrowserGrid');
   if(status) status.textContent = 'Fetching top of ' + t + ' from r/' + sub + '…';
   if(grid) grid.innerHTML = '';
-  var redditUrl = 'https://www.reddit.com/r/' + encodeURIComponent(sub) + '/top.json?t=' + encodeURIComponent(t) + '&limit=50&raw_json=1';
-  _fetchRedditJson(redditUrl)
+  _fetchRedditJson(sub, t, 50)
     .then(function(res){
       _redditFetching = false;
       if(!res || !res.data || !Array.isArray(res.data.children)){
@@ -4448,18 +4436,17 @@ function fetchRedditMemes(){
     })
     .catch(function(e){
       _redditFetching = false;
-      // v198: Promise.any rejects with AggregateError; unpack the per-proxy failures so the
-      // console shows exactly which proxy said what (network/timeout/HTTP code) for diagnosis.
-      var detail;
-      if(e && e.errors && e.errors.length){
-        detail = e.errors.map(function(x, i){ return 'proxy ' + i + ': ' + (x.message || x); }).join(' · ');
-      } else {
-        detail = (e.message || String(e));
-      }
-      console.error('[meme:reddit] all proxies failed:', e, e && e.errors);
+      console.error('[meme:reddit] edge function call failed:', e);
       if(status){
-        status.textContent = '✗ Reddit fetch failed (all proxies). ' + detail
-          + ' — try Refresh in a minute, or use the Popular tab / 📚 From Library instead.';
+        var msg = '✗ Reddit fetch failed: ' + (e.message || String(e));
+        // 404 from supabase-js typically means the function isn't deployed yet
+        if(/404|not found/i.test(e.message || '')){
+          msg += ' — looks like the "reddit-proxy" Edge Function hasn\'t been deployed. '
+            + 'See supabase_edge_function_reddit_proxy.ts in the repo for deployment steps.';
+        } else {
+          msg += ' — try Refresh in a moment, or use the Popular tab / 📚 From Library instead.';
+        }
+        status.textContent = msg;
       }
     });
 }
