@@ -205,7 +205,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v193</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v194</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -6056,6 +6056,10 @@ function buildImageProps(l){
     +'<button class="btn-add" onclick="enterCropMode('+l.id+')">✂ Crop</button>'
     +(hasCrop?'<button class="btn-add" onclick="clearCrop('+l.id+')">Reset Crop</button>':'<button class="btn-add" disabled style="opacity:0.4;">No crop</button>')
     +'</div>'
+    // v194: AI background removal. Only shown when the layer actually has an image (a fresh
+    // placeholder has nothing to process yet). Undo restores the pre-removal image via
+    // snapshotStateFull() called inside removeImageLayerBackground.
+    +(l.img ? '<button class="btn-add" style="width:100%;margin-top:5px;" onclick="removeImageLayerBackground('+l.id+')" title="Make the background transparent using an in-browser AI model. First use downloads ~44MB; after that it works offline.">🪄 Remove Background (AI)</button>' : '')
     +NUMPAIR('X (px)','nx',l.x,'Y (px)','ny',l.y)
     +NUMPAIR('W (px)','nw',l.w,'H (px)','nh',l.h)
     +R('X','px',l.x,-canvasW,canvasW*2,1)+R('Y','py',l.y,-canvasH,canvasH*2,1)
@@ -11967,6 +11971,135 @@ function addImageLayerToLibrary(layerId){
     console.error('[lib] prepare upload from layer failed:', e);
     alert('Could not prepare this image for upload: ' + (e.message || e));
   });
+}
+
+// ── BACKGROUND REMOVAL (v194) ──
+// In-browser AI background removal via @xenova/transformers running BRIA RMBG-1.4. The model is
+// downloaded once (~44MB, cached in IndexedDB by the library) and then runs entirely locally —
+// no API key, no server, no per-call cost. The transformers ESM bundle and the model weights are
+// fetched lazily on first use so the page doesn't pay the cost on every load.
+var _bgRemoverPromise = null;
+
+function _ensureBgRemoverLoaded(onProgress){
+  if(_bgRemoverPromise) return _bgRemoverPromise;
+  _bgRemoverPromise = (async function(){
+    try {
+      var m = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2');
+      m.env.allowLocalModels = false;
+      // WASM proxy keeps inference off the main thread so the UI stays responsive
+      try { m.env.backends.onnx.wasm.proxy = true; } catch(e){}
+      var model = await m.AutoModel.from_pretrained('briaai/RMBG-1.4', {
+        config: { model_type: 'custom' },
+        progress_callback: onProgress
+      });
+      // The processor config is fixed for RMBG-1.4 (1024×1024 input, mean=0.5, std=1)
+      var processor = await m.AutoProcessor.from_pretrained('briaai/RMBG-1.4', {
+        config: {
+          do_normalize: true,
+          do_pad: false,
+          do_rescale: true,
+          do_resize: true,
+          image_mean: [0.5, 0.5, 0.5],
+          image_std: [1, 1, 1],
+          resample: 2,
+          rescale_factor: 0.00392156862745098,
+          return_tensors: '',
+          size: { width: 1024, height: 1024 }
+        }
+      });
+      return { model: model, processor: processor, RawImage: m.RawImage };
+    } catch(e){
+      _bgRemoverPromise = null;   // allow retry on next click
+      throw e;
+    }
+  })();
+  return _bgRemoverPromise;
+}
+
+async function _removeBackgroundFromImage(img, onProgress){
+  var refs = await _ensureBgRemoverLoaded(onProgress);
+  var RawImage = refs.RawImage;
+  // Decode the source — works for data URIs, blob URLs, and CORS-clean remote URLs
+  var image = await RawImage.fromURL(img.src);
+  var processed = await refs.processor(image);
+  var modelOutput = await refs.model({ input: processed.pixel_values });
+  // output[0] is the predicted alpha mask; scale [0,1]→[0,255] and resize back to source dims
+  var maskTensor = modelOutput.output[0].mul(255).to('uint8');
+  var mask = await RawImage.fromTensor(maskTensor).resize(image.width, image.height);
+  // Compose: draw the source image, then overwrite its alpha channel with the mask
+  var canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  var ctx = canvas.getContext('2d');
+  ctx.drawImage(image.toCanvas(), 0, 0);
+  var pixelData = ctx.getImageData(0, 0, image.width, image.height);
+  for(var i = 0; i < mask.data.length; i++){
+    pixelData.data[4 * i + 3] = mask.data[i];
+  }
+  ctx.putImageData(pixelData, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+function removeImageLayerBackground(layerId){
+  var layer = layers.find(function(x){ return x.id === layerId; });
+  if(!layer || !layer.img){ alert('No image on this layer to process.'); return; }
+  // One-time confirmation about the 44MB download
+  try {
+    if(!localStorage.getItem('bgRemoveAccepted')){
+      var ok = confirm(
+        'Background removal runs entirely in your browser via an MIT-licensed AI model.\n\n'
+        + 'The FIRST time you use it, the model (~44MB) will download and cache in this browser. '
+        + 'After that it works offline and is much faster (~5–15s per image on CPU, 1–3s on WebGPU).\n\n'
+        + 'Continue?');
+      if(!ok) return;
+      localStorage.setItem('bgRemoveAccepted', '1');
+    }
+  } catch(e){}
+  _showBgRemoveProgress('Loading background-removal model…');
+  _removeBackgroundFromImage(layer.img, function(progress){
+    if(!progress) return;
+    if(progress.status === 'progress' && progress.progress != null){
+      var pct = Math.round(progress.progress);
+      var file = (progress.file || '').split('/').pop();
+      _showBgRemoveProgress('Downloading model · ' + file + ' · ' + pct + '%');
+    } else if(progress.status === 'ready'){
+      _showBgRemoveProgress('Processing image…');
+    }
+  }).then(function(dataUrl){
+    snapshotStateFull();   // v190 full snapshot so undo restores the pre-removal image
+    var newImg = new Image();
+    newImg.onload = function(){
+      layer.img = newImg;
+      _hideBgRemoveProgress();
+      redraw();
+      showToast('🪄 Background removed');
+    };
+    newImg.onerror = function(){
+      _hideBgRemoveProgress();
+      alert('Could not load the processed image.');
+    };
+    newImg.src = dataUrl;
+  }).catch(function(e){
+    _hideBgRemoveProgress();
+    console.error('[bg-remove]', e);
+    alert('Background removal failed: ' + (e.message || e));
+  });
+}
+
+function _showBgRemoveProgress(text){
+  var el = document.getElementById('bgRemoveProgress');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'bgRemoveProgress';
+    el.style.cssText = 'position:fixed;top:60px;right:16px;z-index:9999;background:var(--green-dark);color:#fff;padding:12px 16px;border-radius:7px;font-size:12px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.25);max-width:380px;';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<span style="display:inline-block;margin-right:6px;">⟳</span> ' + text;
+}
+
+function _hideBgRemoveProgress(){
+  var el = document.getElementById('bgRemoveProgress');
+  if(el) el.remove();
 }
 
 function replaceImageLayerFromLibrary(layerId){
