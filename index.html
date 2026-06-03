@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v211</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v212</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1021,12 +1021,35 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div style="margin-bottom:14px;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
         <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Mesh Gradients <span style="color:#666;font-weight:500;letter-spacing:0;text-transform:none;">— click again for a different mix</span></div>
+        <button type="button" onclick="meshEffectsReset()" style="font-size:10px;padding:3px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;">↺ Reset</button>
+      </div>
+      <!-- v212: psychedelic effect sliders — applied to every preview tile live, so what you see
+           is what you'll drop on the canvas. Apply uses these values + a fresh random seed. -->
+      <div style="background:#f7f7f7;padding:10px 12px;border-radius:6px;margin-bottom:10px;border:1px solid #ebebeb;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;">
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Intensity</span><span id="meshIntensityVal" style="font-family:monospace;color:var(--muted);">30</span></div>
+            <input type="range" id="meshIntensity" min="0" max="100" value="30" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">Saturation + blob density</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Hue Shift</span><span id="meshHueVal" style="font-family:monospace;color:var(--muted);">0°</span></div>
+            <input type="range" id="meshHue" min="0" max="360" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">Rotate the palette around the color wheel</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Glow</span><span id="meshGlowVal" style="font-family:monospace;color:var(--muted);">0</span></div>
+            <input type="range" id="meshGlow" min="0" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">Additive bloom — lit-from-within feel</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Posterize</span><span id="meshPosterizeVal" style="font-family:monospace;color:var(--muted);">0</span></div>
+            <input type="range" id="meshPosterize" min="0" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">Banded levels — graphic / comic look</div>
+          </div>
+        </div>
       </div>
       <div id="bgPresetMesh" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
-    </div>
-    <div style="margin-bottom:14px;">
-      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Textures &amp; Patterns</div>
-      <div id="bgPresetPattern" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
     </div>
     <div style="margin-bottom:14px;">
       <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Brand Gradients</div>
@@ -13389,42 +13412,197 @@ function _hashStr(s){
   return Math.abs(h);
 }
 
-// Generate a mesh-gradient canvas at the given dimensions from a palette. Pass a seed for a
-// deterministic layout (preview tiles) or omit for fresh randomness (apply on canvas).
-function generateMeshGradient(w, h, palette, seed){
+// v212: HSL adjustment helper — used to apply hue shift + saturation boost to palette colors
+// before they're painted, and to recolor on-canvas overlays. Returns 'rgb(...)' string.
+function _adjustHsl(hex, hueShift, satBoost, lightShift){
+  var h = (hex || '#000').replace('#', '');
+  if(h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var r = parseInt(h.slice(0,2), 16) / 255;
+  var g = parseInt(h.slice(2,4), 16) / 255;
+  var b = parseInt(h.slice(4,6), 16) / 255;
+  var max = Math.max(r,g,b), min = Math.min(r,g,b);
+  var l = (max + min) / 2;
+  var sat, hh;
+  if(max === min){ sat = 0; hh = 0; }
+  else {
+    var d = max - min;
+    sat = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if(max === r) hh = (g - b) / d + (g < b ? 6 : 0);
+    else if(max === g) hh = (b - r) / d + 2;
+    else hh = (r - g) / d + 4;
+    hh /= 6;
+  }
+  hh = (hh + ((hueShift || 0) / 360) + 1) % 1;
+  sat = Math.max(0, Math.min(1, sat + (satBoost || 0) / 100));
+  l = Math.max(0, Math.min(1, l + (lightShift || 0) / 100));
+  function hue2rgb(p, q, t){
+    if(t < 0) t += 1; if(t > 1) t -= 1;
+    if(t < 1/6) return p + (q - p) * 6 * t;
+    if(t < 1/2) return q;
+    if(t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  }
+  var rr, gg, bb;
+  if(sat === 0){ rr = gg = bb = l; }
+  else {
+    var q = l < 0.5 ? l * (1 + sat) : l + sat - l * sat;
+    var p = 2 * l - q;
+    rr = hue2rgb(p, q, hh + 1/3);
+    gg = hue2rgb(p, q, hh);
+    bb = hue2rgb(p, q, hh - 1/3);
+  }
+  return 'rgb(' + Math.round(rr*255) + ',' + Math.round(gg*255) + ',' + Math.round(bb*255) + ')';
+}
+
+// Convert an 'rgb(...)' string to an 'rgba(...)' with arbitrary alpha. Used for blob falloff
+// stops after the palette has been HSL-adjusted (no longer hex).
+function _rgbStringToRgba(rgbStr, a){
+  var m = rgbStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if(!m) return _hexToRgba(rgbStr, a);
+  return 'rgba(' + m[1] + ',' + m[2] + ',' + m[3] + ',' + a + ')';
+}
+
+// Generate a mesh-gradient canvas at the given dimensions from a palette.
+//   effects = { intensity: 0-100, hueShift: 0-360, glow: 0-100, posterize: 0-100 }
+// Intensity drives both saturation boost (+0 to +60%) and blob count (4 to 10). Hue shift
+// rotates the palette around the color wheel. Glow adds an additive bloom pass. Posterize
+// reduces color levels post-render for graphic banding.
+function generateMeshGradient(w, h, palette, seed, effects){
+  effects = effects || {};
   var s = seed != null ? seed : Math.floor(Math.random() * 1e9);
   function rand(){ s = (s * 9301 + 49297) % 233280; return s / 233280; }
+
+  // Pre-process the palette: hue shift + saturation boost. At intensity=0 sat boost is 0; at
+  // intensity=100 sat is boosted +60% (HSL space). Hue shift is direct degrees.
+  var intensity = Math.max(0, Math.min(100, effects.intensity != null ? effects.intensity : 30));
+  var satBoost = intensity * 0.6;
+  var hueShift = effects.hueShift || 0;
+  var processed = palette.map(function(c){ return _adjustHsl(c, hueShift, satBoost, 0); });
+
+  // Blob count scales with intensity (4 baseline → 10 at max)
+  var baseBlobs = 4 + Math.floor(rand() * 3);   // 4-6 spread for variety
+  var intensityBonus = Math.round((intensity / 100) * 4);
+  var nBlobs = baseBlobs + intensityBonus;
 
   var canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   var ctx = canvas.getContext('2d');
-
-  // Base fill — first color in the palette is the "anchor" (usually the deepest hue)
-  ctx.fillStyle = palette[0];
+  ctx.fillStyle = processed[0];
   ctx.fillRect(0, 0, w, h);
-
-  // Place 4-6 blobs from the remaining colors. Cycle through the palette so a 3-color palette
-  // still gets 5 blobs (colors repeat); a 6-color palette uses each color once.
-  var nBlobs = 4 + Math.floor(rand() * 3);   // 4, 5, or 6
-  var accentColors = palette.slice(1);
-  if(accentColors.length === 0) accentColors = [palette[0]];
+  var accent = processed.slice(1);
+  if(!accent.length) accent = [processed[0]];
 
   for(var i = 0; i < nBlobs; i++){
-    var color = accentColors[i % accentColors.length];
-    // Random position in the inner 70% (avoid corners — keeps the look "centered" but lively)
+    var color = accent[i % accent.length];
     var cx = w * (0.15 + rand() * 0.7);
     var cy = h * (0.15 + rand() * 0.7);
-    // Blob radius scales with canvas size; large enough that blobs heavily overlap and blend
     var radius = Math.max(w, h) * (0.35 + rand() * 0.45);
     var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
     grad.addColorStop(0,   color);
-    grad.addColorStop(0.4, _hexToRgba(color, 0.55));
-    grad.addColorStop(1,   _hexToRgba(color, 0));
+    grad.addColorStop(0.4, _rgbStringToRgba(color, 0.55));
+    grad.addColorStop(1,   _rgbStringToRgba(color, 0));
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
   }
 
+  // Glow / bloom pass — draw a heavily-blurred saturated copy on top with 'lighter' blending
+  if(effects.glow && effects.glow > 0){
+    var glowCanvas = document.createElement('canvas');
+    glowCanvas.width = w; glowCanvas.height = h;
+    var gctx = glowCanvas.getContext('2d');
+    if('filter' in gctx){
+      gctx.filter = 'blur(' + Math.max(8, Math.round(w * 0.04)) + 'px) saturate(180%)';
+      gctx.drawImage(canvas, 0, 0);
+      gctx.filter = 'none';
+    } else {
+      gctx.drawImage(canvas, 0, 0);
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.max(0, Math.min(1, effects.glow / 100));
+    ctx.drawImage(glowCanvas, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+  }
+
+  // Posterize — quantize each channel to N levels. 0 = smooth (skip). At 100, levels = 3
+  // (very stark banding). The +step/2 centers each band around its quantization point.
+  if(effects.posterize && effects.posterize > 0){
+    var levels = Math.max(3, Math.round(16 - (effects.posterize / 100) * 13));
+    var step = 256 / levels;
+    var imageData = ctx.getImageData(0, 0, w, h);
+    var data = imageData.data;
+    for(var j = 0; j < data.length; j += 4){
+      data[j]     = Math.min(255, Math.floor(data[j]     / step) * step + step / 2);
+      data[j + 1] = Math.min(255, Math.floor(data[j + 1] / step) * step + step / 2);
+      data[j + 2] = Math.min(255, Math.floor(data[j + 2] / step) * step + step / 2);
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }
+
   return canvas;
+}
+
+// Read current slider state into the effects object every mesh function expects
+function _readMeshEffects(){
+  return {
+    intensity: +(document.getElementById('meshIntensity') || {value:30}).value,
+    hueShift:  +(document.getElementById('meshHue')       || {value:0}).value,
+    glow:      +(document.getElementById('meshGlow')      || {value:0}).value,
+    posterize: +(document.getElementById('meshPosterize') || {value:0}).value
+  };
+}
+
+function _saveMeshEffects(eff){
+  try { localStorage.setItem('meshEffects', JSON.stringify(eff)); } catch(e){}
+}
+function _loadMeshEffects(){
+  try {
+    var s = localStorage.getItem('meshEffects');
+    if(s){
+      var p = JSON.parse(s);
+      return {
+        intensity: Math.max(0, Math.min(100, p.intensity != null ? p.intensity : 30)),
+        hueShift:  Math.max(0, Math.min(360, p.hueShift  != null ? p.hueShift  : 0)),
+        glow:      Math.max(0, Math.min(100, p.glow      != null ? p.glow      : 0)),
+        posterize: Math.max(0, Math.min(100, p.posterize != null ? p.posterize : 0))
+      };
+    }
+  } catch(e){}
+  return null;
+}
+
+// Fired whenever a slider moves — re-renders all preview tiles with the new effects so the
+// picker stays in sync with the final apply result.
+function meshEffectsChanged(){
+  var eff = _readMeshEffects();
+  // Update slider readouts
+  var iv = document.getElementById('meshIntensityVal');  if(iv) iv.textContent = eff.intensity;
+  var hv = document.getElementById('meshHueVal');        if(hv) hv.textContent = eff.hueShift + '°';
+  var gv = document.getElementById('meshGlowVal');       if(gv) gv.textContent = eff.glow;
+  var pv = document.getElementById('meshPosterizeVal');  if(pv) pv.textContent = eff.posterize;
+  _saveMeshEffects(eff);
+  _refreshMeshPreviewTiles();
+}
+
+function meshEffectsReset(){
+  var defaults = {intensity: 30, hueShift: 0, glow: 0, posterize: 0};
+  document.getElementById('meshIntensity').value  = defaults.intensity;
+  document.getElementById('meshHue').value        = defaults.hueShift;
+  document.getElementById('meshGlow').value       = defaults.glow;
+  document.getElementById('meshPosterize').value  = defaults.posterize;
+  meshEffectsChanged();
+}
+
+function _refreshMeshPreviewTiles(){
+  var container = document.getElementById('bgPresetMesh');
+  if(!container) return;
+  var tiles = container.querySelectorAll('canvas');
+  for(var i = 0; i < tiles.length && i < MESH_GRADIENT_PRESETS.length; i++){
+    var p = MESH_GRADIENT_PRESETS[i];
+    var rect = tiles[i].getBoundingClientRect();
+    var w = Math.round(rect.width) || 180;
+    _renderMeshPreviewCanvas(tiles[i], p, w, 80);
+  }
 }
 
 // Vibrant palettes designed for mesh gradient output. Each starts with a "base" anchor color
@@ -13449,7 +13627,8 @@ var MESH_GRADIENT_PRESETS = [
 
 function _renderMeshPreviewCanvas(canvasEl, preset, w, h){
   var seed = _hashStr(preset.name);
-  var mesh = generateMeshGradient(w, h, preset.palette, seed);
+  var eff = _readMeshEffects();
+  var mesh = generateMeshGradient(w, h, preset.palette, seed, eff);
   canvasEl.width = w; canvasEl.height = h;
   canvasEl.getContext('2d').drawImage(mesh, 0, 0);
 }
@@ -13458,7 +13637,10 @@ function applyMeshGradientPreset(idx){
   var p = MESH_GRADIENT_PRESETS[idx];
   if(!p) return;
   // No seed = fresh random layout. Click the same preset twice for two different meshes.
-  var mesh = generateMeshGradient(canvasW, canvasH, p.palette);
+  // Effects come from the current slider state (persisted to localStorage on every change).
+  var eff = _readMeshEffects();
+  _saveMeshEffects(eff);
+  var mesh = generateMeshGradient(canvasW, canvasH, p.palette, null, eff);
   var dataUrl = mesh.toDataURL('image/png');
   var img = new Image();
   img.onload = function(){
@@ -13569,8 +13751,20 @@ function _bgPresetToCss(p){
 function openBackgroundPicker(){
   var modal = document.getElementById('backgroundPickerModal');
   if(!modal) return;
-  // v208: render patterns first (procedural canvas previews). Each tile gets a real <canvas> with
-  // the pattern tiled at 200×64px so users see what the texture actually looks like in context.
+  // v212: hydrate slider state from localStorage before rendering tiles so previews reflect
+  // the user's last-used psychedelic settings instead of resetting every time.
+  var savedEff = _loadMeshEffects();
+  if(savedEff){
+    var iS = document.getElementById('meshIntensity');  if(iS) iS.value  = savedEff.intensity;
+    var hS = document.getElementById('meshHue');        if(hS) hS.value  = savedEff.hueShift;
+    var gS = document.getElementById('meshGlow');       if(gS) gS.value  = savedEff.glow;
+    var pS = document.getElementById('meshPosterize');  if(pS) pS.value  = savedEff.posterize;
+  }
+  var curEff = _readMeshEffects();
+  var iv = document.getElementById('meshIntensityVal'); if(iv) iv.textContent = curEff.intensity;
+  var hv = document.getElementById('meshHueVal');       if(hv) hv.textContent = curEff.hueShift + '°';
+  var gv = document.getElementById('meshGlowVal');      if(gv) gv.textContent = curEff.glow;
+  var pv = document.getElementById('meshPosterizeVal'); if(pv) pv.textContent = curEff.posterize;
   // v210: render mesh gradient tiles. Each tile is a real canvas (not CSS) because the mesh
   // can't be expressed as a CSS gradient — it's a layered radial composition. Deterministic
   // seed (hash of preset name) makes the preview stable across modal opens, while applying
@@ -13595,29 +13789,6 @@ function openBackgroundPicker(){
       var rect = canvas.getBoundingClientRect();
       var w = Math.round(rect.width) || 180;
       _renderMeshPreviewCanvas(canvas, p, w, 80);
-    });
-  }
-  var patternContainer = document.getElementById('bgPresetPattern');
-  if(patternContainer){
-    patternContainer.innerHTML = '';
-    PATTERN_PRESETS.forEach(function(p, idx){
-      var tile = document.createElement('div');
-      tile.style.cssText = 'cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid transparent;transition:border-color 0.15s,transform 0.15s;background:#fff;';
-      tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.02)'; };
-      tile.onmouseleave = function(){ tile.style.borderColor = 'transparent'; tile.style.transform = ''; };
-      tile.onclick = function(){ applyPatternPreset(idx); };
-      var canvas = document.createElement('canvas');
-      canvas.style.cssText = 'display:block;width:100%;height:64px;';
-      tile.appendChild(canvas);
-      var label = document.createElement('div');
-      label.style.cssText = 'padding:5px 6px;font-size:10px;font-weight:600;color:#333;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-      label.textContent = p.name;
-      tile.appendChild(label);
-      patternContainer.appendChild(tile);
-      // Render at native pixel size so the texture stays crisp (no CSS upscale blur)
-      var rect = canvas.getBoundingClientRect();
-      var w = Math.round(rect.width) || 180;
-      _renderPatternPreviewCanvas(canvas, p, w, 64);
     });
   }
   // Render the three preset sections once when opened — fast enough that we don't bother caching
