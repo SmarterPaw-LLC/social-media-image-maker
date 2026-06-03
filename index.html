@@ -205,7 +205,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v194</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v195</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -695,15 +695,45 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
      text layers and positions them. Animated GIF templates load as a static first frame for now. -->
 <div class="modal-overlay hidden" id="memeBrowserModal">
   <div class="modal" style="max-width:880px;width:92vw;">
-    <h2>🤣 Meme Templates <span style="font-weight:400;color:var(--muted);font-size:13px;">— popular right now (Imgflip)</span></h2>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+    <h2>🤣 Memes</h2>
+    <!-- v195: tab strip. Reddit pet meme feed is the default tab because pet-specific content
+         is what the user actually needed (Imgflip's top 100 is mostly human pop-culture). -->
+    <div style="display:flex;gap:0;margin-bottom:10px;border-bottom:2px solid var(--border);">
+      <button type="button" id="memeTabReddit" onclick="switchMemeTab('reddit')" style="padding:8px 16px;border:none;border-bottom:3px solid var(--green);background:transparent;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;font-family:inherit;margin-bottom:-2px;">🐾 Reddit Pet Memes</button>
+      <button type="button" id="memeTabPopular" onclick="switchMemeTab('imgflip')" style="padding:8px 16px;border:none;border-bottom:3px solid transparent;background:transparent;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-bottom:-2px;">🔥 Popular (Imgflip)</button>
+    </div>
+    <!-- Imgflip controls (Popular tab) — search + pet-only filter + refresh -->
+    <div id="memeImgflipControls" class="hidden" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
       <input type="text" id="memeSearch" placeholder="🔍 Filter by name…" autocomplete="off" oninput="renderMemeBrowser()" style="flex:1;min-width:200px;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
-      <!-- v193: pet-only filter — surfaces just the cat/dog/etc. templates from Imgflip's top 100 -->
       <label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer;white-space:nowrap;">
         <input type="checkbox" id="memePetOnly" onchange="toggleMemePetFilter()">
         <span>🐾 Pets only</span>
       </label>
       <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="refreshMemeTemplates()" title="Re-fetch the top templates from Imgflip">🔄 Refresh</button>
+    </div>
+    <!-- Reddit controls (Reddit tab) — subreddit + timeframe pickers. Reddit's .json endpoints
+         CORS-allow * so a browser fetch works without a key. -->
+    <div id="memeRedditControls" style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+      <label style="font-size:11px;color:var(--muted);">Subreddit:</label>
+      <select id="memeSubreddit" onchange="fetchRedditMemes()" style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;">
+        <option value="petmemes">r/PetMemes</option>
+        <option value="catmemes">r/CatMemes</option>
+        <option value="dogmemes">r/DogMemes</option>
+        <option value="animalmemes">r/AnimalMemes</option>
+        <option value="aww">r/aww</option>
+        <option value="cats">r/Cats</option>
+        <option value="dogpictures">r/DogPictures</option>
+        <option value="AnimalsBeingDerps">r/AnimalsBeingDerps</option>
+      </select>
+      <label style="font-size:11px;color:var(--muted);">Top of:</label>
+      <select id="memeTimeframe" onchange="fetchRedditMemes()" style="padding:5px 8px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;">
+        <option value="day">Day</option>
+        <option value="week" selected>Week</option>
+        <option value="month">Month</option>
+        <option value="year">Year</option>
+        <option value="all">All time</option>
+      </select>
+      <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="refreshRedditMemes()" title="Re-fetch from Reddit">🔄 Refresh</button>
     </div>
     <!-- v193: brand-curated path — pick any image from the shared Image Library as a meme
          template. Best for pet-specific content (the team uploads pet memes once, tags them
@@ -720,8 +750,8 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <!-- populated by renderMemeBrowser -->
     </div>
     <div style="font-size:10px;color:var(--muted);margin-top:6px;line-height:1.4;">
-      Click a template to add it to the canvas with caption layers ready to edit.
-      Multi-panel templates (Drake, Galaxy Brain) get the right number of text boxes — you position them on the image.
+      <b>Popular</b> tab: blank meme templates with caption layers ready to fill in.<br>
+      <b>Reddit</b> tab: top image posts from pet meme subreddits — usually finished memes you remix with your own overlay.
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMemeBrowser()">Close</button>
@@ -4048,11 +4078,8 @@ function openMemeBrowser(){
   // v193: restore the pet-filter checkbox state across opens
   var pet = document.getElementById('memePetOnly');
   if(pet) pet.checked = !!_memePetFilterOn;
-  if(!_memeTemplatesCache){
-    fetchImgflipMemes();
-  } else {
-    renderMemeBrowser();
-  }
+  // v195: render whichever tab the user last had open (default 'reddit' on first open)
+  switchMemeTab(_memeBrowserTab);
 }
 function closeMemeBrowser(){
   document.getElementById('memeBrowserModal').classList.add('hidden');
@@ -4169,7 +4196,12 @@ function _addMemeFromImage(img, name, boxCount){
     _baseW: sizing._baseW, _baseH: sizing._baseH,
     opacity: 100, fit: 'cover', flipH: false, flipV: false, rotation: 0
   });
-  var nBoxes = Math.max(1, Math.min(8, boxCount || 2));
+  // v195: allow 0 to mean "image only, no captions" — Reddit posts are usually finished memes
+  // with the caption already baked into the image; adding TOP TEXT/BOTTOM TEXT layers on top
+  // would just be noise. Caller passes 0 explicitly; null/undefined still defaults to 2.
+  var nBoxes;
+  if(boxCount === 0) nBoxes = 0;
+  else nBoxes = Math.max(1, Math.min(8, boxCount || 2));
   var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
   var defaultFont = fontList[0];
   for(var i = 0; i < nBoxes; i++){
@@ -4218,7 +4250,7 @@ function _addMemeFromImage(img, name, boxCount){
   renderLayerList();
   renderProps();
   redraw();
-  showToast('🤣 Added: ' + (name || 'meme') + ' (' + nBoxes + ' caption' + (nBoxes === 1 ? '' : 's') + ')');
+  showToast('🤣 Added: ' + (name || 'meme') + (nBoxes > 0 ? ' (' + nBoxes + ' caption' + (nBoxes === 1 ? '' : 's') + ')' : ''));
 }
 
 // v193: pet-meme keyword filter. Many of Imgflip's top 100 aren't pet-related; this lets the
@@ -4260,6 +4292,161 @@ function useLibraryAsMemeTemplate(){
     _addMemeFromImage(img, item.name || 'Library meme', n);
     closeMemeBrowser();
   });
+}
+
+// ── REDDIT PET MEME FEED (v195) ──
+// Pulls top image posts from a chosen pet-meme subreddit. Reddit's *.reddit.com/*.json endpoints
+// respond with Access-Control-Allow-Origin:* so a browser fetch works with no auth and no key.
+// Posts are typically finished memes (caption baked into the image), so we add them as image-
+// only (0 caption layers) rather than overlaying TOP/BOTTOM TEXT defaults that wouldn't fit.
+var _memeBrowserTab = 'reddit';        // 'reddit' | 'imgflip' — Reddit is the default since v195
+var _redditMemesCache = {};            // keyed by `${subreddit}:${timeframe}` → posts[]
+var _redditFetching = false;
+
+function switchMemeTab(tab){
+  _memeBrowserTab = tab;
+  var imgflipBtn = document.getElementById('memeTabPopular');
+  var redditBtn = document.getElementById('memeTabReddit');
+  var imgflipCtrl = document.getElementById('memeImgflipControls');
+  var redditCtrl = document.getElementById('memeRedditControls');
+  if(tab === 'reddit'){
+    if(redditBtn){ redditBtn.style.borderBottomColor = 'var(--green)'; redditBtn.style.color = 'var(--text)'; }
+    if(imgflipBtn){ imgflipBtn.style.borderBottomColor = 'transparent'; imgflipBtn.style.color = 'var(--muted)'; }
+    if(redditCtrl) redditCtrl.classList.remove('hidden');
+    if(imgflipCtrl) imgflipCtrl.classList.add('hidden');
+    fetchRedditMemes();
+  } else {
+    if(imgflipBtn){ imgflipBtn.style.borderBottomColor = 'var(--green)'; imgflipBtn.style.color = 'var(--text)'; }
+    if(redditBtn){ redditBtn.style.borderBottomColor = 'transparent'; redditBtn.style.color = 'var(--muted)'; }
+    if(imgflipCtrl) imgflipCtrl.classList.remove('hidden');
+    if(redditCtrl) redditCtrl.classList.add('hidden');
+    if(!_memeTemplatesCache) fetchImgflipMemes(); else renderMemeBrowser();
+  }
+}
+
+function _redditCacheKey(){
+  var sub = document.getElementById('memeSubreddit');
+  var t = document.getElementById('memeTimeframe');
+  return (sub ? sub.value : 'petmemes') + ':' + (t ? t.value : 'week');
+}
+
+function fetchRedditMemes(){
+  if(_redditFetching) return;
+  var subEl = document.getElementById('memeSubreddit');
+  var tEl = document.getElementById('memeTimeframe');
+  if(!subEl || !tEl) return;
+  var sub = subEl.value, t = tEl.value;
+  var key = sub + ':' + t;
+  if(_redditMemesCache[key]){
+    // Cache hit — render instantly, no network
+    renderRedditMemes();
+    return;
+  }
+  _redditFetching = true;
+  var status = document.getElementById('memeBrowserStatus');
+  var grid = document.getElementById('memeBrowserGrid');
+  if(status) status.textContent = 'Fetching top of ' + t + ' from r/' + sub + '…';
+  if(grid) grid.innerHTML = '';
+  var url = 'https://www.reddit.com/r/' + encodeURIComponent(sub) + '/top.json?t=' + encodeURIComponent(t) + '&limit=50';
+  fetch(url)
+    .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(res){
+      _redditFetching = false;
+      if(!res || !res.data || !Array.isArray(res.data.children)){
+        throw new Error('Unexpected Reddit response shape');
+      }
+      // Keep only direct-image posts (i.redd.it / i.imgur.com / .jpg /.png/.gif/.webp).
+      // Skip NSFW, videos, galleries, link-only posts.
+      var posts = res.data.children.map(function(c){ return c.data; }).filter(function(p){
+        if(!p || p.over_18) return false;
+        var u = (p.url_overridden_by_dest || p.url || '').replace(/&amp;/g, '&');
+        if(!u) return false;
+        return /\.(jpe?g|png|gif|webp)(\?|$)/i.test(u);
+      }).map(function(p){
+        return {
+          title: p.title || '',
+          url: (p.url_overridden_by_dest || p.url).replace(/&amp;/g, '&'),
+          permalink: 'https://reddit.com' + (p.permalink || ''),
+          subreddit: p.subreddit || sub,
+          score: p.score || 0
+        };
+      });
+      _redditMemesCache[key] = posts;
+      if(status){
+        status.textContent = posts.length
+          ? posts.length + ' image posts loaded from r/' + sub + ' (top of ' + t + ') · click one to use.'
+          : 'No direct-image posts found in r/' + sub + ' for "top of ' + t + '". Try a different subreddit or timeframe.';
+      }
+      renderRedditMemes();
+    })
+    .catch(function(e){
+      _redditFetching = false;
+      console.error('[meme:reddit] fetch failed:', e);
+      if(status) status.textContent = '✗ Reddit fetch failed: ' + (e.message || e);
+    });
+}
+
+function refreshRedditMemes(){
+  delete _redditMemesCache[_redditCacheKey()];
+  fetchRedditMemes();
+}
+
+function renderRedditMemes(){
+  var grid = document.getElementById('memeBrowserGrid');
+  if(!grid) return;
+  var posts = _redditMemesCache[_redditCacheKey()];
+  if(!posts){ return; }
+  grid.innerHTML = '';
+  if(!posts.length){
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No image posts in this view.</div>';
+    return;
+  }
+  posts.forEach(function(p){
+    var tile = document.createElement('div');
+    tile.className = 'meme-tile';
+    var shortTitle = (p.title || '').slice(0, 80) + (p.title && p.title.length > 80 ? '…' : '');
+    tile.title = p.title + ' · r/' + p.subreddit + ' · ' + p.score + ' upvotes';
+    tile.innerHTML =
+      '<img src="' + escAttr(p.url) + '" alt="" loading="lazy" crossorigin="anonymous">'
+      + '<div class="meme-name">' + escAttr(shortTitle) + '</div>'
+      + '<div class="meme-meta">r/' + escAttr(p.subreddit) + ' · ' + p.score + ' ↑</div>';
+    tile.onclick = function(){ useRedditMeme(p); };
+    grid.appendChild(tile);
+  });
+}
+
+// Drop a Reddit meme post on the canvas. Same fetch-to-data-URL pipeline as useMemeTemplate so
+// the canvas stays untainted on export. Reddit posts are finished memes (caption baked in), so
+// we pass boxCount=0 — no overlay caption layers. User can add a text layer manually if they
+// want to remix with their own brand text.
+function useRedditMeme(post){
+  if(!post || !post.url){ alert('Bad post data.'); return; }
+  var status = document.getElementById('memeBrowserStatus');
+  var shortTitle = (post.title || 'meme').slice(0, 60);
+  if(status) status.textContent = 'Loading "' + shortTitle + (post.title.length > 60 ? '…' : '') + '"…';
+  fetch(post.url, {mode: 'cors'})
+    .then(function(r){ if(!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+    .then(function(blob){
+      return new Promise(function(resolve, reject){
+        var reader = new FileReader();
+        reader.onload = function(){ resolve(reader.result); };
+        reader.onerror = function(){ reject(new Error('FileReader failed')); };
+        reader.readAsDataURL(blob);
+      });
+    })
+    .then(function(dataUrl){
+      var img = new Image();
+      img.onload = function(){
+        _addMemeFromImage(img, shortTitle, 0);   // 0 boxes — Reddit posts are finished memes
+        closeMemeBrowser();
+      };
+      img.onerror = function(){ if(status) status.textContent = '✗ Image failed to decode.'; };
+      img.src = dataUrl;
+    })
+    .catch(function(e){
+      console.error('[meme:reddit] use failed:', e);
+      if(status) status.textContent = '✗ Could not load this post: ' + (e.message || e);
+    });
 }
 
 // ── VIDEO LAYER ──
