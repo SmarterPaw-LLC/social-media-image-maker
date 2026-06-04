@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v217</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v218</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1065,6 +1065,21 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
             <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Swirl</span><span id="meshSwirlVal" style="font-family:monospace;color:var(--muted);">0</span></div>
             <input type="range" id="meshSwirl" min="0" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
             <div style="font-size:9px;color:var(--muted);line-height:1.2;">Radial twist around the center</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Kaleidoscope</span><span id="meshKaleidoscopeVal" style="font-family:monospace;color:var(--muted);">0</span></div>
+            <input type="range" id="meshKaleidoscope" min="0" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">Mirror N pie-slices from center</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Pinch / Bulge</span><span id="meshPinchBulgeVal" style="font-family:monospace;color:var(--muted);">0</span></div>
+            <input type="range" id="meshPinchBulge" min="-100" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">– pinches center · + bulges (fish-eye)</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Chromatic</span><span id="meshChromaticVal" style="font-family:monospace;color:var(--muted);">0</span></div>
+            <input type="range" id="meshChromatic" min="0" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">RGB channel fringing at edges</div>
           </div>
           <div></div>
         </div>
@@ -6662,20 +6677,32 @@ function buildImageProps(l){
   var meshHtml = '';
   if(l._meshPreset && l._meshEffects){
     var e = l._meshEffects;
+    // v218: build a <select> of all known presets so the user can swap the palette without
+    // recreating the layer. The dropdown shows every preset name; current preset is preselected.
+    var presetOpts = MESH_GRADIENT_PRESETS.map(function(mp){
+      var sel = mp.name === l._meshPreset ? ' selected' : '';
+      return '<option value="' + mp.name + '"' + sel + '>' + mp.name + '</option>';
+    }).join('');
     meshHtml = '<div class="prop-section" style="background:linear-gradient(135deg,#fdf2ff 0%,#f5e8ff 100%);border:1px solid #d4b8e8;border-radius:7px;padding:9px;margin-bottom:8px;">'
-      + '<div style="font-weight:700;font-size:11px;color:#7b2d8b;margin-bottom:2px;">🎨 Mesh Effects · ' + l._meshPreset + '</div>'
-      + '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Drag any slider to reshape the look. 🎲 reroll for a new random layout from the same palette.</div>'
-      + R('Intensity',  'pmeshIntensity', e.intensity || 0, 0, 100, 1)
-      + R('Hue Shift',  'pmeshHue',       e.hueShift  || 0, 0, 360, 1)
-      + R('Glow',       'pmeshGlow',      e.glow      || 0, 0, 100, 1)
-      + R('Posterize',  'pmeshPosterize', e.posterize || 0, 0, 100, 1)
-      + R('Wave',       'pmeshWave',      e.wave      || 0, 0, 100, 1)
-      + R('Ripple',     'pmeshRipple',    e.ripple    || 0, 0, 100, 1)
-      + R('Swirl',      'pmeshSwirl',     e.swirl     || 0, 0, 100, 1)
+      + '<div style="font-weight:700;font-size:11px;color:#7b2d8b;margin-bottom:2px;">🎨 Mesh Effects</div>'
+      + '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Drag sliders to reshape · 🎲 randomize for a surprise · swap palette below.</div>'
+      + '<label style="font-size:10px;color:var(--muted);">Palette</label>'
+      + '<select id="pmeshPreset" style="width:100%;margin-bottom:8px;">' + presetOpts + '</select>'
+      + R('Intensity',    'pmeshIntensity',    e.intensity    || 0, 0, 100, 1)
+      + R('Hue Shift',    'pmeshHue',          e.hueShift     || 0, 0, 360, 1)
+      + R('Glow',         'pmeshGlow',         e.glow         || 0, 0, 100, 1)
+      + R('Posterize',    'pmeshPosterize',    e.posterize    || 0, 0, 100, 1)
+      + R('Wave',         'pmeshWave',         e.wave         || 0, 0, 100, 1)
+      + R('Ripple',       'pmeshRipple',       e.ripple       || 0, 0, 100, 1)
+      + R('Swirl',        'pmeshSwirl',        e.swirl        || 0, 0, 100, 1)
+      + R('Kaleidoscope', 'pmeshKaleidoscope', e.kaleidoscope || 0, 0, 100, 1)
+      + R('Pinch / Bulge','pmeshPinchBulge',   e.pinchBulge   || 0, -100, 100, 1)
+      + R('Chromatic',    'pmeshChromatic',    e.chromatic    || 0, 0, 100, 1)
       + '<div style="display:flex;gap:6px;margin-top:5px;">'
-        + '<button class="btn-sm" style="flex:1;" onclick="rerollMeshLayer('+l.id+')" title="Generate a new random blob layout from the same palette, keeping your current effect settings">🎲 Reroll Mix</button>'
-        + '<button class="btn-sm" style="flex:1;" onclick="resetMeshLayerEffects('+l.id+')" title="Reset all six effect sliders to zero (smooth painterly look)">↺ Reset Effects</button>'
+        + '<button class="btn-sm" style="flex:1;" onclick="randomizeMeshLayer('+l.id+')" title="Roll all ten effect sliders to random values for a surprise mix">🎲 Randomize</button>'
+        + '<button class="btn-sm" style="flex:1;" onclick="rerollMeshLayer('+l.id+')" title="Generate a new random blob layout from the same palette, keeping your current effect settings">🔀 Reroll Layout</button>'
       + '</div>'
+      + '<button class="btn-sm" style="width:100%;margin-top:5px;" onclick="resetMeshLayerEffects('+l.id+')" title="Reset all effect sliders to defaults (smooth painterly look)">↺ Reset Effects</button>'
     + '</div>';
   }
   return '<div class="prop-section">'
@@ -7245,9 +7272,13 @@ function bindPropEvents(layer){
       rng('pmeshHue',       function(v){ layer._meshEffects.hueShift  = +v; _scheduleMeshRegen(layer.id); });
       rng('pmeshGlow',      function(v){ layer._meshEffects.glow      = +v; _scheduleMeshRegen(layer.id); });
       rng('pmeshPosterize', function(v){ layer._meshEffects.posterize = +v; _scheduleMeshRegen(layer.id); });
-      rng('pmeshWave',      function(v){ layer._meshEffects.wave      = +v; _scheduleMeshRegen(layer.id); });
-      rng('pmeshRipple',    function(v){ layer._meshEffects.ripple    = +v; _scheduleMeshRegen(layer.id); });
-      rng('pmeshSwirl',     function(v){ layer._meshEffects.swirl     = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshWave',         function(v){ layer._meshEffects.wave         = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshRipple',       function(v){ layer._meshEffects.ripple       = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshSwirl',        function(v){ layer._meshEffects.swirl        = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshKaleidoscope', function(v){ layer._meshEffects.kaleidoscope = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshPinchBulge',   function(v){ layer._meshEffects.pinchBulge   = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshChromatic',    function(v){ layer._meshEffects.chromatic    = +v; _scheduleMeshRegen(layer.id); });
+      on('pmeshPreset', 'change', function(ev){ changeMeshLayerPreset(layer.id, ev.target.value); });
     }
   } else if(layer.type==='sticker'){
     document.querySelectorAll('.sl_text').forEach(function(el){
@@ -13649,6 +13680,19 @@ function generateMeshGradient(w, h, palette, seed, effects){
   if(effects.swirl && effects.swirl > 0){
     _applySwirlDistortion(canvas, effects.swirl);
   }
+  // v218: additional groovy effects, applied after the warp effects so they composite on top.
+  // Order matters: kaleidoscope folds the canvas into mirrored slices, pinch/bulge warps the
+  // overall geometry, chromatic aberration goes LAST so the RGB fringing is visible at the
+  // final edges (otherwise downstream effects would smear the channel split back together).
+  if(effects.kaleidoscope && effects.kaleidoscope > 0){
+    _applyKaleidoscope(canvas, effects.kaleidoscope);
+  }
+  if(effects.pinchBulge && effects.pinchBulge !== 0){
+    _applyPinchBulge(canvas, effects.pinchBulge);
+  }
+  if(effects.chromatic && effects.chromatic > 0){
+    _applyChromaticAberration(canvas, effects.chromatic);
+  }
 
   return canvas;
 }
@@ -13760,16 +13804,145 @@ function _applySwirlDistortion(canvas, amount){
   ctx.putImageData(dst, 0, 0);
 }
 
+// v218: Kaleidoscope — sample each pixel from a reflected position so the canvas becomes N
+// mirrored pie slices around the center. 2 slices = single mirror (butterfly), 12 slices = full
+// flower-of-life look. Slice count rises with the amount slider.
+function _applyKaleidoscope(canvas, amount){
+  if(!amount || amount <= 0) return;
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var src = ctx.getImageData(0, 0, w, h);
+  var dst = ctx.createImageData(w, h);
+  var cx = w / 2, cy = h / 2;
+  var slices = 2 + Math.round((amount / 100) * 10);   // 2..12
+  var sliceAngle = (Math.PI * 2) / slices;
+  var halfSlice = sliceAngle / 2;
+  for(var y = 0; y < h; y++){
+    for(var x = 0; x < w; x++){
+      var dx = x - cx, dy = y - cy;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      var angle = Math.atan2(dy, dx);
+      // Fold the angle into a single slice and mirror every other one — that's what makes it
+      // kaleidoscopic instead of just rotational
+      var folded = ((angle % sliceAngle) + sliceAngle) % sliceAngle;
+      if(folded > halfSlice) folded = sliceAngle - folded;
+      var srcX = cx + Math.cos(folded) * dist;
+      var srcY = cy + Math.sin(folded) * dist;
+      var sx = srcX < 0 ? 0 : (srcX >= w ? w - 1 : (srcX | 0));
+      var sy = srcY < 0 ? 0 : (srcY >= h ? h - 1 : (srcY | 0));
+      var si = (sy * w + sx) * 4;
+      var di = (y * w + x) * 4;
+      dst.data[di]     = src.data[si];
+      dst.data[di + 1] = src.data[si + 1];
+      dst.data[di + 2] = src.data[si + 2];
+      dst.data[di + 3] = src.data[si + 3];
+    }
+  }
+  ctx.putImageData(dst, 0, 0);
+}
+
+// v218: Pinch / Bulge — radial distance remap with non-linear exponent. Positive bulges
+// (content magnifies at center, edges compress); negative pinches (center compresses, edges
+// magnify). Like a fish-eye lens that you can flip inside out.
+function _applyPinchBulge(canvas, amount){
+  if(!amount || amount === 0) return;
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var src = ctx.getImageData(0, 0, w, h);
+  var dst = ctx.createImageData(w, h);
+  var cx = w / 2, cy = h / 2;
+  var maxDist = Math.sqrt(cx * cx + cy * cy);
+  // exp > 1 = bulge (small dest r → smaller src r → center magnifies)
+  // exp < 1 = pinch (small dest r → larger src r → center compresses)
+  var exp;
+  if(amount > 0) exp = 1 + (amount / 100) * 2;          // up to 3 at +100
+  else           exp = 1 / (1 + (-amount / 100) * 2);   // down to 1/3 at -100
+  for(var y = 0; y < h; y++){
+    for(var x = 0; x < w; x++){
+      var dx = x - cx, dy = y - cy;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if(dist < 0.5){
+        var di0 = (y * w + x) * 4;
+        var si0 = di0;
+        dst.data[di0]     = src.data[si0];
+        dst.data[di0 + 1] = src.data[si0 + 1];
+        dst.data[di0 + 2] = src.data[si0 + 2];
+        dst.data[di0 + 3] = src.data[si0 + 3];
+        continue;
+      }
+      var normDist = dist / maxDist;
+      var srcNormDist = Math.pow(normDist, exp);
+      var ratio = srcNormDist * maxDist / dist;
+      var srcX = cx + dx * ratio;
+      var srcY = cy + dy * ratio;
+      var sx = srcX < 0 ? 0 : (srcX >= w ? w - 1 : (srcX | 0));
+      var sy = srcY < 0 ? 0 : (srcY >= h ? h - 1 : (srcY | 0));
+      var si = (sy * w + sx) * 4;
+      var di = (y * w + x) * 4;
+      dst.data[di]     = src.data[si];
+      dst.data[di + 1] = src.data[si + 1];
+      dst.data[di + 2] = src.data[si + 2];
+      dst.data[di + 3] = src.data[si + 3];
+    }
+  }
+  ctx.putImageData(dst, 0, 0);
+}
+
+// v218: Chromatic Aberration — shift R outward and B inward (relative to center). Shift scales
+// with distance from center so edges fringe heavily while the center stays clean. Gives the
+// "tripping" / VHS-fringe look that's hard to get any other way.
+function _applyChromaticAberration(canvas, amount){
+  if(!amount || amount <= 0) return;
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var src = ctx.getImageData(0, 0, w, h);
+  var dst = ctx.createImageData(w, h);
+  var cx = w / 2, cy = h / 2;
+  var maxDist = Math.sqrt(cx * cx + cy * cy);
+  var maxShift = (amount / 100) * Math.min(w, h) * 0.03;
+  for(var y = 0; y < h; y++){
+    for(var x = 0; x < w; x++){
+      var dx = x - cx, dy = y - cy;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      var ux = dist > 0.5 ? dx / dist : 0;
+      var uy = dist > 0.5 ? dy / dist : 0;
+      var shift = (dist / maxDist) * maxShift;
+      // R: pulled outward along radial axis
+      var rx = x + ux * shift;
+      var ry = y + uy * shift;
+      // B: pulled inward (opposite direction)
+      var bx = x - ux * shift;
+      var by = y - uy * shift;
+      var rsx = rx < 0 ? 0 : (rx >= w ? w - 1 : (rx | 0));
+      var rsy = ry < 0 ? 0 : (ry >= h ? h - 1 : (ry | 0));
+      var bsx = bx < 0 ? 0 : (bx >= w ? w - 1 : (bx | 0));
+      var bsy = by < 0 ? 0 : (by >= h ? h - 1 : (by | 0));
+      var gIdx = (y * w + x) * 4;
+      var rIdx = (rsy * w + rsx) * 4;
+      var bIdx = (bsy * w + bsx) * 4;
+      var di = gIdx;
+      dst.data[di]     = src.data[rIdx];        // R from shifted-outward position
+      dst.data[di + 1] = src.data[gIdx + 1];    // G stays
+      dst.data[di + 2] = src.data[bIdx + 2];    // B from shifted-inward position
+      dst.data[di + 3] = src.data[gIdx + 3];
+    }
+  }
+  ctx.putImageData(dst, 0, 0);
+}
+
 // Read current slider state into the effects object every mesh function expects
 function _readMeshEffects(){
   return {
-    intensity: +(document.getElementById('meshIntensity') || {value:30}).value,
-    hueShift:  +(document.getElementById('meshHue')       || {value:0}).value,
-    glow:      +(document.getElementById('meshGlow')      || {value:0}).value,
-    posterize: +(document.getElementById('meshPosterize') || {value:0}).value,
-    wave:      +(document.getElementById('meshWave')      || {value:0}).value,
-    ripple:    +(document.getElementById('meshRipple')    || {value:0}).value,
-    swirl:     +(document.getElementById('meshSwirl')     || {value:0}).value
+    intensity:    +(document.getElementById('meshIntensity')    || {value:30}).value,
+    hueShift:     +(document.getElementById('meshHue')          || {value:0}).value,
+    glow:         +(document.getElementById('meshGlow')         || {value:0}).value,
+    posterize:    +(document.getElementById('meshPosterize')    || {value:0}).value,
+    wave:         +(document.getElementById('meshWave')         || {value:0}).value,
+    ripple:       +(document.getElementById('meshRipple')       || {value:0}).value,
+    swirl:        +(document.getElementById('meshSwirl')        || {value:0}).value,
+    kaleidoscope: +(document.getElementById('meshKaleidoscope') || {value:0}).value,
+    pinchBulge:   +(document.getElementById('meshPinchBulge')   || {value:0}).value,
+    chromatic:    +(document.getElementById('meshChromatic')    || {value:0}).value
   };
 }
 
@@ -13786,9 +13959,12 @@ function _loadMeshEffects(){
         hueShift:  Math.max(0, Math.min(360, p.hueShift  != null ? p.hueShift  : 0)),
         glow:      Math.max(0, Math.min(100, p.glow      != null ? p.glow      : 0)),
         posterize: Math.max(0, Math.min(100, p.posterize != null ? p.posterize : 0)),
-        wave:      Math.max(0, Math.min(100, p.wave      != null ? p.wave      : 0)),
-        ripple:    Math.max(0, Math.min(100, p.ripple    != null ? p.ripple    : 0)),
-        swirl:     Math.max(0, Math.min(100, p.swirl     != null ? p.swirl     : 0))
+        wave:         Math.max(0, Math.min(100, p.wave         != null ? p.wave         : 0)),
+        ripple:       Math.max(0, Math.min(100, p.ripple       != null ? p.ripple       : 0)),
+        swirl:        Math.max(0, Math.min(100, p.swirl        != null ? p.swirl        : 0)),
+        kaleidoscope: Math.max(0, Math.min(100, p.kaleidoscope != null ? p.kaleidoscope : 0)),
+        pinchBulge:   Math.max(-100, Math.min(100, p.pinchBulge != null ? p.pinchBulge  : 0)),
+        chromatic:    Math.max(0, Math.min(100, p.chromatic    != null ? p.chromatic    : 0))
       };
     }
   } catch(e){}
@@ -13804,22 +13980,28 @@ function meshEffectsChanged(){
   var hv = document.getElementById('meshHueVal');        if(hv) hv.textContent = eff.hueShift + '°';
   var gv = document.getElementById('meshGlowVal');       if(gv) gv.textContent = eff.glow;
   var pv = document.getElementById('meshPosterizeVal');  if(pv) pv.textContent = eff.posterize;
-  var wv = document.getElementById('meshWaveVal');       if(wv) wv.textContent = eff.wave;
-  var rv = document.getElementById('meshRippleVal');     if(rv) rv.textContent = eff.ripple;
-  var sv = document.getElementById('meshSwirlVal');      if(sv) sv.textContent = eff.swirl;
+  var wv = document.getElementById('meshWaveVal');         if(wv) wv.textContent = eff.wave;
+  var rv = document.getElementById('meshRippleVal');       if(rv) rv.textContent = eff.ripple;
+  var sv = document.getElementById('meshSwirlVal');        if(sv) sv.textContent = eff.swirl;
+  var kv = document.getElementById('meshKaleidoscopeVal'); if(kv) kv.textContent = eff.kaleidoscope;
+  var pbv= document.getElementById('meshPinchBulgeVal');   if(pbv) pbv.textContent = (eff.pinchBulge > 0 ? '+' : '') + eff.pinchBulge;
+  var cv = document.getElementById('meshChromaticVal');    if(cv) cv.textContent = eff.chromatic;
   _saveMeshEffects(eff);
   _refreshMeshPreviewTiles();
 }
 
 function meshEffectsReset(){
-  var defaults = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0};
-  document.getElementById('meshIntensity').value  = defaults.intensity;
-  document.getElementById('meshHue').value        = defaults.hueShift;
-  document.getElementById('meshGlow').value       = defaults.glow;
-  document.getElementById('meshPosterize').value  = defaults.posterize;
-  document.getElementById('meshWave').value       = defaults.wave;
-  document.getElementById('meshRipple').value     = defaults.ripple;
-  document.getElementById('meshSwirl').value      = defaults.swirl;
+  var defaults = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0};
+  document.getElementById('meshIntensity').value    = defaults.intensity;
+  document.getElementById('meshHue').value          = defaults.hueShift;
+  document.getElementById('meshGlow').value         = defaults.glow;
+  document.getElementById('meshPosterize').value    = defaults.posterize;
+  document.getElementById('meshWave').value         = defaults.wave;
+  document.getElementById('meshRipple').value       = defaults.ripple;
+  document.getElementById('meshSwirl').value        = defaults.swirl;
+  document.getElementById('meshKaleidoscope').value = defaults.kaleidoscope;
+  document.getElementById('meshPinchBulge').value   = defaults.pinchBulge;
+  document.getElementById('meshChromatic').value    = defaults.chromatic;
   meshEffectsChanged();
 }
 
@@ -13931,10 +14113,53 @@ function resetMeshLayerEffects(layerId){
   var layer = layers.find(function(l){ return l.id === layerId; });
   if(!layer || !layer._meshEffects) return;
   snapshotState();
-  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0};
+  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0};
   regenerateMeshLayer(layerId);
   renderProps();
   showToast('↺ Mesh effects reset');
+}
+
+// v218: Swap to a different palette while keeping the same seed (so the blob LAYOUT stays
+// stable — only the colors change) and the same effect values. If the user picked a preset
+// that no longer exists (e.g., they typed in the value), bail without changing anything.
+function changeMeshLayerPreset(layerId, presetName){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer) return;
+  var preset = MESH_GRADIENT_PRESETS.find(function(p){ return p.name === presetName; });
+  if(!preset) return;
+  snapshotState();
+  layer._meshPreset = presetName;
+  layer.name = '🎨 ' + presetName;
+  regenerateMeshLayer(layerId);
+  renderLayerList();
+  renderProps();
+  showToast('🎨 Palette: ' + presetName);
+}
+
+// v218: Randomize all ten effect sliders. Intentionally biases AWAY from "everything-100" by
+// rolling each slider independently — the result is more varied than uniform max chaos.
+// Pinch/Bulge gets the full [-100, +100] range; everything else [0, 100].
+function randomizeMeshLayer(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer || !layer._meshEffects) return;
+  snapshotState();
+  function r100(){ return Math.floor(Math.random() * 101); }
+  function rSigned(){ return Math.floor(Math.random() * 201) - 100; }
+  layer._meshEffects = {
+    intensity:    r100(),
+    hueShift:     Math.floor(Math.random() * 361),
+    glow:         r100(),
+    posterize:    r100(),
+    wave:         r100(),
+    ripple:       r100(),
+    swirl:        r100(),
+    kaleidoscope: r100(),
+    pinchBulge:   rSigned(),
+    chromatic:    r100()
+  };
+  regenerateMeshLayer(layerId);
+  renderProps();
+  showToast('🎲 Random mix — click again for another');
 }
 
 var _meshRegenTimer = null;
@@ -14044,18 +14269,24 @@ function openBackgroundPicker(){
     var hS = document.getElementById('meshHue');        if(hS) hS.value  = savedEff.hueShift;
     var gS = document.getElementById('meshGlow');       if(gS) gS.value  = savedEff.glow;
     var pS = document.getElementById('meshPosterize');  if(pS) pS.value  = savedEff.posterize;
-    var wS = document.getElementById('meshWave');       if(wS) wS.value  = savedEff.wave;
-    var rpS= document.getElementById('meshRipple');     if(rpS) rpS.value = savedEff.ripple;
-    var swS= document.getElementById('meshSwirl');      if(swS) swS.value = savedEff.swirl;
+    var wS = document.getElementById('meshWave');         if(wS) wS.value  = savedEff.wave;
+    var rpS= document.getElementById('meshRipple');       if(rpS) rpS.value = savedEff.ripple;
+    var swS= document.getElementById('meshSwirl');        if(swS) swS.value = savedEff.swirl;
+    var kS = document.getElementById('meshKaleidoscope'); if(kS) kS.value = savedEff.kaleidoscope;
+    var pbS= document.getElementById('meshPinchBulge');   if(pbS) pbS.value = savedEff.pinchBulge;
+    var cS = document.getElementById('meshChromatic');    if(cS) cS.value = savedEff.chromatic;
   }
   var curEff = _readMeshEffects();
-  var iv = document.getElementById('meshIntensityVal'); if(iv) iv.textContent = curEff.intensity;
-  var hv = document.getElementById('meshHueVal');       if(hv) hv.textContent = curEff.hueShift + '°';
-  var gv = document.getElementById('meshGlowVal');      if(gv) gv.textContent = curEff.glow;
-  var pv = document.getElementById('meshPosterizeVal'); if(pv) pv.textContent = curEff.posterize;
-  var wv = document.getElementById('meshWaveVal');      if(wv) wv.textContent = curEff.wave;
-  var rv = document.getElementById('meshRippleVal');    if(rv) rv.textContent = curEff.ripple;
-  var sv = document.getElementById('meshSwirlVal');     if(sv) sv.textContent = curEff.swirl;
+  var iv = document.getElementById('meshIntensityVal');    if(iv) iv.textContent = curEff.intensity;
+  var hv = document.getElementById('meshHueVal');          if(hv) hv.textContent = curEff.hueShift + '°';
+  var gv = document.getElementById('meshGlowVal');         if(gv) gv.textContent = curEff.glow;
+  var pv = document.getElementById('meshPosterizeVal');    if(pv) pv.textContent = curEff.posterize;
+  var wv = document.getElementById('meshWaveVal');         if(wv) wv.textContent = curEff.wave;
+  var rv = document.getElementById('meshRippleVal');       if(rv) rv.textContent = curEff.ripple;
+  var sv = document.getElementById('meshSwirlVal');        if(sv) sv.textContent = curEff.swirl;
+  var kv = document.getElementById('meshKaleidoscopeVal'); if(kv) kv.textContent = curEff.kaleidoscope;
+  var pbv= document.getElementById('meshPinchBulgeVal');   if(pbv) pbv.textContent = (curEff.pinchBulge > 0 ? '+' : '') + curEff.pinchBulge;
+  var cv = document.getElementById('meshChromaticVal');    if(cv) cv.textContent = curEff.chromatic;
   // v210: render mesh gradient tiles. Each tile is a real canvas (not CSS) because the mesh
   // can't be expressed as a CSS gradient — it's a layered radial composition. Deterministic
   // seed (hash of preset name) makes the preview stable across modal opens, while applying
