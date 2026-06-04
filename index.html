@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v232</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v233</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1136,7 +1136,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       Open-source illustrations from Noto Emoji, Twemoji, Fluent Emoji, OpenMoji, Emojione, and fxemoji — all Apache&nbsp;2.0&nbsp;/&nbsp;CC&#8209;BY licensed (free for commercial use). Searched via the Iconify aggregator.
     </div>
     <div style="display:flex;gap:8px;margin-bottom:10px;">
-      <input type="text" id="clipArtQuery" placeholder="Search (cat, dog, paw, leaf, smile, party…)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){fetchClipArt();}">
+      <input type="text" id="clipArtQuery" placeholder="Search (sunglasses, top hat, bow tie, mustache, pizza…)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){fetchClipArt();}">
       <button class="btn-primary" onclick="fetchClipArt()" style="padding:8px 14px;">🔍 Search</button>
     </div>
     <div id="clipArtChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;"></div>
@@ -4287,7 +4287,15 @@ var _clipArtCache = {};   // query → array of "prefix:name" strings
 // noto = Google Noto Emoji, twemoji = Twitter, fluent-emoji-flat = MS flat style,
 // openmoji = OpenMoji project, emojione = emojione, fxemoji = Mozilla
 var _CLIP_ART_PREFIXES = 'noto,twemoji,fluent-emoji-flat,openmoji,emojione,fxemoji';
-var _CLIP_ART_QUICK_QUERIES = ['cat','dog','paw','leaf','plant','smile','heart','star','party','food','sun','flower'];
+// v233: chips curated for "humanize the pet" workflow — things you'd put ON or NEAR a cat/dog
+// in a social post. Eyewear + headwear + accessories + props + food/drink. Order = most-common
+// first so the default landing search is also the most universally useful.
+var _CLIP_ART_QUICK_QUERIES = [
+  'sunglasses', 'top hat', 'crown', 'party hat',
+  'bow tie', 'necktie', 'mustache', 'scarf',
+  'baseball cap', 'sombrero', 'glasses', 'cake',
+  'pizza', 'donut', 'coffee', 'flower'
+];
 
 function openClipArtBrowser(){
   var modal = document.getElementById('clipArtModal');
@@ -4308,11 +4316,11 @@ function openClipArtBrowser(){
       chips.appendChild(chip);
     });
   }
-  // Auto-search "cat" on first open so the grid isn't empty
+  // Auto-search the first chip on first open — universally useful pet-humanization accessory
   var grid = document.getElementById('clipArtGrid');
   var qEl = document.getElementById('clipArtQuery');
   if(grid && !grid.children.length){
-    if(qEl && !qEl.value) qEl.value = 'cat';
+    if(qEl && !qEl.value) qEl.value = 'sunglasses';
     fetchClipArt();
   } else if(qEl){
     setTimeout(function(){ qEl.focus(); qEl.select(); }, 50);
