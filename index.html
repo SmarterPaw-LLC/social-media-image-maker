@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v235</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v236</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1137,6 +1137,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div style="display:flex;gap:8px;margin-bottom:10px;">
       <input type="text" id="clipArtQuery" placeholder="Search (sunglasses, top hat, bow tie, mustache, pizza…)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){fetchClipArt();}">
+      <select id="clipArtSource" onchange="fetchClipArt()" style="padding:8px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff;">
+        <option value="iconify">Iconify (icons + emoji)</option>
+        <option value="openclipart">OpenClipart (true clip art, CC0)</option>
+      </select>
       <button class="btn-primary" onclick="fetchClipArt()" style="padding:8px 14px;">🔍 Search</button>
     </div>
     <div id="clipArtChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;"></div>
@@ -4345,14 +4349,20 @@ function closeClipArtBrowser(){
 
 function fetchClipArt(){
   if(_clipArtFetching) return;
+  // v236: route by selected source. Iconify (existing) or OpenClipart (new).
+  var srcEl = document.getElementById('clipArtSource');
+  var src = srcEl ? srcEl.value : 'iconify';
+  if(src === 'openclipart') return _fetchOpenClipart();
+  // ── Iconify path (unchanged from v235) ────────────────────────────────────────────────────
   var qEl = document.getElementById('clipArtQuery');
   var q = (qEl ? qEl.value : '').trim();
-  if(!q){ q = 'cat'; if(qEl) qEl.value = q; }
-  if(_clipArtCache[q]){ renderClipArt(q); return; }
+  if(!q){ q = 'sunglasses'; if(qEl) qEl.value = q; }
+  var cacheKey = 'iconify:' + q;
+  if(_clipArtCache[cacheKey]){ _renderIconifyResults(cacheKey, q); return; }
   _clipArtFetching = true;
   var status = document.getElementById('clipArtStatus');
   var grid = document.getElementById('clipArtGrid');
-  if(status) status.textContent = 'Searching open-source clip art for "' + q + '"…';
+  if(status) status.textContent = 'Searching Iconify for "' + q + '"…';
   if(grid) grid.innerHTML = '';
   var url = 'https://api.iconify.design/search?query=' + encodeURIComponent(q)
     + '&limit=96&prefixes=' + _CLIP_ART_PREFIXES;
@@ -4364,29 +4374,29 @@ function fetchClipArt(){
     .then(function(data){
       _clipArtFetching = false;
       if(!data || !Array.isArray(data.icons)) throw new Error('Unexpected Iconify response shape');
-      _clipArtCache[q] = data.icons;
+      _clipArtCache[cacheKey] = data.icons;
       if(status){
         var total = data.total != null ? data.total : data.icons.length;
         status.textContent = data.icons.length
-          ? data.icons.length + ' results' + (total > data.icons.length ? ' (showing top ' + data.icons.length + ' of ' + total + ')' : '') + ' · click any tile to drop it on the canvas as an editable SVG'
-          : 'No results for "' + q + '". Try a different keyword.';
+          ? data.icons.length + ' Iconify results' + (total > data.icons.length ? ' (showing top ' + data.icons.length + ' of ' + total + ')' : '') + ' · click any tile to add as an editable SVG'
+          : 'No Iconify results for "' + q + '". Try a different keyword or switch source to OpenClipart.';
       }
-      renderClipArt(q);
+      _renderIconifyResults(cacheKey, q);
     })
     .catch(function(e){
       _clipArtFetching = false;
-      console.error('[clip-art]', e);
-      if(status) status.textContent = '✗ Search failed: ' + (e.message || String(e));
+      console.error('[clip-art:iconify]', e);
+      if(status) status.textContent = '✗ Iconify search failed: ' + (e.message || String(e));
     });
 }
 
-function renderClipArt(query){
+function _renderIconifyResults(cacheKey, query){
   var grid = document.getElementById('clipArtGrid');
   if(!grid) return;
-  var icons = _clipArtCache[query] || [];
+  var icons = _clipArtCache[cacheKey] || [];
   grid.innerHTML = '';
   if(!icons.length){
-    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No clip art matches this query.</div>';
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No Iconify matches. Try a shorter term, or switch the source dropdown to OpenClipart.</div>';
     return;
   }
   icons.forEach(function(iconRef){
@@ -4408,6 +4418,130 @@ function renderClipArt(query){
     tile.appendChild(img);
     grid.appendChild(tile);
   });
+}
+
+// v236: OpenClipart source — true clip art (illustrations contributed by artists, all CC0).
+// OpenClipart's API doesn't always include CORS headers, so we race a direct fetch against a
+// proxy fallback (corsproxy.io). If both fail we surface a clear message.
+function _ocFetchWithCorsFallback(url){
+  // Try direct first; if it throws (or returns non-JSON), retry through corsproxy.io
+  return fetch(url)
+    .then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .catch(function(){
+      return fetch('https://corsproxy.io/?' + encodeURIComponent(url))
+        .then(function(r){
+          if(!r.ok) throw new Error('Proxy HTTP ' + r.status);
+          return r.json();
+        });
+    });
+}
+
+function _fetchOpenClipart(){
+  if(_clipArtFetching) return;
+  var qEl = document.getElementById('clipArtQuery');
+  var q = (qEl ? qEl.value : '').trim();
+  if(!q){ q = 'cat'; if(qEl) qEl.value = q; }
+  var cacheKey = 'oc:' + q;
+  if(_clipArtCache[cacheKey]){ _renderOpenClipartResults(cacheKey, q); return; }
+  _clipArtFetching = true;
+  var status = document.getElementById('clipArtStatus');
+  var grid = document.getElementById('clipArtGrid');
+  if(status) status.textContent = 'Searching OpenClipart for "' + q + '"…';
+  if(grid) grid.innerHTML = '';
+  var url = 'https://openclipart.org/search/json/?query=' + encodeURIComponent(q) + '&amount=64';
+  _ocFetchWithCorsFallback(url)
+    .then(function(data){
+      _clipArtFetching = false;
+      if(!data || !Array.isArray(data.payload)){
+        throw new Error('Unexpected OpenClipart response (no payload array)');
+      }
+      // Normalize each item into a stable shape we control
+      _clipArtCache[cacheKey] = data.payload.map(function(item){
+        var svgUrl = (item.svg && item.svg.url) || item.svg_url || ('https://openclipart.org/download/' + item.id + '/');
+        var thumbUrl = (item.svg && item.svg.png_thumb) || item.png_thumb_url || svgUrl;
+        return {
+          id: item.id,
+          title: item.title || ('clipart_' + item.id),
+          thumbUrl: thumbUrl,
+          svgUrl: svgUrl
+        };
+      });
+      if(status){
+        status.textContent = data.payload.length
+          ? data.payload.length + ' OpenClipart results · click any tile to add as an editable SVG'
+          : 'No OpenClipart results for "' + q + '". Try a different keyword.';
+      }
+      _renderOpenClipartResults(cacheKey, q);
+    })
+    .catch(function(e){
+      _clipArtFetching = false;
+      console.error('[clip-art:openclipart]', e);
+      if(status){
+        status.textContent = '✗ OpenClipart unreachable (' + (e.message || String(e)) + '). Their site has spotty uptime — try Iconify in the source dropdown for now.';
+      }
+    });
+}
+
+function _renderOpenClipartResults(cacheKey, query){
+  var grid = document.getElementById('clipArtGrid');
+  if(!grid) return;
+  var items = _clipArtCache[cacheKey] || [];
+  grid.innerHTML = '';
+  if(!items.length){
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No OpenClipart matches for that term.</div>';
+    return;
+  }
+  items.forEach(function(item){
+    var tile = document.createElement('div');
+    tile.style.cssText = 'aspect-ratio:1;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:8px;transition:border-color 0.15s, transform 0.15s;overflow:hidden;';
+    tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.06)'; };
+    tile.onmouseleave = function(){ tile.style.borderColor = 'var(--border)'; tile.style.transform = ''; };
+    tile.title = item.title + ' — click to add';
+    tile.onclick = function(){ _useOpenClipartItem(item); };
+    var img = document.createElement('img');
+    img.src = item.thumbUrl;
+    img.alt = item.title;
+    img.loading = 'lazy';
+    img.crossOrigin = 'anonymous';
+    img.style.cssText = 'max-width:100%;max-height:100%;display:block;object-fit:contain;';
+    img.onerror = function(){ img.style.display = 'none'; tile.textContent = item.title; tile.style.fontSize = '10px'; tile.style.padding = '6px'; };
+    tile.appendChild(img);
+    grid.appendChild(tile);
+  });
+}
+
+function _useOpenClipartItem(item){
+  var status = document.getElementById('clipArtStatus');
+  if(status) status.textContent = 'Loading "' + item.title + '"…';
+  // Download the SVG; same direct-then-proxy fallback pattern as the search call
+  var directFetch = function(){
+    return fetch(item.svgUrl).then(function(r){
+      if(!r.ok) throw new Error('Direct HTTP ' + r.status);
+      return r.text();
+    });
+  };
+  var proxyFetch = function(){
+    return fetch('https://corsproxy.io/?' + encodeURIComponent(item.svgUrl)).then(function(r){
+      if(!r.ok) throw new Error('Proxy HTTP ' + r.status);
+      return r.text();
+    });
+  };
+  directFetch().catch(proxyFetch)
+    .then(function(svgText){
+      if(!svgText || svgText.indexOf('<svg') < 0){
+        throw new Error('Response was not an SVG');
+      }
+      createSvgLayerFromText(svgText, 'oc_' + item.id);
+      closeClipArtBrowser();
+      showToast('🎨 Added: ' + item.title);
+    })
+    .catch(function(e){
+      console.error('[clip-art:openclipart:use]', e);
+      if(status) status.textContent = '✗ Couldn\'t load: ' + (e.message || String(e));
+    });
 }
 
 function useClipArt(prefix, name){
