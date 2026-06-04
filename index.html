@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v245</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v246</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1876,12 +1876,17 @@ var PREFAB_GROUPS = [
 ];
 var PREFAB_DEFAULTS = [
   // Social — carried over from the original size grid, brand-agnostic
-  {id:'sq',  label:'Square',    sub:'1:1',   w:1080, h:1080, icon:'⬛', group:'social', brand:'all', builtin:true},
-  {id:'pt',  label:'Portrait',  sub:'4:5',   w:1080, h:1350, icon:'📱', group:'social', brand:'all', builtin:true},
-  {id:'st',  label:'Story',     sub:'9:16',  w:1080, h:1920, icon:'▮',  group:'social', brand:'all', builtin:true},
-  {id:'ls',  label:'Landscape', sub:'16:9',  w:1920, h:1080, icon:'🖥', group:'social', brand:'all', builtin:true},
-  {id:'tw',  label:'Twitter',   sub:'2:1',   w:1600, h:800,  icon:'🐦', group:'social', brand:'all', builtin:true},
-  {id:'fbc', label:'FB Cover',  sub:'2.7:1', w:1640, h:624,  icon:'📘', group:'social', brand:'all', builtin:true},
+  {id:'sq',  label:'Square',         sub:'1:1 · IG/FB',    w:1080, h:1080, icon:'⬛', group:'social', brand:'all', builtin:true},
+  {id:'pt',  label:'IG Portrait',    sub:'4:5',            w:1080, h:1350, icon:'📷', group:'social', brand:'all', builtin:true},
+  {id:'st',  label:'Story',          sub:'9:16 · IG/FB',   w:1080, h:1920, icon:'▮',  group:'social', brand:'all', builtin:true},
+  // v246: missing IG/FB non-square sizes added below ───────────────────────────────────────
+  {id:'ig-ls',label:'IG Landscape',  sub:'1.91:1',         w:1080, h:566,  icon:'📷', group:'social', brand:'all', builtin:true},
+  {id:'fb-pt',label:'FB Portrait',   sub:'4:5 · 1200×1500',w:1200, h:1500, icon:'📘', group:'social', brand:'all', builtin:true},
+  {id:'fb-ls',label:'FB Landscape',  sub:'1.91:1 · ads',   w:1200, h:630,  icon:'📘', group:'social', brand:'all', builtin:true},
+  // ──────────────────────────────────────────────────────────────────────────────────────
+  {id:'ls',  label:'Landscape',      sub:'16:9 · video',   w:1920, h:1080, icon:'🖥', group:'social', brand:'all', builtin:true},
+  {id:'tw',  label:'Twitter / X',    sub:'2:1',            w:1600, h:800,  icon:'🐦', group:'social', brand:'all', builtin:true},
+  {id:'fbc', label:'FB Cover',       sub:'2.7:1 · desktop',w:1640, h:624,  icon:'📘', group:'social', brand:'all', builtin:true},
   // Web — Meowijuana / Doggijuana share the 'meowi' brand selector in this app
   {id:'mj-hero',     label:'Hero image',   sub:'1300×600',  w:1300, h:600,  icon:'🌐', group:'web', brand:'meowi', builtin:true},
   {id:'mj-hero-mob', label:'Hero mobile',  sub:'600×600',   w:600,  h:600,  icon:'📱', group:'web', brand:'meowi', builtin:true},
