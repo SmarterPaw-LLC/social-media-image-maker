@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v239</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v240</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1135,13 +1135,18 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
       Open-source illustrations from Noto Emoji, Twemoji, Fluent Emoji / Fluent Color, OpenMoji, Emojione, fxemoji, Flat Color Icons, and Streamline — all free for commercial use (Apache 2.0 / CC&#8209;BY / MIT). Searched via the Iconify aggregator. <em>Tip: if a phrase returns nothing, try a shorter term — "cap" instead of "baseball cap", "hat" instead of "top hat".</em>
     </div>
-    <div style="display:flex;gap:8px;margin-bottom:10px;">
-      <input type="text" id="clipArtQuery" placeholder="Search (sunglasses, top hat, bow tie, mustache, pizza…)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){fetchClipArt();}">
-      <select id="clipArtSource" onchange="fetchClipArt()" style="padding:8px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff;">
+    <!-- v240: source dropdown moved to its own row above the search input so the search field
+         has the full modal width (was squished sharing the row with dropdown + button). -->
+    <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
+      <label style="font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap;">Source:</label>
+      <select id="clipArtSource" onchange="fetchClipArt()" style="flex:1;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff;">
         <option value="iconify">Iconify (icons + emoji)</option>
         <option value="pixabay">Pixabay (illustrations · needs free key)</option>
       </select>
-      <button class="btn-primary" onclick="fetchClipArt()" style="padding:8px 14px;">🔍 Search</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <input type="text" id="clipArtQuery" placeholder="Search (sunglasses, top hat, bow tie, mustache, pizza…)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){fetchClipArt();}">
+      <button class="btn-primary" onclick="fetchClipArt()" style="padding:8px 16px;">🔍 Search</button>
     </div>
     <div id="clipArtChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;"></div>
     <div id="clipArtStatus" style="font-size:11px;color:var(--muted);margin-bottom:6px;min-height:14px;"></div>
