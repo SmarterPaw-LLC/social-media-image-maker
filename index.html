@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v226</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v227</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5970,12 +5970,15 @@ function _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed){
   for(var i = 0; i <= n; i++){
     var t = i / n;
     var a = startAng + t * totalAng;
-    // Per-loop radial offset — each loop walks a slightly different ellipse so they don't
-    // overlay perfectly. Low-frequency sine in loop-progress space so the variation is smooth
-    // around each loop but distinct between loops.
+    // Per-loop radial offset — each loop walks a distinctly different ellipse so they don't
+    // overlay perfectly. v227: amplitude was 5% (= ~10px on a 200px radius), so loops sat
+    // INSIDE the stroke width (typ. 20px) and painted over each other invisibly. Bumped to
+    // 12% so the radius swing is wider than the stroke width — adjacent loops actually clear
+    // each other. Frequency dropped to 1.7 rad/loop so each loop lands at a markedly different
+    // phase of the sine rather than averaging to near-zero.
     var loopProgress = Math.abs(t * totalAng) / (Math.PI * 2);
-    var loopOffset = (Math.sin(loopProgress * 2.7 + s) * 0.6
-                    + Math.sin(loopProgress * 5.1 + s * 1.7) * 0.4) * avgR * 0.05;
+    var loopOffset = (Math.sin(loopProgress * 1.7 + s) * 0.7
+                    + Math.sin(loopProgress * 3.3 + s * 1.7) * 0.3) * avgR * 0.12;
     var sampleRx = rx + loopOffset;
     var sampleRy = ry + loopOffset;
     var bx = cx + Math.cos(a) * sampleRx;
