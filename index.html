@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v236</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v237</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4100,6 +4100,92 @@ function inlineSvgStyleClasses(svgText){
 // attributes on elements, and <stop stop-color="#xxx"> inside gradients. Returns a list of
 // "swatches", each with a stable key (used for find-and-replace) plus the current color and a
 // human-readable label. Grouping: swatches from the same gradient share a gradient label.
+// v237: Brand color palettes for one-click SVG recolor. Sorted naturally (light to dark or
+// by hue family); at apply time both the original swatches AND the palette get re-sorted by
+// perceptual brightness, then mapped index→index so the SVG's depth/contrast structure stays
+// intact — darkest original color picks up the darkest brand color, lightest gets lightest.
+var MEOWI_DOGGI_BRAND_PALETTE = [
+  '#1f3b0e', '#2a5a9e',           // darks (deep green, navy)
+  '#3c8e14', '#4682b4',           // mids dark (Meowi green, Doggi blue)
+  '#c83e1a',                       // dark accent (deep orange)
+  '#8ab81d', '#f07830',           // brand primaries (Meowi green, Doggi orange)
+  '#ffb866',                       // warm mid (peach)
+  '#c5e039', '#ffd166', '#88c8ff', // brights (lime, sunshine, sky)
+  '#cdd99a',                       // sage light
+  '#fafaf0'                        // cream
+];
+var KKZ_BRAND_PALETTE = [
+  '#1a1a3a',                       // darkest (deep navy-purple)
+  '#3a4070', '#2a8e8e',           // darks (twilight, dark teal)
+  '#7d2a8e', '#9678c8',           // mids (deep pink-purple, lavender)
+  '#5ec6c6', '#e05098',           // brand primaries (KKZ teal, KKZ pink)
+  '#b8a8ff',                       // mid-light lavender
+  '#88e8e0', '#f5a0c5',           // mid-light (mint, soft pink)
+  '#b8e8e8', '#cdf2f0', '#ffdce8', // lights (pale teal, paler teal, pale pink)
+  '#f5fafa'                        // near-white
+];
+
+function _hexBrightness(hex){
+  if(!hex) return 128;
+  var h = String(hex).replace('#', '').replace(/^rgb\(.*?\)$/, '');
+  // Handle rgb() strings
+  var rgbMatch = String(hex).match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if(rgbMatch){
+    return 0.299 * +rgbMatch[1] + 0.587 * +rgbMatch[2] + 0.114 * +rgbMatch[3];
+  }
+  if(h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  if(h.length !== 6) return 128;
+  var r = parseInt(h.slice(0,2), 16);
+  var g = parseInt(h.slice(2,4), 16);
+  var b = parseInt(h.slice(4,6), 16);
+  if(isNaN(r) || isNaN(g) || isNaN(b)) return 128;
+  return 0.299 * r + 0.587 * g + 0.114 * b;   // ITU-R BT.601 perceptual luma
+}
+
+// v237: Apply a brand palette to all of an SVG layer's swatches in one shot. Strategy:
+// brightness-rank match. Sort original swatches by brightness (darkest first); sort palette by
+// brightness; pair them index-by-index. Cycles the palette if there are more original swatches
+// than brand colors. Preserves the SVG's visual depth instead of randomly recoloring.
+function applyBrandColorsToSvgLayer(layerId, brand){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer || layer.type !== 'svg' || !layer.svgText){
+    alert('Pick an SVG layer first.');
+    return;
+  }
+  var palette = brand === 'kkz' ? KKZ_BRAND_PALETTE : MEOWI_DOGGI_BRAND_PALETTE;
+  var swatches = extractSvgSwatches(layer.svgText);
+  if(!swatches.length){
+    alert('This SVG has no editable color swatches.');
+    return;
+  }
+  snapshotState();
+  var origByBrightness = swatches.slice().sort(function(a, b){
+    return _hexBrightness(a.currentHex) - _hexBrightness(b.currentHex);
+  });
+  var paletteByBrightness = palette.slice().sort(function(a, b){
+    return _hexBrightness(a) - _hexBrightness(b);
+  });
+  origByBrightness.forEach(function(sw, i){
+    var brandColor = paletteByBrightness[i % paletteByBrightness.length];
+    layer.svgText = replaceSvgSwatchColor(layer.svgText, sw, brandColor);
+  });
+  // Rebuild blob URL + reload image, same flow as the per-swatch handler in bindPropEvents
+  if(layer.url) URL.revokeObjectURL(layer.url);
+  var blob = new Blob([layer.svgText], {type:'image/svg+xml'});
+  layer.url = URL.createObjectURL(blob);
+  var newImg = new Image();
+  newImg.onload = function(){
+    layer.img = newImg;
+    renderProps();   // refresh swatch chips to show new colors
+    redraw();
+  };
+  newImg.onerror = function(){
+    alert('Could not reload SVG after applying brand colors.');
+  };
+  newImg.src = layer.url;
+  showToast('🎨 Applied ' + (brand === 'kkz' ? 'Kitty Ka-Zoom' : 'Meowi / Doggi') + ' brand colors');
+}
+
 function extractSvgSwatches(svgText){
   var swatches = [];
   var seen = {};   // dedupe identical color values within the same source category
@@ -7863,7 +7949,14 @@ function buildSvgProps(l){
       });
       recolorHtml = '<div class="prop-section" style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;">'
         + '<label style="font-size:11px;color:var(--muted);font-weight:600;">Recolor</label>'
-        + '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Click a swatch to change that color.</div>';
+        + '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Click a swatch to change one color, or apply a full brand palette below.</div>'
+        // v237: one-click brand palette buttons. Brightness-matched mapping preserves the SVG's
+        // depth structure. Button backgrounds use a 2-color gradient from each brand's primary
+        // pair so they read visually as "Meowi/Doggi" or "KKZ" at a glance.
+        + '<div style="display:flex;gap:6px;margin-bottom:8px;">'
+          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#8ab81d 0%,#f07830 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'meowi-doggi\')" title="Brightness-matched palette swap to Meowi green + Doggi orange family">🐱🐶 Meowi / Doggi colors</button>'
+          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#5ec6c6 0%,#e05098 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'kkz\')" title="Brightness-matched palette swap to KKZ teal + pink family">🐱‍👤 KKZ colors</button>'
+        + '</div>';
       function swatchRow(sw){
         // Each swatch: little color preview (clickable color input) + label
         return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
