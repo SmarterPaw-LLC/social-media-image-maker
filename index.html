@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v246</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v247</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1819,6 +1819,11 @@ var _overscanOn = false;
 var _overscanPx = 300;          // pixels of off-canvas margin shown on each side, in canvas coords
 var nextId = 1;           // global layer id counter — unique across ALL boards so paste is safe
 var dragState = null, resizeState = null, cropState = null, rotateState = null, marqueeState = null, eraseState = null;
+// v247: click-click-edit candidate. Set in canvas mousedown when an already-selected text or
+// sticker layer is clicked; cleared by mousemove if a drag is detected; consumed by mouseup to
+// enter edit mode. Lets a "second click" enter editing while a "click + drag" still moves the
+// layer normally.
+var _clickEditCandidate = null;
 // v180: snap-to-canvas. When a dragged/resized layer's edge, center, or corner comes within
 // _SNAP_THRESHOLD_PX (screen pixels) of a canvas edge or the canvas center, it snaps there.
 // Hold Alt while dragging/resizing to bypass. _activeSnapLines holds the guide lines to draw
@@ -9241,6 +9246,18 @@ function bindCanvasEvents(){
     // If the clicked layer is part of the current multi-selection, keep the whole group selected
     // and start a GROUP drag. Otherwise replace selection with just this layer.
     var inSelection = selectedIds && selectedIds.length > 1 && selectedIds.indexOf(layer.id) >= 0;
+    // v247: click-click-edit pattern. If this click hits an ALREADY-SELECTED text or sticker
+    // layer (single selection only), arm an "enter edit mode on release" candidate. The window
+    // mousemove handler clears the candidate if the mouse drifts >3px (i.e. it was actually a
+    // drag, not a click). The window mouseup handler triggers the edit if the candidate is
+    // still armed at release. Result: first click selects + shows props panel; second click
+    // (without dragging) enters edit mode with a visible cursor on canvas.
+    if(!inSelection && selectedId === layer.id && (layer.type === 'text' || layer.type === 'sticker')){
+      _clickEditCandidate = {
+        layerId: layer.id, type: layer.type,
+        startX: e.clientX, startY: e.clientY
+      };
+    }
     // Locked layers can be selected but not dragged around
     if(layer.locked){
       if(!inSelection) selectLayer(layer.id);
@@ -9290,6 +9307,13 @@ function bindCanvasEvents(){
     }
   });
   window.addEventListener('mousemove',function(e){
+    // v247: cancel the click-click-edit candidate if the mouse drifts > 3px — that's a drag,
+    // not a click. Threshold squared to skip the sqrt.
+    if(_clickEditCandidate){
+      var ddx = e.clientX - _clickEditCandidate.startX;
+      var ddy = e.clientY - _clickEditCandidate.startY;
+      if(ddx*ddx + ddy*ddy > 9) _clickEditCandidate = null;
+    }
     if(cropState && cropState.dragHandle){
       var rect=wrap.getBoundingClientRect();
       var ovs = _overscanOn ? _overscanPx : 0;
@@ -9436,6 +9460,24 @@ function bindCanvasEvents(){
       redraw();
     } else if(hadSnapLines){
       redraw();
+    }
+    // v247: if a click-edit candidate survived mousemove, the user clicked-without-dragging on
+    // an already-selected text or sticker — enter edit mode now (same behavior as double-click).
+    // Defer one tick so any selection-change side effects settle first.
+    if(_clickEditCandidate){
+      var cand = _clickEditCandidate;
+      _clickEditCandidate = null;
+      setTimeout(function(){
+        if(_inlineTextEditor) return;   // bail if already editing
+        var l = layers.find(function(x){ return x.id === cand.layerId; });
+        if(!l || l.hidden || l.locked) return;
+        if(l.type === 'text'){
+          startInlineTextEdit(l);
+        } else if(l.type === 'sticker'){
+          var ta = document.querySelector('.sl_text[data-li="0"]');
+          if(ta){ ta.focus(); ta.select(); ta.scrollIntoView({block:'center', behavior:'smooth'}); }
+        }
+      }, 0);
     }
   });
 
