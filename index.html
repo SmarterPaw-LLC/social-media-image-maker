@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v244</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v245</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8263,7 +8263,12 @@ function buildTextProps(l){
     return '<option value="'+w+'"'+(l.fontWeight==w?' selected':'')+'>'+(nameMap[w]||w)+'</option>';
   }).join('');
   return '<div class="prop-section">'
-    +'<label style="font-size:10px;color:var(--muted);">Text</label>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">'
+      +'<label style="font-size:10px;color:var(--muted);margin:0;">Text</label>'
+      // v245: discoverable shortcut to the inline canvas editor — same thing double-click on the
+      // text layer triggers, but visible in the panel so people don't have to know the gesture.
+      +'<button type="button" onclick="startInlineTextEditById(' + l.id + ')" style="background:none;border:none;color:var(--green-dark);font-size:10px;cursor:pointer;font-weight:600;padding:0;" title="Edit this text in place on the canvas (same as double-clicking the layer)">✏ Edit on canvas</button>'
+    +'</div>'
     +'<textarea id="ptxt_text" rows="3" style="width:100%;padding:7px 9px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fafafa;font-family:inherit;resize:vertical;">'+escAttr(l.text)+'</textarea>'
     // Emoji picker button: opens an inline popup with curated favorites + full Unicode set.
     // Insertion happens at the textarea cursor; redraw fires through the textarea's input event.
@@ -9429,19 +9434,19 @@ function bindCanvasEvents(){
     }
   });
 
-  // Double-click on a text layer → start inline editing. We hit-test the topmost text layer
-  // at the click position (respecting layer order, hidden, locked) and if found, spawn an
-  // overlay textarea positioned over the layer for in-place editing.
+  // Double-click on a text OR sticker layer → start text editing.
+  // - text layer: opens the floating inline textarea over the canvas (in-place edit)
+  // - sticker layer: opens the props panel's first-line text input (stickers are multi-line and
+  //   each line is independently styled, so in-place edit doesn't fit the model)
+  // v245: extended to cover sticker. Was text-only before.
   wrap.addEventListener('dblclick', function(e){
     if(cropState) return;        // crop mode has its own interactions
     if(_inlineTextEditor) return; // already editing — let the textarea handle it
     var c = clientToCanvas(e.clientX, e.clientY);
-    // Walk layers top-down (front to back) and find the first text layer the click hits.
     for(var i = layers.length - 1; i >= 0; i--){
       var l = layers[i];
-      if(l.type !== 'text' || l.hidden || l.locked) continue;
+      if((l.type !== 'text' && l.type !== 'sticker') || l.hidden || l.locked) continue;
       var b = getLayerBounds(l);
-      // Hit-test in layer-local coords (handle rotation by inverse-rotating the click point).
       var rot = (l.rotation || 0) * Math.PI / 180;
       var ccx = b.x + b.w/2, ccy = b.y + b.h/2;
       var lx = c.x - ccx, ly = c.y - ccy;
@@ -9455,7 +9460,20 @@ function bindCanvasEvents(){
         e.preventDefault();
         e.stopPropagation();
         selectLayer(l.id);
-        startInlineTextEdit(l);
+        if(l.type === 'text'){
+          startInlineTextEdit(l);
+        } else {
+          // Sticker — focus first line's text input after renderProps has rendered the panel.
+          // Defer one tick so the input exists.
+          setTimeout(function(){
+            var ta = document.querySelector('.sl_text[data-li="0"]');
+            if(ta){
+              ta.focus();
+              ta.select();
+              ta.scrollIntoView({block:'center', behavior:'smooth'});
+            }
+          }, 50);
+        }
         return;
       }
     }
@@ -9474,6 +9492,16 @@ function bindCanvasEvents(){
 // Commit triggers: blur, Escape, Ctrl/Cmd+Enter. Plain Enter inserts a newline (matches the
 // multi-line behavior of the side-panel textarea and lets users build multi-line text inline).
 var _inlineTextEditor = null;     // { layer, textarea, originalText, savedRotation, savedEditingFlag }
+
+// v245: Public wrapper used by the "✏ Edit on canvas" button in the text props panel.
+// Same behavior as double-clicking the text layer on the canvas.
+function startInlineTextEditById(layerId){
+  var l = layers.find(function(x){ return x.id === layerId; });
+  if(!l || l.type !== 'text') return;
+  if(_inlineTextEditor) return;   // already editing something — bail
+  selectLayer(l.id);
+  startInlineTextEdit(l);
+}
 
 function startInlineTextEdit(layer){
   if(!layer || layer.type !== 'text') return;
