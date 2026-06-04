@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v230</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v231</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5798,6 +5798,10 @@ function _makeMarkerLayer(subtype, x, y, w, h, rotation){
     // itself. Real hand-drawn circles aren't perfect math ellipses; they bulge unevenly. Default
     // 50 (moderate organic feel); set to 0 for a clean geometric ellipse.
     circleIrregularity: subtype === 'circle' ? 50 : 0,
+    // v231: drift — progressive radial shift over the stroke length. Makes the path SPIRAL
+    // instead of closing back on itself. Each circle drifts in a different direction (seeded)
+    // so multiple circles look organically varied. Default 30 for noticeable hand-drift feel.
+    circleDrift:        subtype === 'circle' ? 30 : 0,
     // v226: which star vertex the stroke begins at. Snaps to 72° steps (0, 72, 144, 216, 288).
     starStartAng:      subtype === 'star'   ? 0  : 0,   // 0 = top vertex, then clockwise
     // v228: independent start/end taper for the star's two open ends — same fields the circle
@@ -5973,14 +5977,13 @@ function _drawMarkerStrokeColor(ctx, pts, color, baseThick, variation, seed, sta
 //      ~12% of avg radius, lower-frequency than the irregularity so loops are distinct.
 //   3. WOBBLE (v221) — high-frequency jitter perpendicular to the radius. The "marker shake"
 //      that's visible on top of the underlying ellipse shape. Faded at endpoints.
-function _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed, irregularity){
+function _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed, irregularity, drift){
   var sweepLoops = Math.abs(totalAng) / (Math.PI * 2);
   var n = Math.max(80, Math.round(40 * sweepLoops));
   var pts = new Array(n + 1);
   var s = seed * 0.0137;
   var avgR = (Math.abs(rx) + Math.abs(ry)) / 2;
-  // Irregularity 0..100 → amplitude 0..18% of radius. Asymmetric: X and Y use different seeds
-  // and frequencies so the resulting blob doesn't look symmetric.
+  // Irregularity (per-angle shape distortion)
   var irreg = (irregularity != null ? irregularity : 50) / 100;
   var irregAmp = irreg * 0.18;
   function shapeModX(a){
@@ -5989,16 +5992,31 @@ function _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed, irr
   function shapeModY(a){
     return 1 + (Math.sin(a * 1.5 + s * 1.31) * 0.62 + Math.sin(a * 2.1 + s * 2.17) * 0.38) * irregAmp;
   }
+  // v231: PROGRESSIVE DRIFT — the radius shifts monotonically from start to end so the path
+  // SPIRALS instead of returning to the same point. This is the missing ingredient for the
+  // hand-drawn look: when you loop a marker around, your hand drifts inward or outward and the
+  // end point lands at a different radius than the start. Magnitude is the slider value (0-100
+  // → 0-35% of avg radius); direction (inward vs outward) is seeded so each circle drifts
+  // differently. Direction is also seeded ASYMMETRICALLY in X and Y so the spiral isn't a
+  // perfect concentric one — fits the curly reference image.
+  var driftMag = (drift != null ? drift : 30) / 100 * avgR * 0.35;
+  var driftDirX = Math.sin(s * 7.31) >= 0 ? 1 : -1;
+  var driftDirY = Math.sin(s * 11.7 + 0.5) >= 0 ? 1 : -1;
+  // Slight randomization of strength per axis (60-100%) so X and Y don't drift in lockstep
+  var driftScaleX = 0.6 + Math.abs(Math.sin(s * 3.7)) * 0.4;
+  var driftScaleY = 0.6 + Math.abs(Math.sin(s * 5.3 + 1.1)) * 0.4;
   for(var i = 0; i <= n; i++){
     var t = i / n;
     var a = startAng + t * totalAng;
-    // Per-loop radial offset for multi-loop visibility
     var loopProgress = Math.abs(t * totalAng) / (Math.PI * 2);
+    // Multi-loop offset (oscillating) — for visible separation when totalAng > 2π
     var loopOffset = (Math.sin(loopProgress * 1.7 + s) * 0.7
                     + Math.sin(loopProgress * 3.3 + s * 1.7) * 0.3) * avgR * 0.12;
-    // Combine shape irregularity (per-angle) and loop offset (per-revolution).
-    var sampleRx = rx * shapeModX(a) + loopOffset;
-    var sampleRy = ry * shapeModY(a) + loopOffset;
+    // Progressive drift — monotonic over t, the spiral effect
+    var driftX = t * driftMag * driftDirX * driftScaleX;
+    var driftY = t * driftMag * driftDirY * driftScaleY;
+    var sampleRx = rx * shapeModX(a) + loopOffset + driftX;
+    var sampleRy = ry * shapeModY(a) + loopOffset + driftY;
     var bx = cx + Math.cos(a) * sampleRx;
     var by = cy + Math.sin(a) * sampleRy;
     var perpX = Math.cos(a), perpY = Math.sin(a);
@@ -6347,7 +6365,7 @@ function _drawCircleMarker(ctx, layer){
     var startAng = -Math.PI / 2 + startAngDeg * Math.PI / 180;
     if(layer.flipH) startAng = Math.PI - startAng;
     if(layer.flipV) totalAng = -totalAng;
-    var pts = _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed, layer.circleIrregularity);
+    var pts = _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed, layer.circleIrregularity, layer.circleDrift);
     // Independent start/end taper — controls how each open end of the circle looks. Falls back
     // to the unified bodyStartTaper for old layers that don't have the new fields yet.
     var fallbackT = layer.bodyStartTaper != null ? layer.bodyStartTaper / 100 : 0.5;
@@ -6511,6 +6529,7 @@ function buildArrowProps(l){
           + R('Sweep / overhang (0 = open arc · 11 = closed · 100 = 3 loops)', 'parrOvershoot_' + id, (l.circleOvershoot != null ? l.circleOvershoot : 15), 0, 100, 1)
           + R('Start angle (0 = top · 90 = right · 180 = bottom · 270 = left)', 'parrCircleStartAng_' + id, (l.circleStartAng != null ? l.circleStartAng : 45), 0, 360, 5)
           + R('Shape irregularity (0 = perfect ellipse · 100 = very organic)', 'parrCircleIrreg_' + id, (l.circleIrregularity != null ? l.circleIrregularity : 50), 0, 100, 1)
+          + R('Drift / spiral (0 = closes on itself · 100 = spirals inward or outward)', 'parrCircleDrift_' + id, (l.circleDrift != null ? l.circleDrift : 30), 0, 100, 1)
           + R('Oval-ness (-50 = pull toward circle · 0 = bbox · +50 = exaggerate)', 'parrCircleOval_' + id, (l.circleOvalness != null ? l.circleOvalness : 0), -50, 50, 1)
           + R('Start cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleStartCap_' + id, (l.circleStartTaper != null ? l.circleStartTaper : 50), 0, 100, 1)
           + R('End cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleEndCap_' + id, (l.circleEndTaper != null ? l.circleEndTaper : 50), 0, 100, 1)
@@ -7878,6 +7897,7 @@ function bindPropEvents(layer){
     // the arc length and whether to add multi-loops).
     rng('parrOvershoot_' + aid,       function(v){ layer.circleOvershoot  = v; redraw(); });
     rng('parrCircleIrreg_' + aid,     function(v){ layer.circleIrregularity = v; redraw(); });
+    rng('parrCircleDrift_' + aid,     function(v){ layer.circleDrift        = v; redraw(); });
     // v224: additional circle sliders — start position, oval-ness, per-end taper
     rng('parrCircleStartAng_' + aid,  function(v){ layer.circleStartAng   = v; redraw(); });
     rng('parrCircleOval_' + aid,      function(v){ layer.circleOvalness   = v; redraw(); });
