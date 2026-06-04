@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v219</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v220</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1081,7 +1081,16 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
             <input type="range" id="meshChromatic" min="0" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
             <div style="font-size:9px;color:var(--muted);line-height:1.2;">RGB channel fringing at edges</div>
           </div>
-          <div></div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Liquify</span><span id="meshLiquifyVal" style="font-family:monospace;color:var(--muted);">0</span></div>
+            <input type="range" id="meshLiquify" min="0" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">Organic marbled flow distortion</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:600;"><span>Zoom Blur</span><span id="meshZoomBlurVal" style="font-family:monospace;color:var(--muted);">0</span></div>
+            <input type="range" id="meshZoomBlur" min="0" max="100" value="0" step="1" oninput="meshEffectsChanged()" style="width:100%;">
+            <div style="font-size:9px;color:var(--muted);line-height:1.2;">Radial motion blur from center</div>
+          </div>
         </div>
       </div>
       <div id="bgPresetMesh" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
@@ -6711,6 +6720,8 @@ function buildImageProps(l){
       + R('Kaleidoscope', 'pmeshKaleidoscope', e.kaleidoscope || 0, 0, 100, 1)
       + R('Pinch / Bulge','pmeshPinchBulge',   e.pinchBulge   || 0, -100, 100, 1)
       + R('Chromatic',    'pmeshChromatic',    e.chromatic    || 0, 0, 100, 1)
+      + R('Liquify',      'pmeshLiquify',      e.liquify      || 0, 0, 100, 1)
+      + R('Zoom Blur',    'pmeshZoomBlur',     e.zoomBlur     || 0, 0, 100, 1)
       + '<div style="display:flex;gap:6px;margin-top:5px;">'
         + '<button class="btn-sm" style="flex:1;" onclick="randomizeMeshLayer('+l.id+')" title="Roll all ten effect sliders to random values for a surprise mix">🎲 Randomize</button>'
         + '<button class="btn-sm" style="flex:1;" onclick="rerollMeshLayer('+l.id+')" title="Generate a new random blob layout from the same palette, keeping your current effect settings">🔀 Reroll Layout</button>'
@@ -7307,6 +7318,8 @@ function bindPropEvents(layer){
       rng('pmeshKaleidoscope', function(v){ layer._meshEffects.kaleidoscope = +v; _scheduleMeshRegen(layer.id); });
       rng('pmeshPinchBulge',   function(v){ layer._meshEffects.pinchBulge   = +v; _scheduleMeshRegen(layer.id); });
       rng('pmeshChromatic',    function(v){ layer._meshEffects.chromatic    = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshLiquify',      function(v){ layer._meshEffects.liquify      = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshZoomBlur',     function(v){ layer._meshEffects.zoomBlur     = +v; _scheduleMeshRegen(layer.id); });
       on('pmeshPreset', 'change', function(ev){ changeMeshLayerPreset(layer.id, ev.target.value); });
     }
   } else if(layer.type==='sticker'){
@@ -13737,10 +13750,13 @@ function generateMeshGradient(w, h, palette, seed, effects){
   if(effects.swirl && effects.swirl > 0){
     _applySwirlDistortion(canvas, effects.swirl);
   }
+  // v220: Liquify runs with the other warp effects — non-periodic flow distortion that adds
+  // the "marbled" organic look. Placed before Kaleidoscope so the mirror slices fold an
+  // already-flowing image, which compounds into truly chaotic patterns.
+  if(effects.liquify && effects.liquify > 0){
+    _applyLiquify(canvas, effects.liquify);
+  }
   // v218: additional groovy effects, applied after the warp effects so they composite on top.
-  // Order matters: kaleidoscope folds the canvas into mirrored slices, pinch/bulge warps the
-  // overall geometry, chromatic aberration goes LAST so the RGB fringing is visible at the
-  // final edges (otherwise downstream effects would smear the channel split back together).
   if(effects.kaleidoscope && effects.kaleidoscope > 0){
     _applyKaleidoscope(canvas, effects.kaleidoscope);
   }
@@ -13749,6 +13765,11 @@ function generateMeshGradient(w, h, palette, seed, effects){
   }
   if(effects.chromatic && effects.chromatic > 0){
     _applyChromaticAberration(canvas, effects.chromatic);
+  }
+  // v220: Zoom Blur is the FINAL pass — smears whatever's already on the canvas radially
+  // outward. Done after chromatic so the RGB-split edges also blur, integrating into the smear.
+  if(effects.zoomBlur && effects.zoomBlur > 0){
+    _applyZoomBlur(canvas, effects.zoomBlur);
   }
 
   return canvas;
@@ -13987,6 +14008,74 @@ function _applyChromaticAberration(canvas, amount){
   ctx.putImageData(dst, 0, 0);
 }
 
+// v220: Liquify — pseudo-Perlin flow distortion. Real Perlin is heavy in pure JS, so we
+// approximate with a sum of trig functions at different angles and phases — the result LOOKS
+// organic (irregular, non-periodic over the visible range) without the cost of a noise grid.
+// Gives the marbled / melted-wax look that periodic distortions (Wave/Ripple) can't produce.
+function _applyLiquify(canvas, amount){
+  if(!amount || amount <= 0) return;
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var src = ctx.getImageData(0, 0, w, h);
+  var dst = ctx.createImageData(w, h);
+  var minSide = Math.min(w, h);
+  // Up to 12% displacement — bigger than Wave (7%) because the flow is irregular and needs
+  // headroom to read as "marbled" rather than just "shifted"
+  var amp = (amount / 100) * minSide * 0.12;
+  // ~5-7 turbulence cycles across the image — enough to feel organic, not chaotic
+  var freq = (4 + (amount / 100) * 4) / minSide;
+  for(var y = 0; y < h; y++){
+    for(var x = 0; x < w; x++){
+      // Two layered sines per axis at different frequencies + cross-axis modulation = a flow
+      // field that's smooth locally but doesn't repeat visibly across the canvas
+      var nx = Math.sin(x * freq * 1.3 + Math.cos(y * freq * 0.9) * 2.5)
+             + 0.5 * Math.sin(x * freq * 2.7 + y * freq * 1.1);
+      var ny = Math.cos(y * freq * 1.1 + Math.sin(x * freq * 0.8) * 2.5)
+             + 0.5 * Math.cos(x * freq * 0.6 + y * freq * 2.3);
+      var srcX = x + nx * amp;
+      var srcY = y + ny * amp;
+      var sx = srcX < 0 ? 0 : (srcX >= w ? w - 1 : (srcX | 0));
+      var sy = srcY < 0 ? 0 : (srcY >= h ? h - 1 : (srcY | 0));
+      var si = (sy * w + sx) * 4;
+      var di = (y * w + x) * 4;
+      dst.data[di]     = src.data[si];
+      dst.data[di + 1] = src.data[si + 1];
+      dst.data[di + 2] = src.data[si + 2];
+      dst.data[di + 3] = src.data[si + 3];
+    }
+  }
+  ctx.putImageData(dst, 0, 0);
+}
+
+// v220: Zoom Blur — radial motion blur from center. Stack 12 scaled copies of the image at
+// progressively larger zoom levels, each at 1/12 alpha, so the blend integrates into a smooth
+// outward smear. Cheaper than per-pixel radial sampling (which would be O(steps × pixels)) —
+// drawImage is GPU-accelerated.
+function _applyZoomBlur(canvas, amount){
+  if(!amount || amount <= 0) return;
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  // Snapshot the current canvas to a buffer; we're about to clear and rebuild as blur stack
+  var orig = document.createElement('canvas');
+  orig.width = w; orig.height = h;
+  orig.getContext('2d').drawImage(canvas, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  var steps = 12;
+  // Max zoom 40% out at amount=100 — strong enough to read as motion, not so strong everything
+  // dissolves into mush
+  var maxZoomDelta = (amount / 100) * 0.4;
+  ctx.globalAlpha = 1 / steps;
+  for(var i = 0; i < steps; i++){
+    var t = i / (steps - 1);
+    var scale = 1 + maxZoomDelta * t;
+    var dw = w * scale, dh = h * scale;
+    var dx = -(dw - w) / 2;
+    var dy = -(dh - h) / 2;
+    ctx.drawImage(orig, dx, dy, dw, dh);
+  }
+  ctx.globalAlpha = 1;
+}
+
 // Read current slider state into the effects object every mesh function expects
 function _readMeshEffects(){
   return {
@@ -13999,7 +14088,9 @@ function _readMeshEffects(){
     swirl:        +(document.getElementById('meshSwirl')        || {value:0}).value,
     kaleidoscope: +(document.getElementById('meshKaleidoscope') || {value:0}).value,
     pinchBulge:   +(document.getElementById('meshPinchBulge')   || {value:0}).value,
-    chromatic:    +(document.getElementById('meshChromatic')    || {value:0}).value
+    chromatic:    +(document.getElementById('meshChromatic')    || {value:0}).value,
+    liquify:      +(document.getElementById('meshLiquify')      || {value:0}).value,
+    zoomBlur:     +(document.getElementById('meshZoomBlur')     || {value:0}).value
   };
 }
 
@@ -14021,7 +14112,9 @@ function _loadMeshEffects(){
         swirl:        Math.max(0, Math.min(100, p.swirl        != null ? p.swirl        : 0)),
         kaleidoscope: Math.max(0, Math.min(100, p.kaleidoscope != null ? p.kaleidoscope : 0)),
         pinchBulge:   Math.max(-100, Math.min(100, p.pinchBulge != null ? p.pinchBulge  : 0)),
-        chromatic:    Math.max(0, Math.min(100, p.chromatic    != null ? p.chromatic    : 0))
+        chromatic:    Math.max(0, Math.min(100, p.chromatic    != null ? p.chromatic    : 0)),
+        liquify:      Math.max(0, Math.min(100, p.liquify      != null ? p.liquify      : 0)),
+        zoomBlur:     Math.max(0, Math.min(100, p.zoomBlur     != null ? p.zoomBlur     : 0))
       };
     }
   } catch(e){}
@@ -14043,12 +14136,14 @@ function meshEffectsChanged(){
   var kv = document.getElementById('meshKaleidoscopeVal'); if(kv) kv.textContent = eff.kaleidoscope;
   var pbv= document.getElementById('meshPinchBulgeVal');   if(pbv) pbv.textContent = (eff.pinchBulge > 0 ? '+' : '') + eff.pinchBulge;
   var cv = document.getElementById('meshChromaticVal');    if(cv) cv.textContent = eff.chromatic;
+  var lv = document.getElementById('meshLiquifyVal');      if(lv) lv.textContent = eff.liquify;
+  var zv = document.getElementById('meshZoomBlurVal');     if(zv) zv.textContent = eff.zoomBlur;
   _saveMeshEffects(eff);
   _refreshMeshPreviewTiles();
 }
 
 function meshEffectsReset(){
-  var defaults = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0};
+  var defaults = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0, liquify: 0, zoomBlur: 0};
   document.getElementById('meshIntensity').value    = defaults.intensity;
   document.getElementById('meshHue').value          = defaults.hueShift;
   document.getElementById('meshGlow').value         = defaults.glow;
@@ -14059,6 +14154,8 @@ function meshEffectsReset(){
   document.getElementById('meshKaleidoscope').value = defaults.kaleidoscope;
   document.getElementById('meshPinchBulge').value   = defaults.pinchBulge;
   document.getElementById('meshChromatic').value    = defaults.chromatic;
+  document.getElementById('meshLiquify').value      = defaults.liquify;
+  document.getElementById('meshZoomBlur').value     = defaults.zoomBlur;
   meshEffectsChanged();
 }
 
@@ -14170,7 +14267,7 @@ function resetMeshLayerEffects(layerId){
   var layer = layers.find(function(l){ return l.id === layerId; });
   if(!layer || !layer._meshEffects) return;
   snapshotState();
-  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0};
+  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0, liquify: 0, zoomBlur: 0};
   regenerateMeshLayer(layerId);
   renderProps();
   showToast('↺ Mesh effects reset');
@@ -14212,7 +14309,9 @@ function randomizeMeshLayer(layerId){
     swirl:        r100(),
     kaleidoscope: r100(),
     pinchBulge:   rSigned(),
-    chromatic:    r100()
+    chromatic:    r100(),
+    liquify:      r100(),
+    zoomBlur:     r100()
   };
   regenerateMeshLayer(layerId);
   renderProps();
@@ -14332,6 +14431,8 @@ function openBackgroundPicker(){
     var kS = document.getElementById('meshKaleidoscope'); if(kS) kS.value = savedEff.kaleidoscope;
     var pbS= document.getElementById('meshPinchBulge');   if(pbS) pbS.value = savedEff.pinchBulge;
     var cS = document.getElementById('meshChromatic');    if(cS) cS.value = savedEff.chromatic;
+    var lS = document.getElementById('meshLiquify');      if(lS) lS.value = savedEff.liquify;
+    var zS = document.getElementById('meshZoomBlur');     if(zS) zS.value = savedEff.zoomBlur;
   }
   var curEff = _readMeshEffects();
   var iv = document.getElementById('meshIntensityVal');    if(iv) iv.textContent = curEff.intensity;
@@ -14344,6 +14445,8 @@ function openBackgroundPicker(){
   var kv = document.getElementById('meshKaleidoscopeVal'); if(kv) kv.textContent = curEff.kaleidoscope;
   var pbv= document.getElementById('meshPinchBulgeVal');   if(pbv) pbv.textContent = (curEff.pinchBulge > 0 ? '+' : '') + curEff.pinchBulge;
   var cv = document.getElementById('meshChromaticVal');    if(cv) cv.textContent = curEff.chromatic;
+  var lv = document.getElementById('meshLiquifyVal');      if(lv) lv.textContent = curEff.liquify;
+  var zv = document.getElementById('meshZoomBlurVal');     if(zv) zv.textContent = curEff.zoomBlur;
   // v210: render mesh gradient tiles. Each tile is a real canvas (not CSS) because the mesh
   // can't be expressed as a CSS gradient — it's a layered radial composition. Deterministic
   // seed (hash of preset name) makes the preview stable across modal opens, while applying
