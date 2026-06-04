@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v238</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v239</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4170,7 +4170,10 @@ function applyBrandColorsToSvgLayer(layerId, brand){
     alert('Pick an SVG layer first.');
     return;
   }
-  var palette = brand === 'kkz' ? KKZ_BRAND_PALETTE : MEOWI_DOGGI_BRAND_PALETTE;
+  // v239: brand id is now one of 'meowi' / 'doggi' / 'kkz'. Legacy 'meowi-doggi' from v237
+  // buttons maps to the green Meowi palette for backwards compat with anything still calling it.
+  if(brand === 'meowi-doggi') brand = 'meowi';
+  var palette = _SVG_BRAND_PALETTES[brand] || _SVG_BRAND_PALETTES.meowi;
   var swatches = extractSvgSwatches(layer.svgText);
   if(!swatches.length){
     alert('This SVG has no editable color swatches.');
@@ -4201,7 +4204,8 @@ function applyBrandColorsToSvgLayer(layerId, brand){
     alert('Could not reload SVG after applying brand colors.');
   };
   newImg.src = layer.url;
-  showToast('🎨 Applied ' + (brand === 'kkz' ? 'Kitty Ka-Zoom' : 'Meowi / Doggi') + ' brand colors');
+  var brandLabels = {meowi:'Meowi (green)', doggi:'Doggi (orange)', kkz:'Kitty Ka-Zoom'};
+  showToast('🎨 Applied ' + (brandLabels[brand] || brand) + ' brand colors');
 }
 
 function extractSvgSwatches(svgText){
@@ -4535,7 +4539,7 @@ function _renderIconifyResults(cacheKey, query){
 // Note: Pixabay returns raster images (PNG/JPG), not SVG, so these come in as IMAGE layers
 // rather than SVG layers — that means no per-color swatch editing. You CAN still resize,
 // rotate, crop, AI-bg-remove, and erase. For pieces that need recolor, stick with Iconify.
-var PIXABAY_API_KEY = '';   // ← Jason: paste your free Pixabay key here (~3 min signup)
+var PIXABAY_API_KEY = '56161439-9af016043fa1a8e985be6b9b4';   // ← Jason: paste your free Pixabay key here (~3 min signup)
 
 function _fetchPixabay(){
   if(_clipArtFetching) return;
@@ -7978,16 +7982,23 @@ function buildSvgProps(l){
           ungrouped.push(sw);
         }
       });
+      // v239: brand-aware recolor buttons. The brand switcher in the header sets currentBrand
+      // to 'meowi' or 'kkz'. Under "Meowi/Doggi" the user gets TWO single-family options (green
+      // OR orange — picking ONE so the result isn't a mixed palette). Under KKZ they get the
+      // single KKZ palette (teal + pink ARE both KKZ brand colors).
+      var brandButtons;
+      if(currentBrand === 'kkz'){
+        brandButtons = '<button class="btn-sm" style="width:100%;background:linear-gradient(135deg,#5ec6c6 0%,#e05098 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'kkz\')" title="Brightness-matched palette swap to KKZ teal + pink family">🐱‍👤 KKZ colors</button>';
+      } else {
+        brandButtons = '<div style="display:flex;gap:6px;">'
+          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#c5e039 0%,#3c8e14 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'meowi\')" title="Brightness-matched palette swap to the Meowi green family">🐱 Meowi (green)</button>'
+          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#ffb866 0%,#c83e1a 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'doggi\')" title="Brightness-matched palette swap to the Doggi orange family">🐶 Doggi (orange)</button>'
+        + '</div>';
+      }
       recolorHtml = '<div class="prop-section" style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;">'
         + '<label style="font-size:11px;color:var(--muted);font-weight:600;">Recolor</label>'
         + '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Click a swatch to change one color, or apply a full brand palette below.</div>'
-        // v237: one-click brand palette buttons. Brightness-matched mapping preserves the SVG's
-        // depth structure. Button backgrounds use a 2-color gradient from each brand's primary
-        // pair so they read visually as "Meowi/Doggi" or "KKZ" at a glance.
-        + '<div style="display:flex;gap:6px;margin-bottom:8px;">'
-          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#8ab81d 0%,#f07830 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'meowi-doggi\')" title="Brightness-matched palette swap to Meowi green + Doggi orange family">🐱🐶 Meowi / Doggi colors</button>'
-          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#5ec6c6 0%,#e05098 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'kkz\')" title="Brightness-matched palette swap to KKZ teal + pink family">🐱‍👤 KKZ colors</button>'
-        + '</div>';
+        + '<div style="margin-bottom:8px;">' + brandButtons + '</div>';
       function swatchRow(sw){
         // Each swatch: little color preview (clickable color input) + label
         return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
