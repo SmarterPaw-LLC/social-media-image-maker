@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v225</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v226</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5795,6 +5795,8 @@ function _makeMarkerLayer(subtype, x, y, w, h, rotation){
     circleOvalness:    subtype === 'circle' ? 0  : 0,   // -50..+50, pulls toward circle / exaggerates oval
     circleStartTaper:  subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke start
     circleEndTaper:    subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke end
+    // v226: which star vertex the stroke begins at. Snaps to 72° steps (0, 72, 144, 216, 288).
+    starStartAng:      subtype === 'star'   ? 0  : 0,   // 0 = top vertex, then clockwise
     shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0, shadowOpacity: 50, shadowColor: '#000000',
     _seed: Math.floor(Math.random() * 100000) + 1
   };
@@ -6367,11 +6369,14 @@ function _genContinuousStroke(pathPoints, wobble, seed){
   return allPts;
 }
 
-// v224: Star marker, rewritten as ONE continuous stroke. Traces the pentagram in standard
-// "one-stroke" order — 0→2→4→1→3→near-0 — like a kid drawing it in one motion. The final
-// "near-0" point is offset from point 0 by a small deterministic amount so there's a visible
-// closing gap (the one segment that doesn't connect, per Jason's spec). All four intermediate
-// joints meet exactly and flow smoothly.
+// v224/v226: Star marker, rewritten as ONE continuous stroke. Traces the pentagram in
+// standard "one-stroke" order — S → S+2 → S+4 → S+1 → S+3 → near-S — like a kid drawing it in
+// one motion. The final "near-S" point is offset from the starting vertex by a small
+// deterministic amount so there's a visible closing gap on exactly one segment.
+//
+// v226: starStartAng (0..288 in 72° steps) picks WHICH of the 5 vertices the stroke begins at.
+// Each step rotates which vertex is "first" by 1 around the star — so the visible open closing
+// segment can sit at any of the 5 vertices instead of always at the top.
 function _drawStarMarker(ctx, layer){
   withRotation(ctx, layer, function(){
     var cx = layer.x + layer.w / 2;
@@ -6385,14 +6390,20 @@ function _drawStarMarker(ctx, layer){
       var a = -Math.PI / 2 + i * (Math.PI * 2 / 5);
       outer.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]);
     }
-    // Pentagram traversal — note the "5th" point is offset from 0 so the closing leg doesn't
-    // meet the start exactly. Offset scales with bbox size; deterministic from seed.
+    // v226: which vertex to start the stroke at. Slider value snaps to nearest 72° step;
+    // index = (slider / 72) mod 5. So 0°→top vertex (0), 72°→upper-right (1), etc.
+    var startAngDeg = layer.starStartAng != null ? layer.starStartAng : 0;
+    var startIdx = ((Math.round(startAngDeg / 72) % 5) + 5) % 5;
+    // Pentagram pattern rotated to start from startIdx: [s, s+2, s+4, s+1, s+3] all mod 5.
+    var order = [startIdx, (startIdx + 2) % 5, (startIdx + 4) % 5, (startIdx + 1) % 5, (startIdx + 3) % 5];
+    var startVertex = outer[startIdx];
     var closureGap = Math.min(layer.w, layer.h) * 0.06;
     var closure = [
-      outer[0][0] + Math.sin(seed * 0.137) * closureGap,
-      outer[0][1] + Math.cos(seed * 0.213) * closureGap
+      startVertex[0] + Math.sin(seed * 0.137) * closureGap,
+      startVertex[1] + Math.cos(seed * 0.213) * closureGap
     ];
-    var pathPts = [outer[0], outer[2], outer[4], outer[1], outer[3], closure];
+    var pathPts = order.map(function(idx){ return outer[idx]; });
+    pathPts.push(closure);
     var pts = _genContinuousStroke(pathPts, wobble, seed);
     var capT = layer.roundEnds ? 0 : (layer.bodyStartTaper != null ? layer.bodyStartTaper / 100 : 0.5);
     var allStrokes = [{pts: pts, seed: seed, startTaper: capT, endTaper: capT}];
@@ -6432,6 +6443,7 @@ function buildArrowProps(l){
   var subtype = l.subtype || 'arrow';
   var isArrow  = subtype === 'arrow';
   var isCircle = subtype === 'circle';
+  var isStar   = subtype === 'star';
   // Migrate legacy single-value head fields into per-wing for editing
   var aLen1 = l.aheadLen1 != null ? l.aheadLen1 : (l.aheadLen != null ? l.aheadLen : 90);
   var aLen2 = l.aheadLen2 != null ? l.aheadLen2 : (l.aheadLen != null ? l.aheadLen : 90);
@@ -6471,6 +6483,10 @@ function buildArrowProps(l){
           + R('Oval-ness (-50 = pull toward circle · 0 = bbox · +50 = exaggerate)', 'parrCircleOval_' + id, (l.circleOvalness != null ? l.circleOvalness : 0), -50, 50, 1)
           + R('Start cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleStartCap_' + id, (l.circleStartTaper != null ? l.circleStartTaper : 50), 0, 100, 1)
           + R('End cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleEndCap_' + id, (l.circleEndTaper != null ? l.circleEndTaper : 50), 0, 100, 1)
+        : '')
+    + (isStar
+        ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Star</div>'
+          + R('Start vertex (0 = top · 72/144/216/288 = clockwise)', 'parrStarStartAng_' + id, (l.starStartAng != null ? l.starStartAng : 0), 0, 288, 72)
         : '')
     + (isArrow
         ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Arrowhead</div>'
@@ -7831,6 +7847,8 @@ function bindPropEvents(layer){
     rng('parrCircleOval_' + aid,      function(v){ layer.circleOvalness   = v; redraw(); });
     rng('parrCircleStartCap_' + aid,  function(v){ layer.circleStartTaper = v; redraw(); });
     rng('parrCircleEndCap_' + aid,    function(v){ layer.circleEndTaper   = v; redraw(); });
+    // v226: star start vertex (snaps to nearest 72° step → vertex 0..4)
+    rng('parrStarStartAng_' + aid,    function(v){ layer.starStartAng     = v; redraw(); });
     // v160: fill type + gradient controls (mirrors shape layer pattern)
     on('parrFillType_' + aid, 'change', function(e){ layer.fillType = e.target.value; renderProps(); });
     on('parrColor_' + aid, 'input', function(e){ layer.color = e.target.value; redraw(); });
