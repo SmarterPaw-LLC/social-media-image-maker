@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v221</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v222</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -14134,13 +14134,15 @@ function generateMeshGradient(w, h, palette, seed, effects){
   if(effects.pinchBulge && effects.pinchBulge !== 0){
     _applyPinchBulge(canvas, effects.pinchBulge);
   }
-  if(effects.chromatic && effects.chromatic > 0){
-    _applyChromaticAberration(canvas, effects.chromatic);
-  }
-  // v220: Zoom Blur is the FINAL pass — smears whatever's already on the canvas radially
-  // outward. Done after chromatic so the RGB-split edges also blur, integrating into the smear.
+  // v222: Zoom Blur runs BEFORE Chromatic now. Original v220 order put Chromatic first then
+  // Zoom Blur, so the blur smeared the RGB-fringing back together — Chromatic became invisible
+  // whenever Zoom Blur was active. Now Chromatic gets the final word: it fringes the already-
+  // blurred image at the edges, which is what produces the visible psychedelic RGB separation.
   if(effects.zoomBlur && effects.zoomBlur > 0){
     _applyZoomBlur(canvas, effects.zoomBlur);
+  }
+  if(effects.chromatic && effects.chromatic > 0){
+    _applyChromaticAberration(canvas, effects.chromatic);
   }
 
   return canvas;
@@ -14337,9 +14339,13 @@ function _applyPinchBulge(canvas, amount){
   ctx.putImageData(dst, 0, 0);
 }
 
-// v218: Chromatic Aberration — shift R outward and B inward (relative to center). Shift scales
-// with distance from center so edges fringe heavily while the center stays clean. Gives the
+// v218: Chromatic Aberration — shift R outward and B inward (relative to center). Gives the
 // "tripping" / VHS-fringe look that's hard to get any other way.
+//
+// v222 fix: previously max shift was only 3% of minSide and scaled fully linearly with distance
+// — so the center stayed perfectly aligned and edges barely fringed (32px on a 1080 canvas was
+// too subtle to read). Bumped to 8% max + a 25% baseline so even center pixels get some shift
+// and the whole image visibly separates by channel.
 function _applyChromaticAberration(canvas, amount){
   if(!amount || amount <= 0) return;
   var w = canvas.width, h = canvas.height;
@@ -14348,14 +14354,15 @@ function _applyChromaticAberration(canvas, amount){
   var dst = ctx.createImageData(w, h);
   var cx = w / 2, cy = h / 2;
   var maxDist = Math.sqrt(cx * cx + cy * cy);
-  var maxShift = (amount / 100) * Math.min(w, h) * 0.03;
+  var maxShift = (amount / 100) * Math.min(w, h) * 0.08;
   for(var y = 0; y < h; y++){
     for(var x = 0; x < w; x++){
       var dx = x - cx, dy = y - cy;
       var dist = Math.sqrt(dx * dx + dy * dy);
       var ux = dist > 0.5 ? dx / dist : 0;
       var uy = dist > 0.5 ? dy / dist : 0;
-      var shift = (dist / maxDist) * maxShift;
+      // 25% baseline + 75% radial: center still gets visible shift; edges still get the most
+      var shift = (0.25 + 0.75 * (dist / maxDist)) * maxShift;
       // R: pulled outward along radial axis
       var rx = x + ux * shift;
       var ry = y + uy * shift;
@@ -14419,29 +14426,32 @@ function _applyLiquify(canvas, amount){
 }
 
 // v220: Zoom Blur — radial motion blur from center. Stack 12 scaled copies of the image at
-// progressively larger zoom levels, each at 1/12 alpha, so the blend integrates into a smooth
-// outward smear. Cheaper than per-pixel radial sampling (which would be O(steps × pixels)) —
-// drawImage is GPU-accelerated.
+// progressively larger zoom levels.
+//
+// v222 fix: previously used a fixed α = 1/steps for every draw, which with source-over compositing
+// accumulates to dst.A = 1 - (1-α)^steps ≈ 0.65 — leaving 35% transparency that exposed the
+// checkerboard. The correct approach is a running average: α_i = 1/(i+1) on step i. That gives
+//   step 0: α=1   → dst = img_0, A=1
+//   step 1: α=1/2 → dst = 1/2·img_1 + 1/2·dst_prev, A=1
+//   step n: α=1/(n+1) → dst is the equal-weighted mean of img_0..img_n, A stays at 1.
+// Fully opaque AND mathematically a real average.
 function _applyZoomBlur(canvas, amount){
   if(!amount || amount <= 0) return;
   var w = canvas.width, h = canvas.height;
   var ctx = canvas.getContext('2d');
-  // Snapshot the current canvas to a buffer; we're about to clear and rebuild as blur stack
   var orig = document.createElement('canvas');
   orig.width = w; orig.height = h;
   orig.getContext('2d').drawImage(canvas, 0, 0);
   ctx.clearRect(0, 0, w, h);
   var steps = 12;
-  // Max zoom 40% out at amount=100 — strong enough to read as motion, not so strong everything
-  // dissolves into mush
   var maxZoomDelta = (amount / 100) * 0.4;
-  ctx.globalAlpha = 1 / steps;
   for(var i = 0; i < steps; i++){
     var t = i / (steps - 1);
     var scale = 1 + maxZoomDelta * t;
     var dw = w * scale, dh = h * scale;
     var dx = -(dw - w) / 2;
     var dy = -(dh - h) / 2;
+    ctx.globalAlpha = 1 / (i + 1);   // running-average weighting — keeps result fully opaque
     ctx.drawImage(orig, dx, dy, dw, dh);
   }
   ctx.globalAlpha = 1;
