@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v237</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v238</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1139,7 +1139,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <input type="text" id="clipArtQuery" placeholder="Search (sunglasses, top hat, bow tie, mustache, pizza…)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){fetchClipArt();}">
       <select id="clipArtSource" onchange="fetchClipArt()" style="padding:8px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff;">
         <option value="iconify">Iconify (icons + emoji)</option>
-        <option value="openclipart">OpenClipart (true clip art, CC0)</option>
+        <option value="pixabay">Pixabay (illustrations · needs free key)</option>
       </select>
       <button class="btn-primary" onclick="fetchClipArt()" style="padding:8px 14px;">🔍 Search</button>
     </div>
@@ -4100,19 +4100,31 @@ function inlineSvgStyleClasses(svgText){
 // attributes on elements, and <stop stop-color="#xxx"> inside gradients. Returns a list of
 // "swatches", each with a stable key (used for find-and-replace) plus the current color and a
 // human-readable label. Grouping: swatches from the same gradient share a gradient label.
-// v237: Brand color palettes for one-click SVG recolor. Sorted naturally (light to dark or
-// by hue family); at apply time both the original swatches AND the palette get re-sorted by
-// perceptual brightness, then mapped index→index so the SVG's depth/contrast structure stays
-// intact — darkest original color picks up the darkest brand color, lightest gets lightest.
-var MEOWI_DOGGI_BRAND_PALETTE = [
-  '#1f3b0e', '#2a5a9e',           // darks (deep green, navy)
-  '#3c8e14', '#4682b4',           // mids dark (Meowi green, Doggi blue)
-  '#c83e1a',                       // dark accent (deep orange)
-  '#8ab81d', '#f07830',           // brand primaries (Meowi green, Doggi orange)
-  '#ffb866',                       // warm mid (peach)
-  '#c5e039', '#ffd166', '#88c8ff', // brights (lime, sunshine, sky)
-  '#cdd99a',                       // sage light
-  '#fafaf0'                        // cream
+// v237/v239: Brand color palettes for one-click SVG recolor. v239 splits the old combined
+// Meowi/Doggi palette into TWO single-family palettes so the user can pick "all green" (Meowi)
+// or "all orange" (Doggi) instead of getting a mixed result. KKZ stays as one palette since
+// teal + pink ARE both KKZ brand colors.
+//
+// At apply time both the original swatches AND the chosen palette get sorted by perceptual
+// brightness, then index-to-index mapped so the SVG's depth/contrast structure stays intact —
+// darkest original color picks up the darkest brand color, lightest gets lightest.
+var MEOWI_PALETTE = [
+  '#1a4d00', '#2d6a2d',                // very dark / dark forest
+  '#3c8e14', '#6ba415',                // Meowi dark + medium green
+  '#8ab81d',                            // Meowi PRIMARY
+  '#a8d188', '#c5e039',                // sage + Meowi vibrant lime
+  '#cdd99a',                            // sage light
+  '#ffd166', '#fffbd9',                // sunshine accent + cream highlight
+  '#fafaf0'                             // cream
+];
+var DOGGI_PALETTE = [
+  '#5a1a0a', '#7a2a10',                // deepest brown / rust
+  '#c83e1a', '#e85a20',                // Doggi dark + deeper orange
+  '#f07830',                            // Doggi PRIMARY
+  '#ff9a4d', '#ffb866',                // medium orange / peach
+  '#ffd166',                            // warm yellow
+  '#2a5a9e', '#4682b4', '#87ceeb',     // Doggi blue accents (navy → sky)
+  '#fff4c4', '#fafaf0'                 // cream highlight / cream
 ];
 var KKZ_BRAND_PALETTE = [
   '#1a1a3a',                       // darkest (deep navy-purple)
@@ -4124,6 +4136,12 @@ var KKZ_BRAND_PALETTE = [
   '#b8e8e8', '#cdf2f0', '#ffdce8', // lights (pale teal, paler teal, pale pink)
   '#f5fafa'                        // near-white
 ];
+// Lookup so the apply function can route by brand id
+var _SVG_BRAND_PALETTES = {
+  meowi: MEOWI_PALETTE,
+  doggi: DOGGI_PALETTE,
+  kkz:   KKZ_BRAND_PALETTE
+};
 
 function _hexBrightness(hex){
   if(!hex) return 128;
@@ -4435,10 +4453,11 @@ function closeClipArtBrowser(){
 
 function fetchClipArt(){
   if(_clipArtFetching) return;
-  // v236: route by selected source. Iconify (existing) or OpenClipart (new).
+  // v237b: route by selected source. Iconify (default) or Pixabay (free key required).
+  // OpenClipart was removed in v237b after their JSON API started returning HTML.
   var srcEl = document.getElementById('clipArtSource');
   var src = srcEl ? srcEl.value : 'iconify';
-  if(src === 'openclipart') return _fetchOpenClipart();
+  if(src === 'pixabay') return _fetchPixabay();
   // ── Iconify path (unchanged from v235) ────────────────────────────────────────────────────
   var qEl = document.getElementById('clipArtQuery');
   var q = (qEl ? qEl.value : '').trim();
@@ -4506,87 +4525,99 @@ function _renderIconifyResults(cacheKey, query){
   });
 }
 
-// v236: OpenClipart source — true clip art (illustrations contributed by artists, all CC0).
-// OpenClipart's API doesn't always include CORS headers, so we race a direct fetch against a
-// proxy fallback (corsproxy.io). If both fail we surface a clear message.
-function _ocFetchWithCorsFallback(url){
-  // Try direct first; if it throws (or returns non-JSON), retry through corsproxy.io
-  return fetch(url)
-    .then(function(r){
-      if(!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    })
-    .catch(function(){
-      return fetch('https://corsproxy.io/?' + encodeURIComponent(url))
-        .then(function(r){
-          if(!r.ok) throw new Error('Proxy HTTP ' + r.status);
-          return r.json();
-        });
-    });
-}
+// v237b: Pixabay source — replaces the broken OpenClipart from v236. Pixabay's clip art search
+// returns colorful illustrative content (cartoon style, vectors, painted illustrations) — true
+// clip art, not just emoji. Reliable CDN, generous free tier (5000 req/hr).
+//
+// Free signup at https://pixabay.com/api/docs/ — paste the key into PIXABAY_API_KEY below.
+// Same setup pattern as the GIPHY integration.
+//
+// Note: Pixabay returns raster images (PNG/JPG), not SVG, so these come in as IMAGE layers
+// rather than SVG layers — that means no per-color swatch editing. You CAN still resize,
+// rotate, crop, AI-bg-remove, and erase. For pieces that need recolor, stick with Iconify.
+var PIXABAY_API_KEY = '';   // ← Jason: paste your free Pixabay key here (~3 min signup)
 
-function _fetchOpenClipart(){
+function _fetchPixabay(){
   if(_clipArtFetching) return;
+  var status = document.getElementById('clipArtStatus');
+  var grid = document.getElementById('clipArtGrid');
+  if(!PIXABAY_API_KEY){
+    if(grid){
+      grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;line-height:1.5;">'
+        + '<b>No Pixabay key set.</b><br>'
+        + 'Get a free key (~3 min) at <code>pixabay.com/api/docs</code>, then paste it into <code>PIXABAY_API_KEY</code> in <code>index.html</code>.<br>'
+        + 'Switch back to Iconify in the dropdown to keep browsing in the meantime.'
+        + '</div>';
+    }
+    if(status) status.textContent = '⚠ Pixabay key not configured';
+    return;
+  }
   var qEl = document.getElementById('clipArtQuery');
   var q = (qEl ? qEl.value : '').trim();
   if(!q){ q = 'cat'; if(qEl) qEl.value = q; }
-  var cacheKey = 'oc:' + q;
-  if(_clipArtCache[cacheKey]){ _renderOpenClipartResults(cacheKey, q); return; }
+  var cacheKey = 'px:' + q;
+  if(_clipArtCache[cacheKey]){ _renderPixabayResults(cacheKey, q); return; }
   _clipArtFetching = true;
-  var status = document.getElementById('clipArtStatus');
-  var grid = document.getElementById('clipArtGrid');
-  if(status) status.textContent = 'Searching OpenClipart for "' + q + '"…';
+  if(status) status.textContent = 'Searching Pixabay illustrations for "' + q + '"…';
   if(grid) grid.innerHTML = '';
-  var url = 'https://openclipart.org/search/json/?query=' + encodeURIComponent(q) + '&amount=64';
-  _ocFetchWithCorsFallback(url)
+  // image_type=illustration → cartoony/painted/clip-art-style content. Use vector mode
+  // separately if user wants those (could add as a second sub-option later).
+  var url = 'https://pixabay.com/api/?key=' + encodeURIComponent(PIXABAY_API_KEY)
+    + '&q=' + encodeURIComponent(q)
+    + '&image_type=illustration'
+    + '&per_page=48'
+    + '&safesearch=true';
+  fetch(url)
+    .then(function(r){
+      if(!r.ok){
+        return r.text().then(function(body){
+          throw new Error('Pixabay HTTP ' + r.status + ' — ' + body.slice(0, 200));
+        });
+      }
+      return r.json();
+    })
     .then(function(data){
       _clipArtFetching = false;
-      if(!data || !Array.isArray(data.payload)){
-        throw new Error('Unexpected OpenClipart response (no payload array)');
-      }
-      // Normalize each item into a stable shape we control
-      _clipArtCache[cacheKey] = data.payload.map(function(item){
-        var svgUrl = (item.svg && item.svg.url) || item.svg_url || ('https://openclipart.org/download/' + item.id + '/');
-        var thumbUrl = (item.svg && item.svg.png_thumb) || item.png_thumb_url || svgUrl;
+      if(!data || !Array.isArray(data.hits)) throw new Error('Unexpected Pixabay response');
+      _clipArtCache[cacheKey] = data.hits.map(function(hit){
         return {
-          id: item.id,
-          title: item.title || ('clipart_' + item.id),
-          thumbUrl: thumbUrl,
-          svgUrl: svgUrl
+          id: hit.id,
+          title: (hit.tags || 'illustration').split(',')[0].trim(),
+          thumbUrl: hit.previewURL || hit.webformatURL,
+          fullUrl:  hit.largeImageURL || hit.webformatURL || hit.previewURL,
+          tags: hit.tags
         };
       });
       if(status){
-        status.textContent = data.payload.length
-          ? data.payload.length + ' OpenClipart results · click any tile to add as an editable SVG'
-          : 'No OpenClipart results for "' + q + '". Try a different keyword.';
+        status.textContent = data.hits.length
+          ? data.hits.length + ' Pixabay results · click any tile to add as an image layer'
+          : 'No Pixabay illustrations for "' + q + '". Try a different keyword.';
       }
-      _renderOpenClipartResults(cacheKey, q);
+      _renderPixabayResults(cacheKey, q);
     })
     .catch(function(e){
       _clipArtFetching = false;
-      console.error('[clip-art:openclipart]', e);
-      if(status){
-        status.textContent = '✗ OpenClipart unreachable (' + (e.message || String(e)) + '). Their site has spotty uptime — try Iconify in the source dropdown for now.';
-      }
+      console.error('[clip-art:pixabay]', e);
+      if(status) status.textContent = '✗ Pixabay search failed: ' + (e.message || String(e));
     });
 }
 
-function _renderOpenClipartResults(cacheKey, query){
+function _renderPixabayResults(cacheKey, query){
   var grid = document.getElementById('clipArtGrid');
   if(!grid) return;
   var items = _clipArtCache[cacheKey] || [];
   grid.innerHTML = '';
   if(!items.length){
-    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No OpenClipart matches for that term.</div>';
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No Pixabay illustrations match that term.</div>';
     return;
   }
   items.forEach(function(item){
     var tile = document.createElement('div');
-    tile.style.cssText = 'aspect-ratio:1;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:8px;transition:border-color 0.15s, transform 0.15s;overflow:hidden;';
+    tile.style.cssText = 'aspect-ratio:1;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:4px;transition:border-color 0.15s, transform 0.15s;overflow:hidden;';
     tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.06)'; };
     tile.onmouseleave = function(){ tile.style.borderColor = 'var(--border)'; tile.style.transform = ''; };
     tile.title = item.title + ' — click to add';
-    tile.onclick = function(){ _useOpenClipartItem(item); };
+    tile.onclick = function(){ _usePixabayItem(item); };
     var img = document.createElement('img');
     img.src = item.thumbUrl;
     img.alt = item.title;
@@ -4599,34 +4630,34 @@ function _renderOpenClipartResults(cacheKey, query){
   });
 }
 
-function _useOpenClipartItem(item){
+function _usePixabayItem(item){
   var status = document.getElementById('clipArtStatus');
   if(status) status.textContent = 'Loading "' + item.title + '"…';
-  // Download the SVG; same direct-then-proxy fallback pattern as the search call
-  var directFetch = function(){
-    return fetch(item.svgUrl).then(function(r){
-      if(!r.ok) throw new Error('Direct HTTP ' + r.status);
-      return r.text();
-    });
-  };
-  var proxyFetch = function(){
-    return fetch('https://corsproxy.io/?' + encodeURIComponent(item.svgUrl)).then(function(r){
-      if(!r.ok) throw new Error('Proxy HTTP ' + r.status);
-      return r.text();
-    });
-  };
-  directFetch().catch(proxyFetch)
-    .then(function(svgText){
-      if(!svgText || svgText.indexOf('<svg') < 0){
-        throw new Error('Response was not an SVG');
-      }
-      createSvgLayerFromText(svgText, 'oc_' + item.id);
-      closeClipArtBrowser();
-      showToast('🎨 Added: ' + item.title);
+  // Fetch the full image as a blob → data URL so the canvas isn't tainted on export.
+  // Pixabay's CDN serves CORS, so this works in the browser.
+  fetch(item.fullUrl, {mode:'cors'})
+    .then(function(r){ if(!r.ok) throw new Error('Pixabay CDN HTTP ' + r.status); return r.blob(); })
+    .then(function(blob){
+      return new Promise(function(resolve, reject){
+        var reader = new FileReader();
+        reader.onload = function(){ resolve(reader.result); };
+        reader.onerror = function(){ reject(new Error('FileReader failed')); };
+        reader.readAsDataURL(blob);
+      });
+    })
+    .then(function(dataUrl){
+      var img = new Image();
+      img.onload = function(){
+        addImageLayer(img, 'pixabay_' + item.id);
+        closeClipArtBrowser();
+        showToast('🎨 Added Pixabay illustration: ' + item.title);
+      };
+      img.onerror = function(){ if(status) status.textContent = '✗ Image failed to decode'; };
+      img.src = dataUrl;
     })
     .catch(function(e){
-      console.error('[clip-art:openclipart:use]', e);
-      if(status) status.textContent = '✗ Couldn\'t load: ' + (e.message || String(e));
+      console.error('[clip-art:pixabay:use]', e);
+      if(status) status.textContent = '✗ Could not load: ' + (e.message || String(e));
     });
 }
 
