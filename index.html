@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v229</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v230</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5787,19 +5787,17 @@ function _makeMarkerLayer(subtype, x, y, w, h, rotation){
     aheadLen1: 90, aheadLen2: 90, aheadAngle: 48, aheadCurve1: -25, aheadCurve2: -25,
     bodyStartTaper: 50, wing1EndTaper: 50, wing2EndTaper: 50, roundEnds: false,
     arrowheadEnd: subtype === 'arrow', arrowheadStart: false,
-    // Circle-specific: legacy total sweep slider (0..100 maps to 270°..1080° in _drawCircleMarker).
-    // v229: superseded by circleEndAng + circleLoops below, but kept on the layer schema as a
-    // fallback for any code path that still references it.
+    // Circle-specific: total sweep slider (0..100 maps to 270°..1080° in _drawCircleMarker).
     circleOvershoot:   subtype === 'circle' ? 15 : 0,
     // v224 additions:
     circleStartAng:    subtype === 'circle' ? 45 : 0,   // 0..360°, where the stroke begins (0 = top)
     circleOvalness:    subtype === 'circle' ? 0  : 0,   // -50..+50, pulls toward circle / exaggerates oval
     circleStartTaper:  subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke start
     circleEndTaper:    subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke end
-    // v229 additions: end angle and extra loops are now the primary controls. Default 75° end
-    // with 1 extra loop = ~390° total sweep, matching the slight-overshoot default look of v223.
-    circleEndAng:      subtype === 'circle' ? 75 : 0,   // 0..360°, where the stroke ends (clockwise from start)
-    circleLoops:       subtype === 'circle' ? 1  : 0,   // 0..3, extra full rotations on top of the arc
+    // v230: shape irregularity — low-frequency asymmetric distortion of the ellipse OUTLINE
+    // itself. Real hand-drawn circles aren't perfect math ellipses; they bulge unevenly. Default
+    // 50 (moderate organic feel); set to 0 for a clean geometric ellipse.
+    circleIrregularity: subtype === 'circle' ? 50 : 0,
     // v226: which star vertex the stroke begins at. Snaps to 72° steps (0, 72, 144, 216, 288).
     starStartAng:      subtype === 'star'   ? 0  : 0,   // 0 = top vertex, then clockwise
     // v228: independent start/end taper for the star's two open ends — same fields the circle
@@ -5962,39 +5960,49 @@ function _drawMarkerStrokeColor(ctx, pts, color, baseThick, variation, seed, sta
   }
 }
 
-// v221/v225: trace points around an ellipse with marker-style wobble for the "Circled" subtype.
-// Starts at startAng, sweeps totalAng radians. totalAng > 2π gives overshoot or multiple loops.
+// v221/v225/v230: trace points around an ellipse with marker-style wobble for "Circled" subtype.
 //
-// v225 fix: multi-loop sweeps (totalAng > 2π) used to trace the exact same path on every loop,
-// so 3 loops rendered as one solid line. Now each loop's RADIUS varies smoothly with loop
-// progress — sin-based low-frequency offset ±5% of average radius — so the loops visibly fan
-// out and overlap like a real scribbled circle. Also scales the point count with the sweep so
-// long paths don't go jaggy.
-function _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed){
+// Three layered effects make this look hand-drawn instead of geometric:
+//   1. SHAPE IRREGULARITY (v230) — low-frequency asymmetric modulation of rx and ry as a
+//      function of the angle around the ellipse. Real hand-drawn circles bulge unevenly: fatter
+//      on one side, narrower on another. X and Y axes get different sin phases so the bulges
+//      aren't symmetric. This applies to the OUTLINE itself, so even at wobble=0 the circle
+//      has personality. Magnitude is controlled by layer.circleIrregularity (0..100, default 50).
+//   2. PER-LOOP RADIAL OFFSET (v225/v227) — when totalAng > 2π, each loop walks a slightly
+//      different ellipse so multi-loops fan out instead of overlaying invisibly. Amplitude
+//      ~12% of avg radius, lower-frequency than the irregularity so loops are distinct.
+//   3. WOBBLE (v221) — high-frequency jitter perpendicular to the radius. The "marker shake"
+//      that's visible on top of the underlying ellipse shape. Faded at endpoints.
+function _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed, irregularity){
   var sweepLoops = Math.abs(totalAng) / (Math.PI * 2);
   var n = Math.max(80, Math.round(40 * sweepLoops));
   var pts = new Array(n + 1);
   var s = seed * 0.0137;
   var avgR = (Math.abs(rx) + Math.abs(ry)) / 2;
+  // Irregularity 0..100 → amplitude 0..18% of radius. Asymmetric: X and Y use different seeds
+  // and frequencies so the resulting blob doesn't look symmetric.
+  var irreg = (irregularity != null ? irregularity : 50) / 100;
+  var irregAmp = irreg * 0.18;
+  function shapeModX(a){
+    return 1 + (Math.sin(a * 1.7 + s) * 0.62 + Math.sin(a * 2.3 + s * 1.7) * 0.38) * irregAmp;
+  }
+  function shapeModY(a){
+    return 1 + (Math.sin(a * 1.5 + s * 1.31) * 0.62 + Math.sin(a * 2.1 + s * 2.17) * 0.38) * irregAmp;
+  }
   for(var i = 0; i <= n; i++){
     var t = i / n;
     var a = startAng + t * totalAng;
-    // Per-loop radial offset — each loop walks a distinctly different ellipse so they don't
-    // overlay perfectly. v227: amplitude was 5% (= ~10px on a 200px radius), so loops sat
-    // INSIDE the stroke width (typ. 20px) and painted over each other invisibly. Bumped to
-    // 12% so the radius swing is wider than the stroke width — adjacent loops actually clear
-    // each other. Frequency dropped to 1.7 rad/loop so each loop lands at a markedly different
-    // phase of the sine rather than averaging to near-zero.
+    // Per-loop radial offset for multi-loop visibility
     var loopProgress = Math.abs(t * totalAng) / (Math.PI * 2);
     var loopOffset = (Math.sin(loopProgress * 1.7 + s) * 0.7
                     + Math.sin(loopProgress * 3.3 + s * 1.7) * 0.3) * avgR * 0.12;
-    var sampleRx = rx + loopOffset;
-    var sampleRy = ry + loopOffset;
+    // Combine shape irregularity (per-angle) and loop offset (per-revolution).
+    var sampleRx = rx * shapeModX(a) + loopOffset;
+    var sampleRy = ry * shapeModY(a) + loopOffset;
     var bx = cx + Math.cos(a) * sampleRx;
     var by = cy + Math.sin(a) * sampleRy;
-    // Radial direction at this point — used for high-frequency wobble offset
     var perpX = Math.cos(a), perpY = Math.sin(a);
-    var fade = Math.sin(t * Math.PI);   // 0 at endpoints, 1 in the middle
+    var fade = Math.sin(t * Math.PI);
     var noise = Math.sin(t * 5.4 + s) * 0.7 + Math.sin(t * 9.3 + s * 1.7) * 0.3;
     var wobbleMag = noise * wobble * avgR * 0.04 * fade;
     pts[i] = [bx + perpX * wobbleMag, by + perpY * wobbleMag];
@@ -6328,31 +6336,18 @@ function _drawCircleMarker(ctx, layer){
     var ry = avg - diff * f;
     var seed = layer._seed || 1;
     var wobble = layer.wobble != null ? layer.wobble : 0.7;
-    // Start angle: 0° = top (12 o'clock), increases clockwise. 45 = upper-right (1 o'clock).
+    // v230: REVERTED v229's end-angle-and-loops split — it was confusing and broke the look.
+    // Back to the simple Sweep model (controls 270° → 1080° total), with Start angle controlling
+    // where the stroke begins. The End angle slider in the panel is a UX convenience: it mutates
+    // Start under the hood so the end lands at the requested angle, keeping sweep unchanged.
+    var sweepSlider = layer.circleOvershoot != null ? layer.circleOvershoot : 15;
+    var sweepDeg = 270 + (sweepSlider / 100) * 810;
+    var totalAng = sweepDeg * Math.PI / 180;
     var startAngDeg = layer.circleStartAng != null ? layer.circleStartAng : 45;
-    // v229: total sweep = (arc from start to end, clockwise) + extraLoops * 360°. End angle and
-    // loops are independent sliders. Legacy layers (no circleEndAng) derive the equivalent from
-    // the old circleOvershoot slider so existing designs still render the way they did before.
-    var endAngDeg, loops;
-    if(layer.circleEndAng != null){
-      endAngDeg = layer.circleEndAng;
-      loops = layer.circleLoops != null ? layer.circleLoops : 0;
-    } else {
-      var legacySweep = 270 + ((layer.circleOvershoot != null ? layer.circleOvershoot : 15) / 100) * 810;
-      loops = Math.floor(legacySweep / 360);
-      var legacyArc = legacySweep - loops * 360;
-      endAngDeg = (startAngDeg + legacyArc) % 360;
-    }
-    var arcDeg = ((endAngDeg - startAngDeg) + 360) % 360;
-    // Treat end == start with no extra loops as a full closed circle — otherwise zero sweep
-    // would render nothing, which is never what the user wants.
-    if(arcDeg < 0.5 && loops === 0) arcDeg = 360;
-    var totalDeg = arcDeg + loops * 360;
-    var totalAng = totalDeg * Math.PI / 180;
     var startAng = -Math.PI / 2 + startAngDeg * Math.PI / 180;
     if(layer.flipH) startAng = Math.PI - startAng;
     if(layer.flipV) totalAng = -totalAng;
-    var pts = _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed);
+    var pts = _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed, layer.circleIrregularity);
     // Independent start/end taper — controls how each open end of the circle looks. Falls back
     // to the unified bodyStartTaper for old layers that don't have the new fields yet.
     var fallbackT = layer.bodyStartTaper != null ? layer.bodyStartTaper / 100 : 0.5;
@@ -6509,27 +6504,16 @@ function buildArrowProps(l){
         ? R('Body arch (curve up/down)', 'parrArch_' + id, (l.archStrength != null ? l.archStrength : 0), -100, 100, 1)
         : '')
     + (isCircle
-        ? (function(){
-            // v229: derive defaults for end + loops from the legacy circleOvershoot if the new
-            // fields haven't been set yet, so opening an old saved circle shows the right values.
-            var startD = l.circleStartAng != null ? l.circleStartAng : 45;
-            var endD, loopsD;
-            if(l.circleEndAng != null){
-              endD = l.circleEndAng;
-              loopsD = l.circleLoops != null ? l.circleLoops : 0;
-            } else {
-              var legacy = 270 + ((l.circleOvershoot != null ? l.circleOvershoot : 15) / 100) * 810;
-              loopsD = Math.floor(legacy / 360);
-              endD = Math.round((startD + (legacy - loopsD * 360)) % 360);
-            }
-            return '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Circle</div>'
-              + R('Start angle (0 = top · 90 = right · 180 = bottom · 270 = left)', 'parrCircleStartAng_' + id, startD, 0, 360, 5)
-              + R('End angle (0 = top · 90 = right · 180 = bottom · 270 = left)', 'parrCircleEndAng_' + id, endD, 0, 360, 5)
-              + R('Extra loops (0 = just the arc · 1+ = full rotations on top)', 'parrCircleLoops_' + id, loopsD, 0, 3, 1)
-              + R('Oval-ness (-50 = pull toward circle · 0 = bbox · +50 = exaggerate)', 'parrCircleOval_' + id, (l.circleOvalness != null ? l.circleOvalness : 0), -50, 50, 1)
-              + R('Start cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleStartCap_' + id, (l.circleStartTaper != null ? l.circleStartTaper : 50), 0, 100, 1)
-              + R('End cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleEndCap_' + id, (l.circleEndTaper != null ? l.circleEndTaper : 50), 0, 100, 1);
-          })()
+        ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Circle</div>'
+          // v230 revert: single Sweep slider is much clearer than separate End angle + Loops.
+          // The user controls WHERE the start/end fall by adjusting Start angle (rotates whole arc)
+          // and Sweep (controls how much arc is drawn). Path organicness comes from the renderer.
+          + R('Sweep / overhang (0 = open arc · 11 = closed · 100 = 3 loops)', 'parrOvershoot_' + id, (l.circleOvershoot != null ? l.circleOvershoot : 15), 0, 100, 1)
+          + R('Start angle (0 = top · 90 = right · 180 = bottom · 270 = left)', 'parrCircleStartAng_' + id, (l.circleStartAng != null ? l.circleStartAng : 45), 0, 360, 5)
+          + R('Shape irregularity (0 = perfect ellipse · 100 = very organic)', 'parrCircleIrreg_' + id, (l.circleIrregularity != null ? l.circleIrregularity : 50), 0, 100, 1)
+          + R('Oval-ness (-50 = pull toward circle · 0 = bbox · +50 = exaggerate)', 'parrCircleOval_' + id, (l.circleOvalness != null ? l.circleOvalness : 0), -50, 50, 1)
+          + R('Start cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleStartCap_' + id, (l.circleStartTaper != null ? l.circleStartTaper : 50), 0, 100, 1)
+          + R('End cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleEndCap_' + id, (l.circleEndTaper != null ? l.circleEndTaper : 50), 0, 100, 1)
         : '')
     + (isStar
         ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Star</div>'
@@ -7889,10 +7873,11 @@ function bindPropEvents(layer){
     rng('parrW1Taper_' + aid, function(v){ layer.wing1EndTaper = v; redraw(); });
     rng('parrW2Taper_' + aid, function(v){ layer.wing2EndTaper = v; redraw(); });
     on('parrRoundEnds_' + aid, 'change', function(e){ layer.roundEnds = !!e.target.checked; redraw(); });
-    // v229: circle end angle + extra loops (replaces the old sweep slider). When the user moves
-    // either, also clear the legacy circleOvershoot field so it can't override on next render.
-    rng('parrCircleEndAng_' + aid,    function(v){ layer.circleEndAng     = v; layer.circleOvershoot = null; redraw(); });
-    rng('parrCircleLoops_' + aid,     function(v){ layer.circleLoops      = v; layer.circleOvershoot = null; redraw(); });
+    // v230: back to the single Sweep slider. End and Loops sliders removed — the user controls
+    // where start/end fall via Start angle (which rotates the whole arc) and Sweep (which sets
+    // the arc length and whether to add multi-loops).
+    rng('parrOvershoot_' + aid,       function(v){ layer.circleOvershoot  = v; redraw(); });
+    rng('parrCircleIrreg_' + aid,     function(v){ layer.circleIrregularity = v; redraw(); });
     // v224: additional circle sliders — start position, oval-ness, per-end taper
     rng('parrCircleStartAng_' + aid,  function(v){ layer.circleStartAng   = v; redraw(); });
     rng('parrCircleOval_' + aid,      function(v){ layer.circleOvalness   = v; redraw(); });
