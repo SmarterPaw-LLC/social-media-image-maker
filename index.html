@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v241</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v242</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4133,31 +4133,32 @@ function inlineSvgStyleClasses(svgText){
 // attributes on elements, and <stop stop-color="#xxx"> inside gradients. Returns a list of
 // "swatches", each with a stable key (used for find-and-replace) plus the current color and a
 // human-readable label. Grouping: swatches from the same gradient share a gradient label.
-// v237/v239: Brand color palettes for one-click SVG recolor. v239 splits the old combined
-// Meowi/Doggi palette into TWO single-family palettes so the user can pick "all green" (Meowi)
-// or "all orange" (Doggi) instead of getting a mixed result. KKZ stays as one palette since
-// teal + pink ARE both KKZ brand colors.
+// v237/v239/v242: Brand color palettes for one-click SVG recolor. v239 split into two single-
+// family palettes (one orange, one green). v242 swapped which brand owns which family:
+//   Meowi = ORANGE (was green)
+//   Doggi = GREEN  (was orange)
+// KKZ stays as one palette since teal + pink ARE both KKZ brand colors.
 //
 // At apply time both the original swatches AND the chosen palette get sorted by perceptual
 // brightness, then index-to-index mapped so the SVG's depth/contrast structure stays intact —
 // darkest original color picks up the darkest brand color, lightest gets lightest.
 var MEOWI_PALETTE = [
+  '#5a1a0a', '#7a2a10',                // deepest brown / rust
+  '#c83e1a', '#e85a20',                // dark + deeper orange
+  '#f07830',                            // PRIMARY (Meowi orange)
+  '#ff9a4d', '#ffb866',                // medium orange / peach
+  '#ffd166',                            // warm yellow
+  '#2a5a9e', '#4682b4', '#87ceeb',     // blue accents (navy → sky)
+  '#fff4c4', '#fafaf0'                 // cream highlight / cream
+];
+var DOGGI_PALETTE = [
   '#1a4d00', '#2d6a2d',                // very dark / dark forest
-  '#3c8e14', '#6ba415',                // Meowi dark + medium green
-  '#8ab81d',                            // Meowi PRIMARY
-  '#a8d188', '#c5e039',                // sage + Meowi vibrant lime
+  '#3c8e14', '#6ba415',                // dark + medium green
+  '#8ab81d',                            // PRIMARY (Doggi green)
+  '#a8d188', '#c5e039',                // sage + vibrant lime
   '#cdd99a',                            // sage light
   '#ffd166', '#fffbd9',                // sunshine accent + cream highlight
   '#fafaf0'                             // cream
-];
-var DOGGI_PALETTE = [
-  '#5a1a0a', '#7a2a10',                // deepest brown / rust
-  '#c83e1a', '#e85a20',                // Doggi dark + deeper orange
-  '#f07830',                            // Doggi PRIMARY
-  '#ff9a4d', '#ffb866',                // medium orange / peach
-  '#ffd166',                            // warm yellow
-  '#2a5a9e', '#4682b4', '#87ceeb',     // Doggi blue accents (navy → sky)
-  '#fff4c4', '#fafaf0'                 // cream highlight / cream
 ];
 var KKZ_BRAND_PALETTE = [
   '#1a1a3a',                       // darkest (deep navy-purple)
@@ -4280,7 +4281,7 @@ function applyBrandColorsToSvgLayer(layerId, brand){
     alert('Could not reload SVG after applying brand colors.');
   };
   newImg.src = layer.url;
-  var brandLabels = {meowi:'Meowi (green)', doggi:'Doggi (orange)', kkz:'Kitty Ka-Zoom'};
+  var brandLabels = {meowi:'Meowi (orange)', doggi:'Doggi (green)', kkz:'Kitty Ka-Zoom'};
   showToast('🎨 Applied ' + (brandLabels[brand] || brand) + ' brand colors');
 }
 
@@ -4302,7 +4303,7 @@ function closeBrandPaletteEditor(){
 
 function switchBrandPaletteTab(brand){
   _editingBrandKey = brand;
-  var titles = {meowi:'🐱 Edit Meowi Palette (green)', doggi:'🐶 Edit Doggi Palette (orange)', kkz:'🐱‍👤 Edit KKZ Palette'};
+  var titles = {meowi:'🐱 Edit Meowi Palette (orange)', doggi:'🐶 Edit Doggi Palette (green)', kkz:'🐱‍👤 Edit KKZ Palette'};
   var title = document.getElementById('brandPaletteModalTitle');
   if(title) title.textContent = titles[brand] || 'Edit Palette';
   // Highlight active tab
@@ -4312,8 +4313,8 @@ function switchBrandPaletteTab(brand){
     btn.style.color = active ? '#333' : '#7a7a70';
     btn.style.boxShadow = active ? '0 1px 3px rgba(0,0,0,0.08)' : 'none';
   });
-  // Set the add-color picker to a sensible starting color for this brand
-  var seedColors = {meowi:'#8ab81d', doggi:'#f07830', kkz:'#5ec6c6'};
+  // Set the add-color picker to a sensible starting color for this brand (v242: swapped)
+  var seedColors = {meowi:'#f07830', doggi:'#8ab81d', kkz:'#5ec6c6'};
   var addInput = document.getElementById('brandPaletteAddInput');
   if(addInput) addInput.value = seedColors[brand] || '#888888';
   _renderBrandPaletteSwatches();
@@ -8163,9 +8164,10 @@ function buildSvgProps(l){
       if(currentBrand === 'kkz'){
         brandButtons = '<button class="btn-sm" style="width:100%;background:linear-gradient(135deg,#5ec6c6 0%,#e05098 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'kkz\')" title="Brightness-matched palette swap to KKZ teal + pink family">🐱‍👤 KKZ colors</button>';
       } else {
+        // v242: brand → color family swap. Meowi is orange now, Doggi is green.
         brandButtons = '<div style="display:flex;gap:6px;">'
-          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#c5e039 0%,#3c8e14 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'meowi\')" title="Brightness-matched palette swap to the Meowi green family">🐱 Meowi (green)</button>'
-          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#ffb866 0%,#c83e1a 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'doggi\')" title="Brightness-matched palette swap to the Doggi orange family">🐶 Doggi (orange)</button>'
+          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#ffb866 0%,#c83e1a 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'meowi\')" title="Brightness-matched palette swap to the Meowi orange family">🐱 Meowi (orange)</button>'
+          + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#c5e039 0%,#3c8e14 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'doggi\')" title="Brightness-matched palette swap to the Doggi green family">🐶 Doggi (green)</button>'
         + '</div>';
       }
       // v241: figure out which brand the ⚙ editor link opens by default — matches the visible
