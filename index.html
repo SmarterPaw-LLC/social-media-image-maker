@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v228</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v229</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5787,14 +5787,19 @@ function _makeMarkerLayer(subtype, x, y, w, h, rotation){
     aheadLen1: 90, aheadLen2: 90, aheadAngle: 48, aheadCurve1: -25, aheadCurve2: -25,
     bodyStartTaper: 50, wing1EndTaper: 50, wing2EndTaper: 50, roundEnds: false,
     arrowheadEnd: subtype === 'arrow', arrowheadStart: false,
-    // Circle-specific: total sweep slider (0..100 maps to 270°..1080° in _drawCircleMarker).
-    // v223 default 15 → ~390°, just past closed — visible start/end points but no big gap or loop.
+    // Circle-specific: legacy total sweep slider (0..100 maps to 270°..1080° in _drawCircleMarker).
+    // v229: superseded by circleEndAng + circleLoops below, but kept on the layer schema as a
+    // fallback for any code path that still references it.
     circleOvershoot:   subtype === 'circle' ? 15 : 0,
     // v224 additions:
     circleStartAng:    subtype === 'circle' ? 45 : 0,   // 0..360°, where the stroke begins (0 = top)
     circleOvalness:    subtype === 'circle' ? 0  : 0,   // -50..+50, pulls toward circle / exaggerates oval
     circleStartTaper:  subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke start
     circleEndTaper:    subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke end
+    // v229 additions: end angle and extra loops are now the primary controls. Default 75° end
+    // with 1 extra loop = ~390° total sweep, matching the slight-overshoot default look of v223.
+    circleEndAng:      subtype === 'circle' ? 75 : 0,   // 0..360°, where the stroke ends (clockwise from start)
+    circleLoops:       subtype === 'circle' ? 1  : 0,   // 0..3, extra full rotations on top of the arc
     // v226: which star vertex the stroke begins at. Snaps to 72° steps (0, 72, 144, 216, 288).
     starStartAng:      subtype === 'star'   ? 0  : 0,   // 0 = top vertex, then clockwise
     // v228: independent start/end taper for the star's two open ends — same fields the circle
@@ -6323,11 +6328,27 @@ function _drawCircleMarker(ctx, layer){
     var ry = avg - diff * f;
     var seed = layer._seed || 1;
     var wobble = layer.wobble != null ? layer.wobble : 0.7;
-    var sweepSlider = layer.circleOvershoot != null ? layer.circleOvershoot : 15;
-    var sweepDeg = 270 + (sweepSlider / 100) * 810;
-    var totalAng = sweepDeg * Math.PI / 180;
     // Start angle: 0° = top (12 o'clock), increases clockwise. 45 = upper-right (1 o'clock).
     var startAngDeg = layer.circleStartAng != null ? layer.circleStartAng : 45;
+    // v229: total sweep = (arc from start to end, clockwise) + extraLoops * 360°. End angle and
+    // loops are independent sliders. Legacy layers (no circleEndAng) derive the equivalent from
+    // the old circleOvershoot slider so existing designs still render the way they did before.
+    var endAngDeg, loops;
+    if(layer.circleEndAng != null){
+      endAngDeg = layer.circleEndAng;
+      loops = layer.circleLoops != null ? layer.circleLoops : 0;
+    } else {
+      var legacySweep = 270 + ((layer.circleOvershoot != null ? layer.circleOvershoot : 15) / 100) * 810;
+      loops = Math.floor(legacySweep / 360);
+      var legacyArc = legacySweep - loops * 360;
+      endAngDeg = (startAngDeg + legacyArc) % 360;
+    }
+    var arcDeg = ((endAngDeg - startAngDeg) + 360) % 360;
+    // Treat end == start with no extra loops as a full closed circle — otherwise zero sweep
+    // would render nothing, which is never what the user wants.
+    if(arcDeg < 0.5 && loops === 0) arcDeg = 360;
+    var totalDeg = arcDeg + loops * 360;
+    var totalAng = totalDeg * Math.PI / 180;
     var startAng = -Math.PI / 2 + startAngDeg * Math.PI / 180;
     if(layer.flipH) startAng = Math.PI - startAng;
     if(layer.flipV) totalAng = -totalAng;
@@ -6488,12 +6509,27 @@ function buildArrowProps(l){
         ? R('Body arch (curve up/down)', 'parrArch_' + id, (l.archStrength != null ? l.archStrength : 0), -100, 100, 1)
         : '')
     + (isCircle
-        ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Circle</div>'
-          + R('Sweep / overhang (0 = open arc · 11 = closed · 100 = 3 loops)', 'parrOvershoot_' + id, (l.circleOvershoot != null ? l.circleOvershoot : 15), 0, 100, 1)
-          + R('Start angle (0 = top · 90 = right · 180 = bottom · 270 = left)', 'parrCircleStartAng_' + id, (l.circleStartAng != null ? l.circleStartAng : 45), 0, 360, 5)
-          + R('Oval-ness (-50 = pull toward circle · 0 = bbox · +50 = exaggerate)', 'parrCircleOval_' + id, (l.circleOvalness != null ? l.circleOvalness : 0), -50, 50, 1)
-          + R('Start cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleStartCap_' + id, (l.circleStartTaper != null ? l.circleStartTaper : 50), 0, 100, 1)
-          + R('End cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleEndCap_' + id, (l.circleEndTaper != null ? l.circleEndTaper : 50), 0, 100, 1)
+        ? (function(){
+            // v229: derive defaults for end + loops from the legacy circleOvershoot if the new
+            // fields haven't been set yet, so opening an old saved circle shows the right values.
+            var startD = l.circleStartAng != null ? l.circleStartAng : 45;
+            var endD, loopsD;
+            if(l.circleEndAng != null){
+              endD = l.circleEndAng;
+              loopsD = l.circleLoops != null ? l.circleLoops : 0;
+            } else {
+              var legacy = 270 + ((l.circleOvershoot != null ? l.circleOvershoot : 15) / 100) * 810;
+              loopsD = Math.floor(legacy / 360);
+              endD = Math.round((startD + (legacy - loopsD * 360)) % 360);
+            }
+            return '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Circle</div>'
+              + R('Start angle (0 = top · 90 = right · 180 = bottom · 270 = left)', 'parrCircleStartAng_' + id, startD, 0, 360, 5)
+              + R('End angle (0 = top · 90 = right · 180 = bottom · 270 = left)', 'parrCircleEndAng_' + id, endD, 0, 360, 5)
+              + R('Extra loops (0 = just the arc · 1+ = full rotations on top)', 'parrCircleLoops_' + id, loopsD, 0, 3, 1)
+              + R('Oval-ness (-50 = pull toward circle · 0 = bbox · +50 = exaggerate)', 'parrCircleOval_' + id, (l.circleOvalness != null ? l.circleOvalness : 0), -50, 50, 1)
+              + R('Start cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleStartCap_' + id, (l.circleStartTaper != null ? l.circleStartTaper : 50), 0, 100, 1)
+              + R('End cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleEndCap_' + id, (l.circleEndTaper != null ? l.circleEndTaper : 50), 0, 100, 1);
+          })()
         : '')
     + (isStar
         ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Star</div>'
@@ -7853,8 +7889,10 @@ function bindPropEvents(layer){
     rng('parrW1Taper_' + aid, function(v){ layer.wing1EndTaper = v; redraw(); });
     rng('parrW2Taper_' + aid, function(v){ layer.wing2EndTaper = v; redraw(); });
     on('parrRoundEnds_' + aid, 'change', function(e){ layer.roundEnds = !!e.target.checked; redraw(); });
-    // v221: circle sweep slider (only present in DOM when subtype === 'circle')
-    rng('parrOvershoot_' + aid, function(v){ layer.circleOvershoot = v; redraw(); });
+    // v229: circle end angle + extra loops (replaces the old sweep slider). When the user moves
+    // either, also clear the legacy circleOvershoot field so it can't override on next render.
+    rng('parrCircleEndAng_' + aid,    function(v){ layer.circleEndAng     = v; layer.circleOvershoot = null; redraw(); });
+    rng('parrCircleLoops_' + aid,     function(v){ layer.circleLoops      = v; layer.circleOvershoot = null; redraw(); });
     // v224: additional circle sliders — start position, oval-ness, per-end taper
     rng('parrCircleStartAng_' + aid,  function(v){ layer.circleStartAng   = v; redraw(); });
     rng('parrCircleOval_' + aid,      function(v){ layer.circleOvalness   = v; redraw(); });
