@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v243</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v244</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4786,10 +4786,12 @@ function _fetchPixabay(){
 function _renderPixabayResults(cacheKey, query){
   var grid = document.getElementById('clipArtGrid');
   if(!grid) return;
-  // v243: Pixabay illustrations are landscape-format full images, not square emoji icons.
-  // Switch the grid columns to a larger minimum (160px) and let tile height flex per image so
-  // illustrations display at a usable size instead of being squished into 72px square tiles.
-  grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(160px,1fr))';
+  // v244: rewrote to use background-image instead of <img> + flex. Previous version collapsed
+  // because Pixabay's CDN doesn't serve CORS headers, so the <img> failed silently while
+  // crossOrigin was set, and the flex-centered empty tile lost its aspect-ratio height. Using
+  // CSS background-image bypasses CORS for visual preview (we don't need pixel access until the
+  // user actually clicks to add — that's a separate fetch with proper CORS handling).
+  grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(180px,1fr))';
   grid.style.gap = '10px';
   var items = _clipArtCache[cacheKey] || [];
   grid.innerHTML = '';
@@ -4799,21 +4801,19 @@ function _renderPixabayResults(cacheKey, query){
   }
   items.forEach(function(item){
     var tile = document.createElement('div');
-    // 4:3 aspect ratio (Pixabay illustrations are mostly landscape; 4:3 gives them room without
-    // wasting too much vertical space)
-    tile.style.cssText = 'aspect-ratio:4/3;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:6px;transition:border-color 0.15s, transform 0.15s;overflow:hidden;';
+    // Explicit min-height GUARANTEES visibility even if the browser bails on aspect-ratio in
+    // grid items. Background-image with center/contain gives proper visual display without an
+    // <img> element involved.
+    var safeUrl = String(item.thumbUrl).replace(/"/g, '%22').replace(/'/g, '%27');
+    tile.style.cssText = 'min-height:140px;aspect-ratio:4/3;border:1px solid var(--border);border-radius:6px;'
+      + 'background-color:#f5f5f5;'
+      + 'background-image:url("' + safeUrl + '");'
+      + 'background-size:contain;background-position:center;background-repeat:no-repeat;'
+      + 'cursor:pointer;transition:border-color 0.15s,transform 0.15s;';
     tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.03)'; };
     tile.onmouseleave = function(){ tile.style.borderColor = 'var(--border)'; tile.style.transform = ''; };
     tile.title = item.title + ' — click to add';
     tile.onclick = function(){ _usePixabayItem(item); };
-    var img = document.createElement('img');
-    img.src = item.thumbUrl;
-    img.alt = item.title;
-    img.loading = 'lazy';
-    img.crossOrigin = 'anonymous';
-    img.style.cssText = 'max-width:100%;max-height:100%;display:block;object-fit:contain;';
-    img.onerror = function(){ img.style.display = 'none'; tile.textContent = item.title; tile.style.fontSize = '10px'; tile.style.padding = '6px'; };
-    tile.appendChild(img);
     grid.appendChild(tile);
   });
 }
