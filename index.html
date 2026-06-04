@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v216</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v217</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -252,6 +252,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <!-- v185: cloud-sync status pill. Hidden until the canvas has content; shows whether the
          current design's latest edits have been saved to the cloud. -->
     <span id="cloudSyncStatus" style="display:none;font-size:11px;font-weight:700;padding:5px 10px;border-radius:6px;border:1.5px solid transparent;white-space:nowrap;align-self:center;"></span>
+    <!-- v217: visible Undo/Redo controls. Buttons dim when their stack is empty so it's clear
+         when there's nothing to undo/redo. Keyboard shortcuts (Ctrl+Z / Ctrl+Y) still work. -->
+    <button class="btn-hdr" id="undoBtn" onclick="undo(); _refreshUndoButtons();" title="Undo (Ctrl+Z)" style="padding:8px 12px;font-size:16px;">↶</button>
+    <button class="btn-hdr" id="redoBtn" onclick="redo(); _refreshUndoButtons();" title="Redo (Ctrl+Y)" style="padding:8px 12px;font-size:16px;">↷</button>
     <button class="btn-hdr" onclick="openMyDesignsModal()" title="Load a saved design">📂 My Designs</button>
     <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
@@ -1844,7 +1848,9 @@ function renderBoardTabs(){
     // Duplicate button — clones the board with all its layers
     var dup = document.createElement('span');
     dup.className = 'board-dup';
-    dup.textContent = '⎘';
+    // v217: clearer duplicate glyph — ⧉ (two overlapping squares) reads as "make a copy"
+    // much more obviously than ⎘ (NEXT PAGE), which most people don't recognize.
+    dup.textContent = '⧉';
     dup.title = 'Duplicate board';
     dup.onclick = function(e){ e.stopPropagation(); duplicateBoard(b.id); };
     tab.appendChild(dup);
@@ -2294,6 +2300,23 @@ function deserializeLayers(json){
   return restored;
 }
 
+// v217: keep the header Undo/Redo buttons in sync with stack state — dim when empty,
+// solid when actionable. Called from every place stacks change.
+function _refreshUndoButtons(){
+  var u = document.getElementById('undoBtn');
+  var r = document.getElementById('redoBtn');
+  if(u){
+    u.disabled = !undoStack || !undoStack.length;
+    u.style.opacity = u.disabled ? '0.4' : '1';
+    u.style.cursor  = u.disabled ? 'default' : 'pointer';
+  }
+  if(r){
+    r.disabled = !redoStack || !redoStack.length;
+    r.style.opacity = r.disabled ? '0.4' : '1';
+    r.style.cursor  = r.disabled ? 'default' : 'pointer';
+  }
+}
+
 function snapshotState(){
   if(_undoSuppressed) return;
   var snap = serializeForUndo();
@@ -2303,6 +2326,7 @@ function snapshotState(){
   if(undoStack.length > UNDO_LIMIT) undoStack.shift();
   redoStack = []; // new action invalidates redo
   if(typeof scheduleAutosave === 'function') scheduleAutosave();
+  _refreshUndoButtons();
 }
 
 // v190: full-state snapshot for replace-image operations. The standard snapshotState() above uses
@@ -2318,6 +2342,7 @@ function snapshotStateFull(){
   if(undoStack.length > UNDO_LIMIT) undoStack.shift();
   redoStack = [];
   if(typeof scheduleAutosave === 'function') scheduleAutosave();
+  _refreshUndoButtons();
 }
 
 function undo(){
@@ -2333,6 +2358,7 @@ function undo(){
   hideCropToolbar();
   renderLayerList(); renderProps(); redraw();
   _undoSuppressed = false;
+  _refreshUndoButtons();
 }
 
 function redo(){
@@ -2347,6 +2373,7 @@ function redo(){
   hideCropToolbar();
   renderLayerList(); renderProps(); redraw();
   _undoSuppressed = false;
+  _refreshUndoButtons();
 }
 
 // ── SAVE / LOAD DESIGNS ──
@@ -9052,10 +9079,19 @@ function hideCropToolbar(){
 
 function drawCheckerboard(ctx){
   var sz=28;
+  // v217: clip to canvas bounds so the last row/column cells don't bleed past canvasW/canvasH
+  // into the overscan margin. Cell size (28) rarely divides canvas dims evenly (e.g. 1080/28 =
+  // 38.57), so without clipping the rightmost+bottommost cells overflow ~12px past the edge.
+  // That's the "overhang" Jason was seeing — checkerboard, not background, leaking into overscan.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, canvasW, canvasH);
+  ctx.clip();
   for(var y=0;y<canvasH;y+=sz)for(var x=0;x<canvasW;x+=sz){
     ctx.fillStyle=(Math.floor(x/sz)+Math.floor(y/sz))%2===0?'#e8e8e0':'#d8d8d0';
     ctx.fillRect(x,y,sz,sz);
   }
+  ctx.restore();
 }
 
 function withRotation(ctx,layer,fn){
