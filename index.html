@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v240</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v241</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1121,6 +1121,34 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeBackgroundPicker()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- v241: Brand palette editor. Customize the colors that the brand recolor buttons apply to
+     SVG layers. One palette per brand (Meowi / Doggi / KKZ). Saves to localStorage per-browser.
+     Persists across sessions; reset-to-default available if you mess it up. -->
+<div class="modal-overlay hidden" id="brandPaletteModal">
+  <div class="modal" style="max-width:580px;">
+    <h2 id="brandPaletteModalTitle">🎨 Edit Brand Palette</h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+      These colors are used when you click a brand recolor button on an SVG clip art layer. Colors map to the SVG's swatches by brightness — darkest original color picks up the darkest brand color, lightest picks up lightest, etc. So include both dark and light variants for best results.
+    </div>
+    <!-- Brand selector strip -->
+    <div style="display:flex;gap:4px;margin-bottom:10px;background:#f0f0e8;padding:3px;border-radius:7px;" id="brandPaletteTabs">
+      <button class="bp-tab" data-brand="meowi" onclick="switchBrandPaletteTab('meowi')" style="flex:1;padding:6px 10px;border:none;border-radius:5px;cursor:pointer;font-weight:600;font-size:12px;background:transparent;">🐱 Meowi</button>
+      <button class="bp-tab" data-brand="doggi" onclick="switchBrandPaletteTab('doggi')" style="flex:1;padding:6px 10px;border:none;border-radius:5px;cursor:pointer;font-weight:600;font-size:12px;background:transparent;">🐶 Doggi</button>
+      <button class="bp-tab" data-brand="kkz"   onclick="switchBrandPaletteTab('kkz')"   style="flex:1;padding:6px 10px;border:none;border-radius:5px;cursor:pointer;font-weight:600;font-size:12px;background:transparent;">🐱‍👤 KKZ</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Click a swatch to recolor it · × removes · drag to reorder isn't supported (yet) — but you can always Reset and rebuild.</div>
+    <div id="brandPaletteSwatchGrid" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;min-height:60px;padding:10px;background:#fafafa;border:1px solid var(--border);border-radius:6px;"></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
+      <input type="color" id="brandPaletteAddInput" value="#8ab81d" style="width:48px;height:36px;padding:0;border:1.5px solid var(--border);border-radius:6px;cursor:pointer;">
+      <button class="btn-add" onclick="brandPaletteAddCurrent()" style="flex:1;">+ Add this color to palette</button>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="brandPaletteResetToDefault()" title="Discard your customizations for this brand and revert to the built-in colors">↺ Reset this brand to default</button>
+      <button class="btn-primary" onclick="closeBrandPaletteEditor()">Done</button>
     </div>
   </div>
 </div>
@@ -4141,12 +4169,50 @@ var KKZ_BRAND_PALETTE = [
   '#b8e8e8', '#cdf2f0', '#ffdce8', // lights (pale teal, paler teal, pale pink)
   '#f5fafa'                        // near-white
 ];
-// Lookup so the apply function can route by brand id
-var _SVG_BRAND_PALETTES = {
+// Defaults. The actual palette used is _getBrandPalette(brand) which prefers a localStorage
+// override (user's customized palette) and falls back to these.
+var _SVG_BRAND_PALETTES_DEFAULT = {
   meowi: MEOWI_PALETTE,
   doggi: DOGGI_PALETTE,
   kkz:   KKZ_BRAND_PALETTE
 };
+
+// v241: brand palettes are customizable per-browser via the palette editor. Reads override
+// from localStorage; falls back to defaults above when the user hasn't customized this brand.
+function _getBrandPalette(brand){
+  try {
+    var stored = localStorage.getItem('brandPaletteOverrides');
+    if(stored){
+      var parsed = JSON.parse(stored);
+      if(parsed[brand] && Array.isArray(parsed[brand]) && parsed[brand].length){
+        return parsed[brand].slice();
+      }
+    }
+  } catch(e){}
+  return (_SVG_BRAND_PALETTES_DEFAULT[brand] || _SVG_BRAND_PALETTES_DEFAULT.meowi).slice();
+}
+
+function _saveBrandPalette(brand, colors){
+  try {
+    var stored = localStorage.getItem('brandPaletteOverrides');
+    var parsed = stored ? JSON.parse(stored) : {};
+    parsed[brand] = colors;
+    localStorage.setItem('brandPaletteOverrides', JSON.stringify(parsed));
+  } catch(e){
+    alert('Could not save palette — storage full? ' + e.message);
+  }
+}
+
+function _resetBrandPaletteToDefault(brand){
+  try {
+    var stored = localStorage.getItem('brandPaletteOverrides');
+    if(stored){
+      var parsed = JSON.parse(stored);
+      delete parsed[brand];
+      localStorage.setItem('brandPaletteOverrides', JSON.stringify(parsed));
+    }
+  } catch(e){}
+}
 
 function _hexBrightness(hex){
   if(!hex) return 128;
@@ -4178,7 +4244,12 @@ function applyBrandColorsToSvgLayer(layerId, brand){
   // v239: brand id is now one of 'meowi' / 'doggi' / 'kkz'. Legacy 'meowi-doggi' from v237
   // buttons maps to the green Meowi palette for backwards compat with anything still calling it.
   if(brand === 'meowi-doggi') brand = 'meowi';
-  var palette = _SVG_BRAND_PALETTES[brand] || _SVG_BRAND_PALETTES.meowi;
+  // v241: read palette via the user-customizable lookup (falls back to my defaults)
+  var palette = _getBrandPalette(brand);
+  if(!palette.length){
+    alert('The ' + brand + ' palette is empty. Add at least one color via the palette editor.');
+    return;
+  }
   var swatches = extractSvgSwatches(layer.svgText);
   if(!swatches.length){
     alert('This SVG has no editable color swatches.');
@@ -4211,6 +4282,103 @@ function applyBrandColorsToSvgLayer(layerId, brand){
   newImg.src = layer.url;
   var brandLabels = {meowi:'Meowi (green)', doggi:'Doggi (orange)', kkz:'Kitty Ka-Zoom'};
   showToast('🎨 Applied ' + (brandLabels[brand] || brand) + ' brand colors');
+}
+
+// v241: Brand palette editor. Modal state machine — which brand the user is currently editing.
+// Changes write straight to localStorage; the apply function reads via _getBrandPalette so
+// edits take effect on the next click.
+var _editingBrandKey = 'meowi';
+
+function openBrandPaletteEditor(brand){
+  _editingBrandKey = brand || 'meowi';
+  switchBrandPaletteTab(_editingBrandKey);
+  document.getElementById('brandPaletteModal').classList.remove('hidden');
+}
+
+function closeBrandPaletteEditor(){
+  document.getElementById('brandPaletteModal').classList.add('hidden');
+  renderProps();   // refresh in case the user looks at the inline swatch chips
+}
+
+function switchBrandPaletteTab(brand){
+  _editingBrandKey = brand;
+  var titles = {meowi:'🐱 Edit Meowi Palette (green)', doggi:'🐶 Edit Doggi Palette (orange)', kkz:'🐱‍👤 Edit KKZ Palette'};
+  var title = document.getElementById('brandPaletteModalTitle');
+  if(title) title.textContent = titles[brand] || 'Edit Palette';
+  // Highlight active tab
+  document.querySelectorAll('.bp-tab').forEach(function(btn){
+    var active = btn.getAttribute('data-brand') === brand;
+    btn.style.background = active ? '#fff' : 'transparent';
+    btn.style.color = active ? '#333' : '#7a7a70';
+    btn.style.boxShadow = active ? '0 1px 3px rgba(0,0,0,0.08)' : 'none';
+  });
+  // Set the add-color picker to a sensible starting color for this brand
+  var seedColors = {meowi:'#8ab81d', doggi:'#f07830', kkz:'#5ec6c6'};
+  var addInput = document.getElementById('brandPaletteAddInput');
+  if(addInput) addInput.value = seedColors[brand] || '#888888';
+  _renderBrandPaletteSwatches();
+}
+
+function _renderBrandPaletteSwatches(){
+  var grid = document.getElementById('brandPaletteSwatchGrid');
+  if(!grid) return;
+  var palette = _getBrandPalette(_editingBrandKey);
+  grid.innerHTML = '';
+  if(!palette.length){
+    grid.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px;width:100%;text-align:center;">No colors yet. Add some below or Reset to default.</div>';
+    return;
+  }
+  palette.forEach(function(color, i){
+    var sw = document.createElement('div');
+    sw.style.cssText = 'position:relative;width:54px;height:54px;border-radius:6px;border:2px solid #fff;background:'+color+';display:flex;align-items:flex-start;justify-content:flex-end;padding:3px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.18);';
+    sw.title = color + ' — click to change, × to remove';
+    // × delete button
+    var del = document.createElement('span');
+    del.textContent = '×';
+    del.style.cssText = 'background:#fff;color:#b32a1a;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:bold;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.25);line-height:1;';
+    del.onclick = function(e){
+      e.stopPropagation();
+      var pal = _getBrandPalette(_editingBrandKey);
+      pal.splice(i, 1);
+      _saveBrandPalette(_editingBrandKey, pal);
+      _renderBrandPaletteSwatches();
+    };
+    sw.appendChild(del);
+    // Click the swatch (anywhere except ×) opens a color picker to recolor that slot
+    sw.onclick = function(){
+      var input = document.createElement('input');
+      input.type = 'color';
+      input.value = color;
+      input.style.cssText = 'position:fixed;top:-9999px;opacity:0;';
+      document.body.appendChild(input);
+      input.onchange = function(){
+        var pal = _getBrandPalette(_editingBrandKey);
+        pal[i] = input.value;
+        _saveBrandPalette(_editingBrandKey, pal);
+        _renderBrandPaletteSwatches();
+        document.body.removeChild(input);
+      };
+      input.click();
+    };
+    grid.appendChild(sw);
+  });
+}
+
+function brandPaletteAddCurrent(){
+  var addInput = document.getElementById('brandPaletteAddInput');
+  if(!addInput) return;
+  var color = addInput.value;
+  var pal = _getBrandPalette(_editingBrandKey);
+  pal.push(color);
+  _saveBrandPalette(_editingBrandKey, pal);
+  _renderBrandPaletteSwatches();
+}
+
+function brandPaletteResetToDefault(){
+  var names = {meowi:'Meowi', doggi:'Doggi', kkz:'KKZ'};
+  if(!confirm('Reset the ' + (names[_editingBrandKey] || _editingBrandKey) + ' palette to the default colors? This discards your customizations for this brand only.')) return;
+  _resetBrandPaletteToDefault(_editingBrandKey);
+  _renderBrandPaletteSwatches();
 }
 
 function extractSvgSwatches(svgText){
@@ -8000,10 +8168,14 @@ function buildSvgProps(l){
           + '<button class="btn-sm" style="flex:1;background:linear-gradient(135deg,#ffb866 0%,#c83e1a 100%);color:#fff;border:none;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,0.35);padding:7px 6px;" onclick="applyBrandColorsToSvgLayer(' + l.id + ',\'doggi\')" title="Brightness-matched palette swap to the Doggi orange family">🐶 Doggi (orange)</button>'
         + '</div>';
       }
+      // v241: figure out which brand the ⚙ editor link opens by default — matches the visible
+      // button (Meowi if you're on Meowi/Doggi, KKZ if you're on KKZ).
+      var defaultEditBrand = currentBrand === 'kkz' ? 'kkz' : 'meowi';
       recolorHtml = '<div class="prop-section" style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;">'
         + '<label style="font-size:11px;color:var(--muted);font-weight:600;">Recolor</label>'
         + '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Click a swatch to change one color, or apply a full brand palette below.</div>'
-        + '<div style="margin-bottom:8px;">' + brandButtons + '</div>';
+        + '<div style="margin-bottom:4px;">' + brandButtons + '</div>'
+        + '<div style="text-align:right;margin-bottom:8px;"><a href="#" onclick="event.preventDefault();openBrandPaletteEditor(\'' + defaultEditBrand + '\');" style="font-size:10px;color:var(--muted);text-decoration:underline;">⚙ Customize brand palettes…</a></div>';
       function swatchRow(sw){
         // Each swatch: little color preview (clickable color input) + label
         return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
