@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v224</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v225</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5951,21 +5951,34 @@ function _drawMarkerStrokeColor(ctx, pts, color, baseThick, variation, seed, sta
   }
 }
 
-// v221: trace points around an ellipse with marker-style wobble for the "Circled" subtype.
-// Starts at startAng, sweeps totalAng radians. totalAng > 2π gives overshoot — the "teacher
-// looped past the start" look. Wobble is perpendicular to the radius (so it pushes pixels in
-// and out radially), faded at start/end so the loop opens cleanly.
+// v221/v225: trace points around an ellipse with marker-style wobble for the "Circled" subtype.
+// Starts at startAng, sweeps totalAng radians. totalAng > 2π gives overshoot or multiple loops.
+//
+// v225 fix: multi-loop sweeps (totalAng > 2π) used to trace the exact same path on every loop,
+// so 3 loops rendered as one solid line. Now each loop's RADIUS varies smoothly with loop
+// progress — sin-based low-frequency offset ±5% of average radius — so the loops visibly fan
+// out and overlap like a real scribbled circle. Also scales the point count with the sweep so
+// long paths don't go jaggy.
 function _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed){
-  var n = 80;
+  var sweepLoops = Math.abs(totalAng) / (Math.PI * 2);
+  var n = Math.max(80, Math.round(40 * sweepLoops));
   var pts = new Array(n + 1);
   var s = seed * 0.0137;
   var avgR = (Math.abs(rx) + Math.abs(ry)) / 2;
   for(var i = 0; i <= n; i++){
     var t = i / n;
     var a = startAng + t * totalAng;
-    var bx = cx + Math.cos(a) * rx;
-    var by = cy + Math.sin(a) * ry;
-    // Radial direction at this point — used for wobble offset
+    // Per-loop radial offset — each loop walks a slightly different ellipse so they don't
+    // overlay perfectly. Low-frequency sine in loop-progress space so the variation is smooth
+    // around each loop but distinct between loops.
+    var loopProgress = Math.abs(t * totalAng) / (Math.PI * 2);
+    var loopOffset = (Math.sin(loopProgress * 2.7 + s) * 0.6
+                    + Math.sin(loopProgress * 5.1 + s * 1.7) * 0.4) * avgR * 0.05;
+    var sampleRx = rx + loopOffset;
+    var sampleRy = ry + loopOffset;
+    var bx = cx + Math.cos(a) * sampleRx;
+    var by = cy + Math.sin(a) * sampleRy;
+    // Radial direction at this point — used for high-frequency wobble offset
     var perpX = Math.cos(a), perpY = Math.sin(a);
     var fade = Math.sin(t * Math.PI);   // 0 at endpoints, 1 in the middle
     var noise = Math.sin(t * 5.4 + s) * 0.7 + Math.sin(t * 9.3 + s * 1.7) * 0.3;
