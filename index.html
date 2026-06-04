@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v233</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v235</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1133,7 +1133,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
   <div class="modal" style="max-width:920px;max-height:90vh;display:flex;flex-direction:column;">
     <h2>🎨 Clip Art Browser</h2>
     <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
-      Open-source illustrations from Noto Emoji, Twemoji, Fluent Emoji, OpenMoji, Emojione, and fxemoji — all Apache&nbsp;2.0&nbsp;/&nbsp;CC&#8209;BY licensed (free for commercial use). Searched via the Iconify aggregator.
+      Open-source illustrations from Noto Emoji, Twemoji, Fluent Emoji / Fluent Color, OpenMoji, Emojione, fxemoji, Flat Color Icons, and Streamline — all free for commercial use (Apache 2.0 / CC&#8209;BY / MIT). Searched via the Iconify aggregator. <em>Tip: if a phrase returns nothing, try a shorter term — "cap" instead of "baseball cap", "hat" instead of "top hat".</em>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:10px;">
       <input type="text" id="clipArtQuery" placeholder="Search (sunglasses, top hat, bow tie, mustache, pizza…)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){fetchClipArt();}">
@@ -4286,14 +4286,25 @@ var _clipArtCache = {};   // query → array of "prefix:name" strings
 // Iconify prefixes for colorful clip-art collections (skip mono/tech icon sets).
 // noto = Google Noto Emoji, twemoji = Twitter, fluent-emoji-flat = MS flat style,
 // openmoji = OpenMoji project, emojione = emojione, fxemoji = Mozilla
-var _CLIP_ART_PREFIXES = 'noto,twemoji,fluent-emoji-flat,openmoji,emojione,fxemoji';
-// v233: chips curated for "humanize the pet" workflow — things you'd put ON or NEAR a cat/dog
-// in a social post. Eyewear + headwear + accessories + props + food/drink. Order = most-common
-// first so the default landing search is also the most universally useful.
+// v235: expanded library list — the original 6 prefixes were all emoji sets, which only cover
+// Unicode-named objects (so "baseball cap" missed because no such emoji exists; the closest is
+// 🧢 named "billed-cap"). Adding 4 more colorful Iconify collections that index by actual
+// object names (clothing, food, accessories), so the chip vocabulary works as you'd expect.
+//
+// flat-color-icons: Google's bright flat icons (~330 objects, business + lifestyle)
+// fluent-color:     Microsoft Fluent in color (~600 objects, broad vocabulary)
+// streamline-plump-color: Streamline's illustrative color set (~clothing, food, accessories)
+// noto-v1:          Google's older Noto Emoji (more illustrative than current Noto)
+// emojione-v1:      Emojione's older more vibrant set
+var _CLIP_ART_PREFIXES = 'noto,twemoji,fluent-emoji-flat,openmoji,emojione,fxemoji,'
+  + 'flat-color-icons,fluent-color,streamline-plump-color,noto-v1,emojione-v1';
+// v233/v235: chips for "humanize the pet" workflow. Updated terms to match icon names —
+// e.g. "cap" not "baseball cap" (no library indexes that phrase), "bowtie" / "bow tie" both
+// covered by Iconify's word-tokenized search.
 var _CLIP_ART_QUICK_QUERIES = [
-  'sunglasses', 'top hat', 'crown', 'party hat',
-  'bow tie', 'necktie', 'mustache', 'scarf',
-  'baseball cap', 'sombrero', 'glasses', 'cake',
+  'sunglasses', 'hat', 'crown', 'party hat',
+  'bow tie', 'tie', 'mustache', 'scarf',
+  'cap', 'sombrero', 'glasses', 'cake',
   'pizza', 'donut', 'coffee', 'flower'
 ];
 
@@ -6836,6 +6847,28 @@ function moveLayer(id,dir){
   renderLayerList();redraw();
 }
 
+// v234: Programmatic reorder used by the ▲▼ buttons. Direction is in UI terms — "up" moves
+// the layer toward the TOP of the rendered list, which means INCREASING its array index
+// (because renderLayerList iterates layers.length-1 → 0). snapshotState before mutating so
+// undo works as expected.
+function moveLayerById(layerId, dir){
+  var idx = layers.findIndex(function(l){ return l.id === layerId; });
+  if(idx < 0) return;
+  if(dir === 'up'){
+    if(idx >= layers.length - 1) return;
+    snapshotState();
+    var moved = layers.splice(idx, 1)[0];
+    layers.splice(idx + 1, 0, moved);
+  } else {
+    if(idx <= 0) return;
+    snapshotState();
+    var movedD = layers.splice(idx, 1)[0];
+    layers.splice(idx - 1, 0, movedD);
+  }
+  renderLayerList();
+  redraw();
+}
+
 function renderLayerList(){
   var list=document.getElementById('layerList');list.innerHTML='';
   for(var i=layers.length-1;i>=0;i--){
@@ -6846,12 +6879,21 @@ function renderLayerList(){
       if(layer.hidden) item.style.opacity='0.5';
       item.draggable = !layer.locked;  // locked layers can't be dragged either
       item.dataset.layerId=layer.id;
-      var icons={image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿'};
+      var icons={image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗'};
       var eyeIcon = layer.hidden ? '⊘' : '●';   // filled circle = visible, crossed circle = hidden
       var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
       var lockIcon = layer.locked ? '🔒' : '🔓';
       var lockOpacity = layer.locked ? '' : 'opacity:0.35;';
-      item.innerHTML='<span class="ltype" style="cursor:'+(layer.locked?'not-allowed':'grab')+';">⋮⋮</span>'
+      // v234: explicit up/down move buttons next to the drag handle, since drag-to-reorder can
+      // be finicky on small panels. Highest layer in array = topmost in UI; "up" in UI =
+      // increase array index. Disabled state shown as dimmed opacity (not clickable).
+      var canMoveUp   = layerIdx < layers.length - 1;
+      var canMoveDown = layerIdx > 0;
+      item.innerHTML='<span class="ltype" style="cursor:'+(layer.locked?'not-allowed':'grab')+';" title="Drag to reorder">⋮⋮</span>'
+        +'<span class="layer-mv-col" style="display:inline-flex;flex-direction:column;line-height:0.85;font-size:8px;color:#666;user-select:none;">'
+          +'<span class="layer-mv" data-dir="up" title="Move up" style="cursor:'+(canMoveUp?'pointer':'default')+';padding:1px 2px;opacity:'+(canMoveUp?'1':'0.22')+';">▲</span>'
+          +'<span class="layer-mv" data-dir="down" title="Move down" style="cursor:'+(canMoveDown?'pointer':'default')+';padding:1px 2px;opacity:'+(canMoveDown?'1':'0.22')+';">▼</span>'
+        +'</span>'
         +'<span class="ltype">'+(icons[layer.type]||'▫')+'</span>'
         +'<span class="lname">'+layer.name+'</span>'
         +'<span class="layer-vis" title="'+(layer.hidden?'Show':'Hide')+' layer" '
@@ -6863,6 +6905,13 @@ function renderLayerList(){
         if(e.target.classList.contains('layer-del')){ confirmDeleteLayer(layer.id); return; }
         if(e.target.classList.contains('layer-vis')){ layer.hidden=!layer.hidden; renderLayerList(); redraw(); return; }
         if(e.target.classList.contains('layer-lock')){ layer.locked=!layer.locked; renderLayerList(); renderProps(); return; }
+        if(e.target.classList.contains('layer-mv')){
+          // v234: explicit up/down reorder. Stop propagation so the click doesn't also fire
+          // the layer-select branch below.
+          e.stopPropagation();
+          moveLayerById(layer.id, e.target.dataset.dir);
+          return;
+        }
         // Shift- or Ctrl/Cmd-click toggles selection (multi-select). Plain click replaces selection.
         selectLayer(layer.id, {shift: e.shiftKey || e.ctrlKey || e.metaKey});
       };
