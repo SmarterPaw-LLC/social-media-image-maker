@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v214</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v215</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8526,15 +8526,17 @@ function redraw(){
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   // v211: snap any "background" layer (created via + Background) to current canvas dimensions.
-  // The layer is tagged with _fillsCanvas at creation; if the canvas later resizes (brand switch,
-  // board switch, custom dims), this keeps the background covering the full area instead of
-  // leaving a checker strip exposed on the right/bottom.
-  // v213: also auto-flag any layer with the '🎨 ' name prefix (the marker every + Background
-  // path applies). This migrates designs that were saved with backgrounds created BEFORE the
-  // _fillsCanvas flag existed — the layer self-corrects on the next redraw without requiring
-  // delete-and-recreate. Position is set to (-1, -1) and dims to (canvasW+2, canvasH+2) so the
-  // background always overshoots the canvas by 1px on every side, eliminating any sub-pixel
-  // edge artifacts where rounding could leave a hairline of checkerboard exposed.
+  // v213: auto-flag old designs by their '🎨 ' name prefix so they self-correct without delete-
+  // and-recreate.
+  // v215: CORRECTED interpretation of the bug — the gradient was OVERHANGING the canvas (visible
+  // bleed into the overscan margin), not falling short of it. The user's original "bit of canvas
+  // showing that isn't actually inside the canvas area" meant rendered pixels OUTSIDE the export
+  // bounds, not exposed checkerboard. The v213 +1px overshoot in every direction was making this
+  // worse, not better. Fix: snap to EXACTLY (0, 0, canvasW, canvasH). For image-type backgrounds
+  // (patterns, mesh gradients) also force fit:'fill' so the underlying image stretches to fill
+  // the layer rect exactly — kills any sub-pixel letterbox gap that fit:'cover' math could leave
+  // when the image's native dims differ from the current canvas dims (e.g., after a brand switch
+  // resized the canvas).
   for(var bi = 0; bi < layers.length; bi++){
     var bl = layers[bi];
     if(!bl) continue;
@@ -8542,15 +8544,14 @@ function redraw(){
       bl._fillsCanvas = true;
     }
     if(bl._fillsCanvas){
-      var targetX = -1, targetY = -1;
-      var targetW = canvasW + 2, targetH = canvasH + 2;
-      if(bl.x !== targetX) bl.x = targetX;
-      if(bl.y !== targetY) bl.y = targetY;
-      if(bl.w !== targetW) bl.w = targetW;
-      if(bl.h !== targetH) bl.h = targetH;
+      if(bl.x !== 0) bl.x = 0;
+      if(bl.y !== 0) bl.y = 0;
+      if(bl.w !== canvasW) bl.w = canvasW;
+      if(bl.h !== canvasH) bl.h = canvasH;
       if(bl.type === 'image'){
-        bl._baseW = targetW;
-        bl._baseH = targetH;
+        bl._baseW = canvasW;
+        bl._baseH = canvasH;
+        if(bl.fit !== 'fill') bl.fit = 'fill';
       }
     }
   }
