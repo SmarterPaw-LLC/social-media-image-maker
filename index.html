@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v231</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v232</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -314,6 +314,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         <div class="add-image-popup" id="addImagePopup">
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); addImageLayer();">📁 Upload from file…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openImageLibraryModal();">📚 From library…</button>
+          <button class="add-image-popup-item" onclick="closeAddImageMenu(); openClipArtBrowser();">🎨 Clip art (open source)…</button>
         </div>
       </div>
       <button class="btn-add" id="addStickerBtn" onclick="addStickerLayer()">+ Sticker</button>
@@ -1120,6 +1121,29 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeBackgroundPicker()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- v232: Clip art browser. Searches the Iconify API across colorful open-source emoji /
+     illustration sets (Noto, Twemoji, Fluent Emoji, OpenMoji, Emojione, fxemoji). Each result
+     is a vector SVG that drops onto the canvas as a real svg-type layer — recolor swatches,
+     resize, rotate, all the standard SVG layer affordances work. No API key, CORS-enabled. -->
+<div class="modal-overlay hidden" id="clipArtModal">
+  <div class="modal" style="max-width:920px;max-height:90vh;display:flex;flex-direction:column;">
+    <h2>🎨 Clip Art Browser</h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+      Open-source illustrations from Noto Emoji, Twemoji, Fluent Emoji, OpenMoji, Emojione, and fxemoji — all Apache&nbsp;2.0&nbsp;/&nbsp;CC&#8209;BY licensed (free for commercial use). Searched via the Iconify aggregator.
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;">
+      <input type="text" id="clipArtQuery" placeholder="Search (cat, dog, paw, leaf, smile, party…)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;" onkeydown="if(event.key==='Enter'){fetchClipArt();}">
+      <button class="btn-primary" onclick="fetchClipArt()" style="padding:8px 14px;">🔍 Search</button>
+    </div>
+    <div id="clipArtChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;"></div>
+    <div id="clipArtStatus" style="font-size:11px;color:var(--muted);margin-bottom:6px;min-height:14px;"></div>
+    <div id="clipArtGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px;overflow-y:auto;flex:1;padding-right:4px;align-content:start;"></div>
+    <div class="modal-btns" style="margin-top:10px;">
+      <button class="btn-cancel" onclick="closeClipArtBrowser()">Close</button>
     </div>
   </div>
 </div>
@@ -4249,6 +4273,147 @@ function createSvgLayerFromText(rawSvgText, filename){
     alert('Could not render this SVG. The file may be malformed.');
   };
   img.src = url;
+}
+
+// ── CLIP ART BROWSER (v232) ──
+// Searches the Iconify API across colorful open-source emoji / illustration collections.
+// Iconify is the standard aggregator for free-licensed icons (~150k icons across 200+ sets);
+// restricting to the "emoji-style" prefixes gives a clip-art-not-tech-icon experience.
+// Selected icon is fetched as raw SVG text and handed to createSvgLayerFromText, so it becomes
+// a real SVG layer with color-swatch remap, transform, and shadow support.
+var _clipArtFetching = false;
+var _clipArtCache = {};   // query → array of "prefix:name" strings
+// Iconify prefixes for colorful clip-art collections (skip mono/tech icon sets).
+// noto = Google Noto Emoji, twemoji = Twitter, fluent-emoji-flat = MS flat style,
+// openmoji = OpenMoji project, emojione = emojione, fxemoji = Mozilla
+var _CLIP_ART_PREFIXES = 'noto,twemoji,fluent-emoji-flat,openmoji,emojione,fxemoji';
+var _CLIP_ART_QUICK_QUERIES = ['cat','dog','paw','leaf','plant','smile','heart','star','party','food','sun','flower'];
+
+function openClipArtBrowser(){
+  var modal = document.getElementById('clipArtModal');
+  if(!modal) return;
+  modal.classList.remove('hidden');
+  // Lazy-render the quick-pick chips (once per session)
+  var chips = document.getElementById('clipArtChips');
+  if(chips && !chips.children.length){
+    _CLIP_ART_QUICK_QUERIES.forEach(function(q){
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.textContent = q;
+      chip.style.cssText = 'padding:4px 11px;border-radius:99px;border:1px solid var(--border);background:#f4faf4;cursor:pointer;font-size:11px;font-weight:600;color:var(--green-dark);';
+      chip.onclick = function(){
+        document.getElementById('clipArtQuery').value = q;
+        fetchClipArt();
+      };
+      chips.appendChild(chip);
+    });
+  }
+  // Auto-search "cat" on first open so the grid isn't empty
+  var grid = document.getElementById('clipArtGrid');
+  var qEl = document.getElementById('clipArtQuery');
+  if(grid && !grid.children.length){
+    if(qEl && !qEl.value) qEl.value = 'cat';
+    fetchClipArt();
+  } else if(qEl){
+    setTimeout(function(){ qEl.focus(); qEl.select(); }, 50);
+  }
+}
+
+function closeClipArtBrowser(){
+  var modal = document.getElementById('clipArtModal');
+  if(modal) modal.classList.add('hidden');
+}
+
+function fetchClipArt(){
+  if(_clipArtFetching) return;
+  var qEl = document.getElementById('clipArtQuery');
+  var q = (qEl ? qEl.value : '').trim();
+  if(!q){ q = 'cat'; if(qEl) qEl.value = q; }
+  if(_clipArtCache[q]){ renderClipArt(q); return; }
+  _clipArtFetching = true;
+  var status = document.getElementById('clipArtStatus');
+  var grid = document.getElementById('clipArtGrid');
+  if(status) status.textContent = 'Searching open-source clip art for "' + q + '"…';
+  if(grid) grid.innerHTML = '';
+  var url = 'https://api.iconify.design/search?query=' + encodeURIComponent(q)
+    + '&limit=96&prefixes=' + _CLIP_ART_PREFIXES;
+  fetch(url)
+    .then(function(r){
+      if(!r.ok) throw new Error('Iconify HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(data){
+      _clipArtFetching = false;
+      if(!data || !Array.isArray(data.icons)) throw new Error('Unexpected Iconify response shape');
+      _clipArtCache[q] = data.icons;
+      if(status){
+        var total = data.total != null ? data.total : data.icons.length;
+        status.textContent = data.icons.length
+          ? data.icons.length + ' results' + (total > data.icons.length ? ' (showing top ' + data.icons.length + ' of ' + total + ')' : '') + ' · click any tile to drop it on the canvas as an editable SVG'
+          : 'No results for "' + q + '". Try a different keyword.';
+      }
+      renderClipArt(q);
+    })
+    .catch(function(e){
+      _clipArtFetching = false;
+      console.error('[clip-art]', e);
+      if(status) status.textContent = '✗ Search failed: ' + (e.message || String(e));
+    });
+}
+
+function renderClipArt(query){
+  var grid = document.getElementById('clipArtGrid');
+  if(!grid) return;
+  var icons = _clipArtCache[query] || [];
+  grid.innerHTML = '';
+  if(!icons.length){
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No clip art matches this query.</div>';
+    return;
+  }
+  icons.forEach(function(iconRef){
+    var colonIdx = iconRef.indexOf(':');
+    if(colonIdx < 0) return;
+    var prefix = iconRef.slice(0, colonIdx);
+    var name   = iconRef.slice(colonIdx + 1);
+    var tile = document.createElement('div');
+    tile.style.cssText = 'aspect-ratio:1;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:8px;transition:border-color 0.15s, transform 0.15s;';
+    tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.06)'; };
+    tile.onmouseleave = function(){ tile.style.borderColor = 'var(--border)'; tile.style.transform = ''; };
+    tile.title = iconRef + ' — click to add';
+    tile.onclick = function(){ useClipArt(prefix, name); };
+    var img = document.createElement('img');
+    img.src = 'https://api.iconify.design/' + prefix + '/' + name + '.svg?height=64';
+    img.alt = name;
+    img.loading = 'lazy';
+    img.style.cssText = 'max-width:100%;max-height:100%;display:block;';
+    tile.appendChild(img);
+    grid.appendChild(tile);
+  });
+}
+
+function useClipArt(prefix, name){
+  var status = document.getElementById('clipArtStatus');
+  if(status) status.textContent = 'Loading ' + prefix + ':' + name + '…';
+  // Fetch the actual SVG text — we want it as a vector layer (with editable swatches), not a
+  // flat raster. The height=256 param keeps the viewBox sane; createSvgLayerFromText derives
+  // a sensible on-canvas size from natural dims anyway.
+  fetch('https://api.iconify.design/' + prefix + '/' + name + '.svg?height=256')
+    .then(function(r){
+      if(!r.ok) throw new Error('Iconify HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function(svgText){
+      if(!svgText || svgText.indexOf('<svg') < 0){
+        throw new Error('Response was not an SVG');
+      }
+      createSvgLayerFromText(svgText, prefix + '_' + name);
+      closeClipArtBrowser();
+      showToast('🎨 Added ' + prefix + ':' + name);
+    })
+    .catch(function(e){
+      console.error('[clip-art:use]', e);
+      if(status) status.textContent = '✗ Could not load: ' + (e.message || String(e));
+    });
 }
 
 function addSvgLayer(){
