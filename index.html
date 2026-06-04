@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v223</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v224</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5789,7 +5789,12 @@ function _makeMarkerLayer(subtype, x, y, w, h, rotation){
     arrowheadEnd: subtype === 'arrow', arrowheadStart: false,
     // Circle-specific: total sweep slider (0..100 maps to 270°..1080° in _drawCircleMarker).
     // v223 default 15 → ~390°, just past closed — visible start/end points but no big gap or loop.
-    circleOvershoot: subtype === 'circle' ? 15 : 0,
+    circleOvershoot:   subtype === 'circle' ? 15 : 0,
+    // v224 additions:
+    circleStartAng:    subtype === 'circle' ? 45 : 0,   // 0..360°, where the stroke begins (0 = top)
+    circleOvalness:    subtype === 'circle' ? 0  : 0,   // -50..+50, pulls toward circle / exaggerates oval
+    circleStartTaper:  subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke start
+    circleEndTaper:    subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke end
     shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0, shadowOpacity: 50, shadowColor: '#000000',
     _seed: Math.floor(Math.random() * 100000) + 1
   };
@@ -6266,45 +6271,94 @@ function _paintMarkerStrokes(ctx, layer, allStrokes, gradX1, gradY1, gradX2, gra
   ctx.restore();
 }
 
-// v221: Circled marker — one continuous elliptical stroke around the layer's bbox. Hand-drawn
-// circles usually start around the top-right and sweep clockwise.
+// v221/v223/v224: Circled marker — one continuous elliptical stroke around the layer's bbox.
+// Hand-drawn circles usually start around the top-right and sweep clockwise.
 //
-// v223 rewrite: the slider now controls TOTAL SWEEP, not residual overshoot. Mapping:
+// Sweep slider mapping (circleOvershoot, 0..100):
 //   slider 0   → 270° sweep (90° gap — open arc, clearly hand-drawn)
 //   slider ~11 → 360° sweep (exactly closed loop)
 //   slider 50  → 675° (one full extra loop + 315°)
 //   slider 100 → 1080° (3 full loops — scribbled circle for emphasis)
-// The layer field `circleOvershoot` is reused so existing saved circle layers still load; they
-// just render with the new mapping (which makes them more open/looped than before — a feature
-// per Jason's "looks more hand-drawn" feedback).
+//
+// v224 additions:
+//   circleStartAng (0..360, degrees from 12 o'clock clockwise) — where the stroke begins
+//   circleOvalness (-50..+50) — pulls the ellipse toward a perfect circle (negative) or
+//                              exaggerates the bbox aspect ratio (positive). Default 0 = bbox.
+//   circleStartTaper / circleEndTaper (0..100) — independent taper at each open end.
 function _drawCircleMarker(ctx, layer){
   withRotation(ctx, layer, function(){
     var cx = layer.x + layer.w / 2;
     var cy = layer.y + layer.h / 2;
-    var rx = layer.w / 2;
-    var ry = layer.h / 2;
+    // Oval-ness: shift the radii toward equal (more circular) or apart (more oval), preserving
+    // the average. avg stays = (rx_natural + ry_natural) / 2; the difference scales by f.
+    var naturalRx = layer.w / 2;
+    var naturalRy = layer.h / 2;
+    var oval = layer.circleOvalness != null ? layer.circleOvalness : 0;
+    var avg = (naturalRx + naturalRy) / 2;
+    var diff = (naturalRx - naturalRy) / 2;
+    var f = 1 + oval / 50;     // -50 → 0 (perfect circle), 0 → 1 (natural), +50 → 2 (exaggerated)
+    var rx = avg + diff * f;
+    var ry = avg - diff * f;
     var seed = layer._seed || 1;
     var wobble = layer.wobble != null ? layer.wobble : 0.7;
     var sweepSlider = layer.circleOvershoot != null ? layer.circleOvershoot : 15;
-    var sweepDeg = 270 + (sweepSlider / 100) * 810;   // 270° → 1080°
+    var sweepDeg = 270 + (sweepSlider / 100) * 810;
     var totalAng = sweepDeg * Math.PI / 180;
-    // Start at upper-right (1 o'clock); flipH inverts to upper-left
-    var startAng = layer.flipH ? -3 * Math.PI / 4 : -Math.PI / 4;
+    // Start angle: 0° = top (12 o'clock), increases clockwise. 45 = upper-right (1 o'clock).
+    var startAngDeg = layer.circleStartAng != null ? layer.circleStartAng : 45;
+    var startAng = -Math.PI / 2 + startAngDeg * Math.PI / 180;
+    if(layer.flipH) startAng = Math.PI - startAng;
     if(layer.flipV) totalAng = -totalAng;
     var pts = _genEllipseStroke(cx, cy, rx, ry, startAng, totalAng, wobble, seed);
-    var capT = layer.roundEnds ? 0 : (layer.bodyStartTaper != null ? layer.bodyStartTaper / 100 : 0.5);
-    var allStrokes = [{pts: pts, seed: seed, startTaper: capT, endTaper: capT}];
+    // Independent start/end taper — controls how each open end of the circle looks. Falls back
+    // to the unified bodyStartTaper for old layers that don't have the new fields yet.
+    var fallbackT = layer.bodyStartTaper != null ? layer.bodyStartTaper / 100 : 0.5;
+    var startT = layer.roundEnds ? 0 : (layer.circleStartTaper != null ? layer.circleStartTaper / 100 : fallbackT);
+    var endT   = layer.roundEnds ? 0 : (layer.circleEndTaper   != null ? layer.circleEndTaper   / 100 : fallbackT);
+    var allStrokes = [{pts: pts, seed: seed, startTaper: startT, endTaper: endT}];
     _paintMarkerStrokes(ctx, layer, allStrokes, layer.x, layer.y + layer.h / 2, layer.x + layer.w, layer.y + layer.h / 2);
   });
 }
 
-// v221: Star marker — 5 outer points around the bbox connected in pentagram order
-// (0→2→4→1→3→0). Each leg is its own wobbled marker stroke with its own seed.
-//
-// v223: each leg's start and end points are independently "slopped" by a small deterministic
-// offset, so the joints DON'T meet exactly — that's what makes it look like a kid drew it
-// instead of a rubber-stamp pentagram. Slop magnitude scales with the wobble setting and the
-// bbox size: a tidy star uses low wobble (~0.3); a sketchy one uses high wobble (~1.5+).
+// v224: Generate ONE continuous wobbled stroke through an arbitrary sequence of path points.
+// Used by the star (to trace the pentagram in a single hand motion) and any future multi-segment
+// marker shape. Unlike _genArrowStroke (which fades wobble to 0 at BOTH endpoints of each
+// segment), this fades to 0 only at the absolute start and absolute end of the whole path —
+// intermediate joints flow through at full wobble, the way a hand-drawn stroke does.
+function _genContinuousStroke(pathPoints, wobble, seed){
+  if(!pathPoints || pathPoints.length < 2) return [];
+  var allPts = [];
+  var totalSegs = pathPoints.length - 1;
+  var nPerSeg = 24;
+  for(var segI = 0; segI < totalSegs; segI++){
+    var p1 = pathPoints[segI];
+    var p2 = pathPoints[segI + 1];
+    var dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+    var len = Math.hypot(dx, dy) || 1;
+    var perpX = -dy / len, perpY = dx / len;
+    // Skip the first point of every segment after the first to avoid duplicates at joints
+    var startI = segI === 0 ? 0 : 1;
+    for(var i = startI; i <= nPerSeg; i++){
+      var t = i / nPerSeg;
+      var bx = p1[0] + dx * t;
+      var by = p1[1] + dy * t;
+      // Global progress through the whole path (0..1). Sin(πt) fades at endpoints only.
+      var gt = (segI + t) / totalSegs;
+      var fade = Math.sin(gt * Math.PI);
+      var s = seed * 0.0137 + segI * 0.317;
+      var noise = Math.sin(t * 4.0 + s) * 0.7 + Math.sin(t * 7.3 + s * 1.7) * 0.3;
+      var wobbleMag = noise * wobble * len * 0.05 * fade;
+      allPts.push([bx + perpX * wobbleMag, by + perpY * wobbleMag]);
+    }
+  }
+  return allPts;
+}
+
+// v224: Star marker, rewritten as ONE continuous stroke. Traces the pentagram in standard
+// "one-stroke" order — 0→2→4→1→3→near-0 — like a kid drawing it in one motion. The final
+// "near-0" point is offset from point 0 by a small deterministic amount so there's a visible
+// closing gap (the one segment that doesn't connect, per Jason's spec). All four intermediate
+// joints meet exactly and flow smoothly.
 function _drawStarMarker(ctx, layer){
   withRotation(ctx, layer, function(){
     var cx = layer.x + layer.w / 2;
@@ -6318,24 +6372,17 @@ function _drawStarMarker(ctx, layer){
       var a = -Math.PI / 2 + i * (Math.PI * 2 / 5);
       outer.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]);
     }
-    var order = [0, 2, 4, 1, 3, 0];
+    // Pentagram traversal — note the "5th" point is offset from 0 so the closing leg doesn't
+    // meet the start exactly. Offset scales with bbox size; deterministic from seed.
+    var closureGap = Math.min(layer.w, layer.h) * 0.06;
+    var closure = [
+      outer[0][0] + Math.sin(seed * 0.137) * closureGap,
+      outer[0][1] + Math.cos(seed * 0.213) * closureGap
+    ];
+    var pathPts = [outer[0], outer[2], outer[4], outer[1], outer[3], closure];
+    var pts = _genContinuousStroke(pathPts, wobble, seed);
     var capT = layer.roundEnds ? 0 : (layer.bodyStartTaper != null ? layer.bodyStartTaper / 100 : 0.5);
-    // Slop scales with the smaller bbox dim AND with wobble. Capped at wobble=1.5 so cranking
-    // wobble higher than that doesn't fragment the star.
-    var slopMag = Math.min(layer.w, layer.h) * 0.03 * Math.min(wobble, 1.5);
-    function slopPt(pt, s){
-      return [pt[0] + Math.sin(s * 0.137) * slopMag, pt[1] + Math.cos(s * 0.213) * slopMag];
-    }
-    var allStrokes = [];
-    for(var j = 0; j < 5; j++){
-      var legSeed = seed * (1 + j * 0.317);
-      // KEY: leg N's start and leg N-1's end use DIFFERENT seeds, so they get different
-      // offsets — joints visibly miss each other instead of meeting perfectly.
-      var aPt = slopPt(outer[order[j]],     legSeed * 1.13);
-      var bPt = slopPt(outer[order[j + 1]], legSeed * 1.71);
-      var pts = _genArrowStroke(aPt[0], aPt[1], bPt[0], bPt[1], 0, wobble, legSeed);
-      allStrokes.push({pts: pts, seed: legSeed, startTaper: capT, endTaper: capT});
-    }
+    var allStrokes = [{pts: pts, seed: seed, startTaper: capT, endTaper: capT}];
     _paintMarkerStrokes(ctx, layer, allStrokes, layer.x, layer.y + layer.h / 2, layer.x + layer.w, layer.y + layer.h / 2);
   });
 }
@@ -6406,7 +6453,11 @@ function buildArrowProps(l){
         : '')
     + (isCircle
         ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Circle</div>'
-          + R('Sweep (0 = open arc · 11 = closed loop · 100 = 3 full loops)', 'parrOvershoot_' + id, (l.circleOvershoot != null ? l.circleOvershoot : 15), 0, 100, 1)
+          + R('Sweep / overhang (0 = open arc · 11 = closed · 100 = 3 loops)', 'parrOvershoot_' + id, (l.circleOvershoot != null ? l.circleOvershoot : 15), 0, 100, 1)
+          + R('Start angle (0 = top · 90 = right · 180 = bottom · 270 = left)', 'parrCircleStartAng_' + id, (l.circleStartAng != null ? l.circleStartAng : 45), 0, 360, 5)
+          + R('Oval-ness (-50 = pull toward circle · 0 = bbox · +50 = exaggerate)', 'parrCircleOval_' + id, (l.circleOvalness != null ? l.circleOvalness : 0), -50, 50, 1)
+          + R('Start cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleStartCap_' + id, (l.circleStartTaper != null ? l.circleStartTaper : 50), 0, 100, 1)
+          + R('End cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrCircleEndCap_' + id, (l.circleEndTaper != null ? l.circleEndTaper : 50), 0, 100, 1)
         : '')
     + (isArrow
         ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Arrowhead</div>'
@@ -6421,7 +6472,7 @@ function buildArrowProps(l){
           + R('Wing 2 tip shape (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrW2Taper_' + id, (l.wing2EndTaper != null ? l.wing2EndTaper : 50), 0, 100, 1)
           + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Body back</div>'
         : '')
-    + R((isArrow ? 'Body start shape' : 'Stroke ends shape') + ' (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrBodyTaper_' + id, (l.bodyStartTaper != null ? l.bodyStartTaper : 50), 0, 100, 1)
+    + (isCircle ? '' : R((isArrow ? 'Body start shape' : 'Stroke ends shape') + ' (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrBodyTaper_' + id, (l.bodyStartTaper != null ? l.bodyStartTaper : 50), 0, 100, 1))
     + '<label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:6px;margin-top:8px;"><input type="checkbox" id="parrRoundEnds_' + id + '"' + (l.roundEnds ? ' checked' : '') + '> Rounded ends (overrides taper sliders → all caps become round bulbs)</label>'
     + (isArrow
         ? '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
@@ -7760,8 +7811,13 @@ function bindPropEvents(layer){
     rng('parrW1Taper_' + aid, function(v){ layer.wing1EndTaper = v; redraw(); });
     rng('parrW2Taper_' + aid, function(v){ layer.wing2EndTaper = v; redraw(); });
     on('parrRoundEnds_' + aid, 'change', function(e){ layer.roundEnds = !!e.target.checked; redraw(); });
-    // v221: circle-overshoot slider (only present in DOM when subtype === 'circle')
+    // v221: circle sweep slider (only present in DOM when subtype === 'circle')
     rng('parrOvershoot_' + aid, function(v){ layer.circleOvershoot = v; redraw(); });
+    // v224: additional circle sliders — start position, oval-ness, per-end taper
+    rng('parrCircleStartAng_' + aid,  function(v){ layer.circleStartAng   = v; redraw(); });
+    rng('parrCircleOval_' + aid,      function(v){ layer.circleOvalness   = v; redraw(); });
+    rng('parrCircleStartCap_' + aid,  function(v){ layer.circleStartTaper = v; redraw(); });
+    rng('parrCircleEndCap_' + aid,    function(v){ layer.circleEndTaper   = v; redraw(); });
     // v160: fill type + gradient controls (mirrors shape layer pattern)
     on('parrFillType_' + aid, 'change', function(e){ layer.fillType = e.target.value; renderProps(); });
     on('parrColor_' + aid, 'input', function(e){ layer.color = e.target.value; redraw(); });
