@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v242</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v243</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4676,10 +4676,13 @@ function fetchClipArt(){
 function _renderIconifyResults(cacheKey, query){
   var grid = document.getElementById('clipArtGrid');
   if(!grid) return;
+  // v243: reset grid to the compact icon layout in case we were just showing Pixabay tiles
+  grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(72px,1fr))';
+  grid.style.gap = '6px';
   var icons = _clipArtCache[cacheKey] || [];
   grid.innerHTML = '';
   if(!icons.length){
-    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No Iconify matches. Try a shorter term, or switch the source dropdown to OpenClipart.</div>';
+    grid.innerHTML = '<div style="grid-column:1/-1;padding:20px;text-align:center;color:var(--muted);font-size:12px;">No Iconify matches. Try a shorter term, or switch the source dropdown to Pixabay.</div>';
     return;
   }
   icons.forEach(function(iconRef){
@@ -4783,6 +4786,11 @@ function _fetchPixabay(){
 function _renderPixabayResults(cacheKey, query){
   var grid = document.getElementById('clipArtGrid');
   if(!grid) return;
+  // v243: Pixabay illustrations are landscape-format full images, not square emoji icons.
+  // Switch the grid columns to a larger minimum (160px) and let tile height flex per image so
+  // illustrations display at a usable size instead of being squished into 72px square tiles.
+  grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(160px,1fr))';
+  grid.style.gap = '10px';
   var items = _clipArtCache[cacheKey] || [];
   grid.innerHTML = '';
   if(!items.length){
@@ -4791,8 +4799,10 @@ function _renderPixabayResults(cacheKey, query){
   }
   items.forEach(function(item){
     var tile = document.createElement('div');
-    tile.style.cssText = 'aspect-ratio:1;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:4px;transition:border-color 0.15s, transform 0.15s;overflow:hidden;';
-    tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.06)'; };
+    // 4:3 aspect ratio (Pixabay illustrations are mostly landscape; 4:3 gives them room without
+    // wasting too much vertical space)
+    tile.style.cssText = 'aspect-ratio:4/3;border:1px solid var(--border);border-radius:6px;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:6px;transition:border-color 0.15s, transform 0.15s;overflow:hidden;';
+    tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.03)'; };
     tile.onmouseleave = function(){ tile.style.borderColor = 'var(--border)'; tile.style.transform = ''; };
     tile.title = item.title + ' — click to add';
     tile.onclick = function(){ _usePixabayItem(item); };
