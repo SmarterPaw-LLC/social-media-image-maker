@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v218</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v219</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3869,19 +3869,32 @@ function addShapeLayer(shapeId){
 // Position/size/rotation/opacity work like any other layer. Pieces are drawn deterministically
 // from the seed so the layout stays stable while editing. Resizing the box just rescales the
 // piece distribution to fill the new area.
+// v219: read the user's saved "default sprinkle source" from localStorage. When set, new
+// + Sprinkle layers start with this image instead of the embedded catnip pieces. Persists
+// across sessions and browser restarts, but is per-browser (not in the cloud-synced design).
+function _getDefaultSprinkleSource(){
+  try {
+    var s = localStorage.getItem('defaultSprinkleSource');
+    if(s) return JSON.parse(s);
+  } catch(e){}
+  return null;
+}
+
 function addSprinkleLayer(){
   snapshotState();
   var id = nextId++;
+  var defaultSrc = _getDefaultSprinkleSource();
   layers.push({
     id: id, type: 'sprinkle', name: 'Sprinkle '+id,
     x: canvasW * 0.2, y: canvasH * 0.4,
     w: canvasW * 0.6, h: canvasH * 0.2,
     rotation: 0, opacity: 100,
-    // Source: built-in catnip pieces or a user-uploaded image
-    source: 'builtin',           // 'builtin' | 'upload'
-    uploadSrc: null,             // data URL of uploaded image (when source='upload')
-    bgRemove: 'none',            // 'none' | 'black' | 'white'
-    bgTolerance: 35,
+    // Source: built-in catnip pieces or a user-uploaded image. v219: if the user has saved a
+    // default source via "★ Set as default for new sprinkles", initialize with that instead.
+    source: defaultSrc ? 'upload' : 'builtin',           // 'builtin' | 'upload'
+    uploadSrc: defaultSrc ? defaultSrc.uploadSrc : null, // data URL of uploaded image (when source='upload')
+    bgRemove: defaultSrc ? (defaultSrc.bgRemove || 'none') : 'none',  // 'none' | 'black' | 'white'
+    bgTolerance: defaultSrc ? (defaultSrc.bgTolerance || 35) : 35,
     // Distribution — count + sizing
     count: 30,                   // number of pieces in the box
     sizeMode: 'relative',        // 'relative' (% of box) | 'absolute' (px)
@@ -6898,6 +6911,22 @@ function buildSprinkleProps(l){
               ? R('Tolerance','psprBgTolerance', l.bgTolerance||35, 5, 120, 1)
               : '')
         : '<div style="font-size:11px;color:var(--muted);">Upload an image to scatter inside the box. Works best with a small object on a transparent or solid-color background.</div>')
+      // v219: Set / clear the default sprinkle source so new + Sprinkle layers start with the
+      // right image instead of the built-in catnip. Status line shows current default state.
+      + (function(){
+          var def = _getDefaultSprinkleSource();
+          var statusLine = '<div style="font-size:10px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);">'
+            + 'Default for new + Sprinkles: <b>' + (def ? 'your saved image' : 'built-in catnip') + '</b>'
+            + '</div>';
+          var buttons = '';
+          if(hasUpload){
+            buttons += '<button class="btn-sm" style="width:100%;margin-top:4px;font-size:11px;" onclick="setDefaultSprinkleSource('+l.id+')" title="Save this image as the default starting source for new + Sprinkle layers (per-browser, no need to redo each time)">★ Set as default for new sprinkles</button>';
+          }
+          if(def){
+            buttons += '<button class="btn-sm" style="width:100%;margin-top:2px;font-size:11px;" onclick="clearDefaultSprinkleSource()" title="Revert to built-in catnip pieces as the default">↺ Reset default to built-in catnip</button>';
+          }
+          return statusLine + buttons;
+        })()
     + '</div>'
     // ── SIZING section ──
     + '<div style="margin:6px 0;padding:6px 8px;background:#f4faf4;border-left:2px solid var(--green);border-radius:4px;">'
@@ -9886,6 +9915,34 @@ function clearSprinkleLayerUpload(layerId){
   layer._uploadKeyedSrc = null;
   renderProps();
   redraw();
+}
+
+// v219: persist the current sprinkle layer's upload (and its bg-removal settings) as the
+// default source for FUTURE + Sprinkle clicks. Stored in localStorage as JSON. Per-browser,
+// independent of any cloud-synced design — so swapping browsers means re-setting the default.
+function setDefaultSprinkleSource(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer || !layer.uploadSrc){
+    alert('Pick an image on this sprinkle first (📚 From library… or 📁 Upload from file…), then click Set as default.');
+    return;
+  }
+  try {
+    localStorage.setItem('defaultSprinkleSource', JSON.stringify({
+      uploadSrc: layer.uploadSrc,
+      bgRemove: layer.bgRemove || 'none',
+      bgTolerance: layer.bgTolerance || 35
+    }));
+    showToast('★ Default sprinkle updated — new + Sprinkle layers will use this image');
+    renderProps();
+  } catch(e){
+    alert('Could not save default — browser storage may be full. Try clearing some old designs.');
+  }
+}
+
+function clearDefaultSprinkleSource(){
+  try { localStorage.removeItem('defaultSprinkleSource'); } catch(e){}
+  showToast('Default reset — new + Sprinkle layers will use built-in catnip');
+  renderProps();
 }
 
 // Re-randomize the scatter layout by picking a new seed.
