@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v227</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v228</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5797,6 +5797,10 @@ function _makeMarkerLayer(subtype, x, y, w, h, rotation){
     circleEndTaper:    subtype === 'circle' ? 50 : 0,   // 0..100, thickness ramp at stroke end
     // v226: which star vertex the stroke begins at. Snaps to 72° steps (0, 72, 144, 216, 288).
     starStartAng:      subtype === 'star'   ? 0  : 0,   // 0 = top vertex, then clockwise
+    // v228: independent start/end taper for the star's two open ends — same fields the circle
+    // uses. Defaults to 50 (soft cap) for both so it matches the previous shared-taper look.
+    starStartTaper:    subtype === 'star'   ? 50 : 0,   // 0..100, thickness ramp at stroke start
+    starEndTaper:      subtype === 'star'   ? 50 : 0,   // 0..100, thickness ramp at stroke end
     shadowBlur: 0, shadowOffsetX: 0, shadowOffsetY: 0, shadowOpacity: 50, shadowColor: '#000000',
     _seed: Math.floor(Math.random() * 100000) + 1
   };
@@ -6408,8 +6412,12 @@ function _drawStarMarker(ctx, layer){
     var pathPts = order.map(function(idx){ return outer[idx]; });
     pathPts.push(closure);
     var pts = _genContinuousStroke(pathPts, wobble, seed);
-    var capT = layer.roundEnds ? 0 : (layer.bodyStartTaper != null ? layer.bodyStartTaper / 100 : 0.5);
-    var allStrokes = [{pts: pts, seed: seed, startTaper: capT, endTaper: capT}];
+    // v228: independent start/end taper (parallel to v224 circle change). Falls back to the
+    // unified bodyStartTaper for old layers that don't have the new fields yet.
+    var fallbackT = layer.bodyStartTaper != null ? layer.bodyStartTaper / 100 : 0.5;
+    var startT = layer.roundEnds ? 0 : (layer.starStartTaper != null ? layer.starStartTaper / 100 : fallbackT);
+    var endT   = layer.roundEnds ? 0 : (layer.starEndTaper   != null ? layer.starEndTaper   / 100 : fallbackT);
+    var allStrokes = [{pts: pts, seed: seed, startTaper: startT, endTaper: endT}];
     _paintMarkerStrokes(ctx, layer, allStrokes, layer.x, layer.y + layer.h / 2, layer.x + layer.w, layer.y + layer.h / 2);
   });
 }
@@ -6490,6 +6498,8 @@ function buildArrowProps(l){
     + (isStar
         ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Star</div>'
           + R('Start vertex (0 = top · 72/144/216/288 = clockwise)', 'parrStarStartAng_' + id, (l.starStartAng != null ? l.starStartAng : 0), 0, 288, 72)
+          + R('Start cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrStarStartCap_' + id, (l.starStartTaper != null ? l.starStartTaper : 50), 0, 100, 1)
+          + R('End cap (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrStarEndCap_' + id, (l.starEndTaper != null ? l.starEndTaper : 50), 0, 100, 1)
         : '')
     + (isArrow
         ? '<div style="font-size:10px;color:var(--muted);margin:8px 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Arrowhead</div>'
@@ -6504,7 +6514,7 @@ function buildArrowProps(l){
           + R('Wing 2 tip shape (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrW2Taper_' + id, (l.wing2EndTaper != null ? l.wing2EndTaper : 50), 0, 100, 1)
           + '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Body back</div>'
         : '')
-    + (isCircle ? '' : R((isArrow ? 'Body start shape' : 'Stroke ends shape') + ' (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrBodyTaper_' + id, (l.bodyStartTaper != null ? l.bodyStartTaper : 50), 0, 100, 1))
+    + ((isCircle || isStar) ? '' : R((isArrow ? 'Body start shape' : 'Stroke ends shape') + ' (0 = splayed · 30 = round · 50 = soft · 100 = mild point)', 'parrBodyTaper_' + id, (l.bodyStartTaper != null ? l.bodyStartTaper : 50), 0, 100, 1))
     + '<label style="font-size:11px;cursor:pointer;display:flex;align-items:center;gap:6px;margin-top:8px;"><input type="checkbox" id="parrRoundEnds_' + id + '"' + (l.roundEnds ? ' checked' : '') + '> Rounded ends (overrides taper sliders → all caps become round bulbs)</label>'
     + (isArrow
         ? '<div style="display:flex;gap:8px;align-items:center;margin:6px 0;">'
@@ -7852,6 +7862,9 @@ function bindPropEvents(layer){
     rng('parrCircleEndCap_' + aid,    function(v){ layer.circleEndTaper   = v; redraw(); });
     // v226: star start vertex (snaps to nearest 72° step → vertex 0..4)
     rng('parrStarStartAng_' + aid,    function(v){ layer.starStartAng     = v; redraw(); });
+    // v228: independent star start/end taper (parallel to circle)
+    rng('parrStarStartCap_' + aid,    function(v){ layer.starStartTaper   = v; redraw(); });
+    rng('parrStarEndCap_' + aid,      function(v){ layer.starEndTaper     = v; redraw(); });
     // v160: fill type + gradient controls (mirrors shape layer pattern)
     on('parrFillType_' + aid, 'change', function(e){ layer.fillType = e.target.value; renderProps(); });
     on('parrColor_' + aid, 'input', function(e){ layer.color = e.target.value; redraw(); });
