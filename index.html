@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v247</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v248</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -7898,7 +7898,7 @@ function buildImageProps(l){
     // v205: Manual erase tool — paint to remove pixels (useful after AI bg-removal for cleanup,
     // or for blending photos by erasing edges). Brush size + hardness sliders in a bottom toolbar.
     // A single undo snapshot covers the whole erase session.
-    +(l.img ? '<button class="btn-add" style="width:100%;margin-top:5px;" onclick="enterEraseMode('+l.id+')" title="Erase pixels manually with a brush. Useful for cleaning up stragglers after AI background removal.">🧽 Erase Tool</button>' : '')
+    +(l.img ? '<button class="btn-add" style="width:100%;margin-top:5px;" onclick="enterEraseMode('+l.id+')" title="Brush-based pixel editor. Erase mode removes pixels (cleanup after AI bg-removal); Restore mode paints back pixels from the saved original.">🧽 Erase / Restore</button>' : '')
     +NUMPAIR('X (px)','nx',l.x,'Y (px)','ny',l.y)
     +NUMPAIR('W (px)','nw',l.w,'H (px)','nh',l.h)
     +R('X','px',l.x,-canvasW,canvasW*2,1)+R('Y','py',l.y,-canvasH,canvasH*2,1)
@@ -14354,6 +14354,10 @@ function bgRefineApply(){
   snapshotStateFull();   // full snapshot so undo restores the pre-removal image
   var newImg = new Image();
   newImg.onload = function(){
+    // v248: save the pre-removal image so the Erase/Restore tool's Restore brush can paint
+    // back parts of the background that the AI cut too aggressively. First commit saves; we
+    // never overwrite this so the very original always remains accessible.
+    if(!layer._originalImg) layer._originalImg = layer.img;
     layer.img = newImg;
     _bgRefineState = null;
     document.getElementById('bgRefineModal').classList.add('hidden');
@@ -14445,6 +14449,8 @@ function _eraseScreenToSource(layer, cx, cy){
 
 function _eraseStampAt(cx, cy){
   if(!eraseState) return;
+  // v248: dispatch by mode. Restore paints original pixels back; erase removes them.
+  if(eraseState.mode === 'restore') return _restoreStampAt(cx, cy);
   var coords = _eraseScreenToSource(eraseState.layer, cx, cy);
   var srcRadius = (eraseState.brushSize / 2) * coords.scale;
   if(srcRadius < 0.5) return;
@@ -14452,13 +14458,11 @@ function _eraseStampAt(cx, cy){
   c.save();
   c.globalCompositeOperation = 'destination-out';
   if(eraseState.hardness >= 99){
-    // Fully hard brush — flat alpha=1 destination-out → clean binary erase
     c.fillStyle = 'rgba(0,0,0,1)';
     c.beginPath();
     c.arc(coords.sx, coords.sy, srcRadius, 0, Math.PI * 2);
     c.fill();
   } else {
-    // Soft brush — radial gradient where alpha falls off outside the hardness ring
     var hardStop = Math.max(0, Math.min(0.95, eraseState.hardness / 100));
     var grad = c.createRadialGradient(coords.sx, coords.sy, 0, coords.sx, coords.sy, srcRadius);
     grad.addColorStop(0, 'rgba(0,0,0,1)');
@@ -14470,6 +14474,47 @@ function _eraseStampAt(cx, cy){
     c.fill();
   }
   c.restore();
+}
+
+// v248: Restore brush — paints back pixels from the originalCanvas. Soft edges work via a
+// scratch canvas: draw the brush mask there, use 'source-in' to keep only the original-image
+// pixels where the mask is opaque, then composite onto the working canvas with normal alpha.
+function _restoreStampAt(cx, cy){
+  if(!eraseState || !eraseState.originalCanvas) return;
+  var coords = _eraseScreenToSource(eraseState.layer, cx, cy);
+  var srcRadius = (eraseState.brushSize / 2) * coords.scale;
+  if(srcRadius < 0.5) return;
+  // Hard brush: clip a circle and drawImage the original directly
+  if(eraseState.hardness >= 99){
+    var ctx = eraseState.workingCtx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(coords.sx, coords.sy, srcRadius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(eraseState.originalCanvas, 0, 0);
+    ctx.restore();
+    return;
+  }
+  // Soft brush: paint a radial alpha mask onto a scratch canvas, then source-in the original
+  // so only the mask-shaped portion of the original survives. Final composite onto working.
+  var w = eraseState.workingCanvas.width, h = eraseState.workingCanvas.height;
+  var scratch = document.createElement('canvas');
+  scratch.width = w; scratch.height = h;
+  var sctx = scratch.getContext('2d');
+  var hardStop = Math.max(0, Math.min(0.95, eraseState.hardness / 100));
+  var grad = sctx.createRadialGradient(coords.sx, coords.sy, 0, coords.sx, coords.sy, srcRadius);
+  grad.addColorStop(0, 'rgba(0,0,0,1)');
+  grad.addColorStop(hardStop, 'rgba(0,0,0,1)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  sctx.fillStyle = grad;
+  sctx.beginPath();
+  sctx.arc(coords.sx, coords.sy, srcRadius, 0, Math.PI * 2);
+  sctx.fill();
+  // Keep only original-image pixels where the mask is opaque
+  sctx.globalCompositeOperation = 'source-in';
+  sctx.drawImage(eraseState.originalCanvas, 0, 0);
+  // Composite onto working canvas
+  eraseState.workingCtx.drawImage(scratch, 0, 0);
 }
 
 function _eraseStampLine(fromX, fromY, toX, toY){
@@ -14488,21 +14533,34 @@ function _eraseStampLine(fromX, fromY, toX, toY){
 function enterEraseMode(layerId){
   var layer = layers.find(function(l){ return l.id === layerId; });
   if(!layer || !layer.img){ alert('No image on this layer to erase.'); return; }
-  // Mutually exclusive with crop mode
   if(cropState) exitCropMode();
-  // Single snapshot for the entire session — undo restores the pre-erase image
   snapshotStateFull();
   var natW = layer.img.naturalWidth || layer.img.width;
   var natH = layer.img.naturalHeight || layer.img.height;
+  // Working canvas = current image (mutated by erase / restore strokes)
   var wc = document.createElement('canvas');
   wc.width = natW; wc.height = natH;
-  var wctx = wc.getContext('2d');
-  wctx.drawImage(layer.img, 0, 0);
+  wc.getContext('2d').drawImage(layer.img, 0, 0);
+  // v248: ORIGINAL canvas for the Restore brush. If a prior bg-removal or erase saved the
+  // pre-destruction image as layer._originalImg, use THAT — so restore can bring back pixels
+  // erased in previous Apply commits. Otherwise fall back to a copy of the current image,
+  // which still lets Restore undo within-session erases (the working canvas diverges as soon
+  // as the user paints; the original copy stays as the reference).
+  var oc = document.createElement('canvas');
+  oc.width = natW; oc.height = natH;
+  var origImg = layer._originalImg || layer.img;
+  // Use natural dims that match the new canvas — older _originalImg may have different dims
+  oc.width = origImg.naturalWidth || origImg.width || natW;
+  oc.height = origImg.naturalHeight || origImg.height || natH;
+  oc.getContext('2d').drawImage(origImg, 0, 0);
   eraseState = {
     layerId: layer.id,
     layer: layer,
     workingCanvas: wc,
-    workingCtx: wctx,
+    workingCtx: wc.getContext('2d'),
+    originalCanvas: oc,        // v248: source for the Restore brush
+    mode: 'erase',             // 'erase' | 'restore'
+    hasOriginal: !!layer._originalImg,   // hint for the UI ("Restore from saved" vs "session only")
     brushSize: 40,
     hardness: 80,
     drawing: false,
@@ -14526,6 +14584,10 @@ function applyErase(){
   var dataUrl = eraseState.workingCanvas.toDataURL('image/png');
   var newImg = new Image();
   newImg.onload = function(){
+    // v248: stash the pre-Apply image so a future erase/restore session can paint pixels back
+    // from this state. First Apply saves; subsequent Applies do NOT overwrite (keeps the very
+    // first untouched original as the source of truth for restore).
+    if(!layer._originalImg) layer._originalImg = layer.img;
     layer.img = newImg;
     exitEraseMode();
     redraw();
@@ -14547,14 +14609,43 @@ function eraseUpdateBrush(){
   redraw();
 }
 
+// v248: switch the erase tool between Erase (destination-out) and Restore (paint original back).
+// Both modes share the same brush size + hardness sliders + cursor preview.
+function setEraseMode(mode){
+  if(!eraseState) return;
+  if(mode !== 'erase' && mode !== 'restore') return;
+  eraseState.mode = mode;
+  var hint = document.getElementById('eraseModeHint');
+  var eb   = document.getElementById('eraseModeBtn');
+  var rb   = document.getElementById('restoreModeBtn');
+  if(mode === 'erase'){
+    if(hint) hint.textContent = '🧽 Erase — drag on image to remove pixels';
+    if(eb){ eb.style.background = '#8ab81d'; }
+    if(rb){ rb.style.background = '#444'; }
+  } else {
+    var srcLabel = eraseState.hasOriginal ? 'pre-removal original' : 'image at session start';
+    if(hint) hint.textContent = '↩ Restore — drag to paint back pixels from the ' + srcLabel;
+    if(eb){ eb.style.background = '#444'; }
+    if(rb){ rb.style.background = '#4a8ec4'; }
+  }
+}
+
 function showEraseToolbar(){
   var bar = document.getElementById('eraseToolbar');
   if(!bar){
     bar = document.createElement('div');
     bar.id = 'eraseToolbar';
     bar.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:8px;display:flex;gap:14px;align-items:center;z-index:900;box-shadow:0 4px 16px rgba(0,0,0,0.4);font-size:13px;flex-wrap:wrap;justify-content:center;max-width:calc(100vw - 40px);';
+    // v248: mode toggle. Erase removes pixels; Restore paints back from the saved original.
+    // The originalCanvas in eraseState is sourced from layer._originalImg if set (pre-bg-removal
+    // or pre-erase image saved on Apply), else a copy of the current image (still useful for
+    // undoing within-session erase strokes before Apply).
     bar.innerHTML =
-        '<span style="opacity:0.85;">🧽 Erase — drag on image to remove pixels</span>'
+        '<span id="eraseModeHint" style="opacity:0.85;">🧽 Erase — drag on image to remove pixels</span>'
+      + '<div style="display:inline-flex;gap:0;border:1px solid #555;border-radius:5px;overflow:hidden;">'
+        + '<button id="eraseModeBtn" onclick="setEraseMode(\'erase\')" style="background:#8ab81d;color:#fff;border:none;padding:6px 12px;cursor:pointer;font-weight:700;font-size:12px;">🧽 Erase</button>'
+        + '<button id="restoreModeBtn" onclick="setEraseMode(\'restore\')" style="background:#444;color:#fff;border:none;padding:6px 12px;cursor:pointer;font-weight:700;font-size:12px;border-left:1px solid #555;">↩ Restore</button>'
+      + '</div>'
       + '<label style="display:flex;align-items:center;gap:6px;">Size '
         + '<input type="range" id="eraseBrushSize" min="5" max="200" value="40" oninput="eraseUpdateBrush()" style="width:120px;">'
         + '<span id="eraseBrushSizeVal" style="font-family:monospace;width:30px;text-align:right;">40</span>'
