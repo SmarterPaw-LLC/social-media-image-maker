@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v248</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v249</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9575,8 +9575,13 @@ function startInlineTextEdit(layer){
   ta.value = layer.text || '';
   ta.spellcheck = false;
   ta.style.position = 'absolute';
-  ta.style.left = (bds.x * zoomLevel) + 'px';
-  ta.style.top  = (bds.y * zoomLevel) + 'px';
+  // v249: account for overscan. When overscan is on, the canvas wrap is 300px wider on every
+  // side and layer coord (0,0) sits at (overscanPx, overscanPx) WITHIN the wrap. Without this
+  // offset, the textarea was landing in the top-left overscan margin instead of at the actual
+  // text position, making it look like the editor "jumped" away from the canvas text.
+  var _ovs = _overscanOn ? _overscanPx : 0;
+  ta.style.left = ((bds.x + _ovs) * zoomLevel) + 'px';
+  ta.style.top  = ((bds.y + _ovs) * zoomLevel) + 'px';
   ta.style.width  = (bds.w * zoomLevel) + 'px';
   // Height: match the rendered text height if known, else a comfortable default
   var renderedH = layer._renderedH || (size * lineHeight);
