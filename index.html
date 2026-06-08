@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v254</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v255</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10102,12 +10102,29 @@ function _drawMaskedPair(ctx, maskLayer, contentLayer){
   if(w <= 0 || h <= 0) return;
   var maskOff = document.createElement('canvas');
   maskOff.width = w; maskOff.height = h;
-  _drawSingleLayerInto(maskOff.getContext('2d'), maskLayer);
+  var mctx = maskOff.getContext('2d');
+  _drawSingleLayerInto(mctx, maskLayer);
+  // v255: binarize the mask alpha so content renders at FULL opacity wherever the mask has any
+  // meaningful alpha. Without this, mask layers with anti-aliased edges, partial transparency,
+  // or sub-100% layer opacity would propagate their alpha to the content (making it look
+  // semi-transparent). Threshold at ~128 (50%): above goes to 255 (full), below goes to 0
+  // (transparent). This preserves clean hard edges while killing the unintended semi-transparency.
+  // A small linear ramp around the threshold preserves a 1-2px anti-alias band at the edge so
+  // the cutout doesn't look pixelated.
+  var maskImg = mctx.getImageData(0, 0, w, h);
+  var d = maskImg.data;
+  for(var i = 3; i < d.length; i += 4){
+    var a = d[i];
+    if(a <= 100)      d[i] = 0;
+    else if(a >= 150) d[i] = 255;
+    else              d[i] = Math.round((a - 100) / 50 * 255);   // 100→0, 150→255 linear
+  }
+  mctx.putImageData(maskImg, 0, 0);
   var contentOff = document.createElement('canvas');
   contentOff.width = w; contentOff.height = h;
   var cctx = contentOff.getContext('2d');
   _drawSingleLayerInto(cctx, contentLayer);
-  // Keep only the content pixels where the mask is opaque
+  // Keep only the content pixels where the (now binarized) mask is opaque
   cctx.globalCompositeOperation = 'destination-in';
   cctx.drawImage(maskOff, 0, 0);
   cctx.globalCompositeOperation = 'source-over';
