@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v252</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v253</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -328,10 +328,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button class="btn-add" onclick="addSprinkleLayer()" title="Scatter catnip or an uploaded image inside a resizable box">+ Sprinkle 🌿</button>
       <button class="btn-add" onclick="addSvgLayer()">+ SVG</button>
     </div>
-    <div class="col2">
-      <button class="btn-add" onclick="addVideoLayer()">+ Video</button>
-      <button class="btn-add" onclick="addFramedImageLayer()" title="Image clipped inside a shape mask">+ Framed Image</button>
-    </div>
+    <!-- v253: + Framed Image moved to a setting on the existing image layer. Now use + Image
+         (upload or library) to add a photo, then click "🪟 Add frame…" in its properties to
+         clip it inside a shape mask. + Video stays here as a single full-width button. -->
+    <button class="btn-add" onclick="addVideoLayer()">+ Video</button>
     <div class="col2">
       <!-- v221: + Marker dropdown replaces the standalone + Arrow button. All four subtypes
            (arrow, circle, star, underline) share the marker stroke pipeline so they look like
@@ -5857,6 +5857,84 @@ function flipVideoLayer(id, axis){
 //   2. Image-within-frame: pan (imgOffsetX/Y), zoom (imgScale), rotation (imgRotation).
 // Frame uses any of the existing 11 shapes via shared buildShapePath().
 
+// v253: convert a regular image layer to a framedImage layer IN PLACE. Same id, same position
+// and size — just acquires the shape-clip + frame-stroke + image-positioning controls. Used by
+// the "🪟 Add frame…" button in the image layer property panel (the old "+ Framed Image"
+// sidebar button was removed in v253 — framing is now a property, not a separate layer type).
+function convertImageToFramedImage(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer || layer.type !== 'image' || !layer.img){
+    alert('Pick an image layer with an image loaded first.');
+    return;
+  }
+  snapshotState();
+  // Capture image references — framedImage uses _img/_imgSrc/natW/natH
+  layer._img = layer.img;
+  layer._imgSrc = layer.img.src;
+  layer.natW = layer.img.naturalWidth || layer.img.width;
+  layer.natH = layer.img.naturalHeight || layer.img.height;
+  // Swap type
+  layer.type = 'framedImage';
+  // Default frame settings (mirror what addFramedImageLayer would set up)
+  if(layer.shape == null)            layer.shape = 'circle';
+  if(layer.cornerRadius == null)     layer.cornerRadius = 0;
+  if(layer.starPoints == null)       layer.starPoints = 5;
+  if(layer.starInner == null)        layer.starInner = 0.4;
+  if(layer.polygonSides == null)     layer.polygonSides = 6;
+  if(layer.polygonRotation == null)  layer.polygonRotation = 0;
+  if(layer.starburstPoints == null)  layer.starburstPoints = 12;
+  if(layer.starburstInner == null)   layer.starburstInner = 0.7;
+  if(layer.skewAngle == null)        layer.skewAngle = 15;
+  if(layer.topWidthPct == null)      layer.topWidthPct = 60;
+  if(layer.imgOffsetX == null)       layer.imgOffsetX = 0;
+  if(layer.imgOffsetY == null)       layer.imgOffsetY = 0;
+  if(layer.imgScale == null)         layer.imgScale = 1.0;
+  if(layer.imgRotation == null)      layer.imgRotation = 0;
+  if(layer.fitMode == null)          layer.fitMode = 'cover';
+  if(layer.frameRotation == null)    layer.frameRotation = 0;
+  if(layer.strokeColor == null)      layer.strokeColor = '#000000';
+  if(layer.strokeWidth == null)      layer.strokeWidth = 0;
+  // Shadow probably already set; ensure all fields exist
+  if(layer.shadowColor == null)      layer.shadowColor = '#000000';
+  if(layer.shadowBlur == null)       layer.shadowBlur = 0;
+  if(layer.shadowOffsetX == null)    layer.shadowOffsetX = 0;
+  if(layer.shadowOffsetY == null)    layer.shadowOffsetY = 0;
+  if(layer.shadowOpacity == null)    layer.shadowOpacity = 50;
+  // Tidy the name
+  if(layer.name && layer.name.indexOf('Framed') === -1){
+    layer.name = 'Framed ' + layer.name;
+  }
+  renderLayerList();
+  renderProps();
+  redraw();
+  showToast('🪟 Frame applied — adjust shape and stroke in the layer panel');
+}
+
+// Reverse: convert a framedImage back to a plain image layer. Drops the shape-clip and frame
+// stroke; keeps image, position, size, rotation, opacity, shadow.
+function removeFrameFromImage(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer || layer.type !== 'framedImage') return;
+  snapshotState();
+  // Restore image ref where the plain image layer expects it
+  layer.img = layer._img || layer.img;
+  // Plain image layers don't use _img/_imgSrc — clean up to avoid stale references
+  delete layer._img;
+  delete layer._imgSrc;
+  // Swap type back
+  layer.type = 'image';
+  // Ensure plain-image baseline fields exist
+  if(layer.fit == null) layer.fit = 'cover';
+  if(layer._baseW == null) layer._baseW = layer.w;
+  if(layer._baseH == null) layer._baseH = layer.h;
+  // Strip the "Framed " name prefix if present
+  if(layer.name) layer.name = layer.name.replace(/^Framed\s+/, '');
+  renderLayerList();
+  renderProps();
+  redraw();
+  showToast('Frame removed');
+}
+
 function addFramedImageLayer(){
   // Step 1: pick an image
   var input = document.createElement('input');
@@ -6030,6 +6108,9 @@ function buildFramedImageProps(l){
         +'<button class="btn-sm" style="flex:1;" onclick="replaceFramedImage('+l.id+')" title="Upload a new image from your computer">📁 From file…</button>'
         +'<button class="btn-sm" style="flex:1;" onclick="replaceFramedImageFromLibrary('+l.id+')" title="Pick from the shared team library">📚 Library…</button>'
       +'</div>'
+      // v253: Convert this framedImage back to a plain image layer (removes shape clip + frame
+      // stroke; keeps image, position, size, rotation, opacity, shadow).
+      +'<button class="btn-sm" style="width:100%;margin-top:4px;" onclick="removeFrameFromImage('+l.id+')" title="Strip the frame and revert to a plain image layer. Keeps the image, position, size, rotation, opacity, and shadow.">✕ Remove frame (back to plain image)</button>'
     +'</div>'
     +'<label>Frame shape</label>'
     +'<select id="pfimg_shape" style="width:100%;padding:6px;border:1px solid var(--border);border-radius:5px;font-size:12px;">'+shapeOpts+'</select>'
@@ -7959,6 +8040,11 @@ function buildImageProps(l){
     // or for blending photos by erasing edges). Brush size + hardness sliders in a bottom toolbar.
     // A single undo snapshot covers the whole erase session.
     +(l.img ? '<button class="btn-add" style="width:100%;margin-top:5px;" onclick="enterEraseMode('+l.id+')" title="Brush-based pixel editor. Erase mode removes pixels (cleanup after AI bg-removal); Restore mode paints back pixels from the saved original.">🧽 Erase / Restore</button>' : '')
+    // v253: Add frame — converts this image layer to a framedImage layer in place. The image,
+    // position, size, rotation, opacity, and shadow all carry over; you gain a shape-clip
+    // (circle / star / polygon / etc.) and frame-stroke controls. Replaces the old standalone
+    // "+ Framed Image" sidebar button.
+    +(l.img ? '<button class="btn-add" style="width:100%;margin-top:5px;" onclick="convertImageToFramedImage('+l.id+')" title="Clip this image inside a shape (circle, star, polygon, etc.) with an optional frame stroke. Adds shape and image-within-frame controls to this layer.">🪟 Add frame…</button>' : '')
     +NUMPAIR('X (px)','nx',l.x,'Y (px)','ny',l.y)
     +NUMPAIR('W (px)','nw',l.w,'H (px)','nh',l.h)
     +R('X','px',l.x,-canvasW,canvasW*2,1)+R('Y','py',l.y,-canvasH,canvasH*2,1)
