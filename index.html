@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v249</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v250</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -315,6 +315,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); addImageLayer();">📁 Upload from file…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openImageLibraryModal();">📚 From library…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openClipArtBrowser();">🎨 Clip art (open source)…</button>
+          <button class="add-image-popup-item" onclick="closeAddImageMenu(); openStockPhotoBrowser();">📷 Stock photo (Pixabay)…</button>
         </div>
       </div>
       <button class="btn-add" id="addStickerBtn" onclick="addStickerLayer()">+ Sticker</button>
@@ -1158,14 +1159,18 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
      is a vector SVG that drops onto the canvas as a real svg-type layer — recolor swatches,
      resize, rotate, all the standard SVG layer affordances work. No API key, CORS-enabled. -->
 <div class="modal-overlay hidden" id="clipArtModal">
-  <div class="modal" style="max-width:920px;max-height:90vh;display:flex;flex-direction:column;">
-    <h2>🎨 Clip Art Browser</h2>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+  <!-- v250: width override — .modal base class is 340px which was kneecapping this modal on
+       wide displays. Use min(95vw, 1280px) so it scales up on desktop but doesn't overflow
+       smaller windows. -->
+  <div class="modal" style="width:min(95vw,1280px);max-width:1280px;max-height:90vh;display:flex;flex-direction:column;">
+    <h2 id="clipArtTitle">🎨 Clip Art Browser</h2>
+    <div id="clipArtDesc" style="font-size:11px;color:var(--muted);margin-bottom:8px;">
       Open-source illustrations from Noto Emoji, Twemoji, Fluent Emoji / Fluent Color, OpenMoji, Emojione, fxemoji, Flat Color Icons, and Streamline — all free for commercial use (Apache 2.0 / CC&#8209;BY / MIT). Searched via the Iconify aggregator. <em>Tip: if a phrase returns nothing, try a shorter term — "cap" instead of "baseball cap", "hat" instead of "top hat".</em>
     </div>
     <!-- v240: source dropdown moved to its own row above the search input so the search field
-         has the full modal width (was squished sharing the row with dropdown + button). -->
-    <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
+         has the full modal width (was squished sharing the row with dropdown + button).
+         v250: hidden when modal is opened in Stock Photo mode (Pixabay is the only photo source). -->
+    <div id="clipArtSourceRow" style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
       <label style="font-size:11px;color:var(--muted);font-weight:600;white-space:nowrap;">Source:</label>
       <select id="clipArtSource" onchange="fetchClipArt()" style="flex:1;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff;">
         <option value="iconify">Iconify (icons + emoji)</option>
@@ -4603,15 +4608,57 @@ var _CLIP_ART_QUICK_QUERIES = [
   'cap', 'sombrero', 'glasses', 'cake',
   'pizza', 'donut', 'coffee', 'flower'
 ];
+// v250: stock photo mode chips — SmarterPaw-relevant photo subjects (cats, dogs, pets,
+// lifestyle scenes). Used when the modal is opened via + Image > 📷 Stock photo.
+var _STOCK_PHOTO_QUICK_QUERIES = [
+  'cat', 'dog', 'puppy', 'kitten',
+  'pet', 'paw', 'animal', 'outdoor',
+  'happy pet', 'closeup', 'studio', 'lifestyle'
+];
+// Current mode of the shared media browser modal. 'clipart' (default) opens to Iconify+Pixabay
+// illustrations; 'photo' opens to Pixabay photos only.
+var _clipArtMode = 'clipart';
 
+// v250: two entry points for the shared media browser modal.
+// - Clip art: Iconify icons + Pixabay illustrations
+// - Stock photo: Pixabay photos only
 function openClipArtBrowser(){
+  _clipArtMode = 'clipart';
+  _openMediaBrowser();
+}
+function openStockPhotoBrowser(){
+  _clipArtMode = 'photo';
+  _openMediaBrowser();
+}
+
+function _openMediaBrowser(){
   var modal = document.getElementById('clipArtModal');
   if(!modal) return;
-  modal.classList.remove('hidden');
-  // Lazy-render the quick-pick chips (once per session)
+  var isPhoto = _clipArtMode === 'photo';
+  // Update title + description for mode
+  var title = document.getElementById('clipArtTitle');
+  if(title) title.textContent = isPhoto ? '📷 Stock Photo Browser' : '🎨 Clip Art Browser';
+  var desc = document.getElementById('clipArtDesc');
+  if(desc){
+    desc.innerHTML = isPhoto
+      ? 'Free stock photography from <b>Pixabay</b> — millions of images, free for commercial use, no attribution required. <em>Tip: short keywords like "cat", "dog", "paw" return the broadest set of results.</em>'
+      : 'Open-source illustrations from Noto Emoji, Twemoji, Fluent Emoji / Fluent Color, OpenMoji, Emojione, fxemoji, Flat Color Icons, and Streamline — all free for commercial use (Apache 2.0 / CC&#8209;BY / MIT). Searched via the Iconify aggregator. <em>Tip: if a phrase returns nothing, try a shorter term — "cap" instead of "baseball cap", "hat" instead of "top hat".</em>';
+  }
+  // Hide the source dropdown in photo mode (only Pixabay supports photos)
+  var sourceRow = document.getElementById('clipArtSourceRow');
+  if(sourceRow) sourceRow.style.display = isPhoto ? 'none' : 'flex';
+  // Update placeholder text on the search input
+  var qEl = document.getElementById('clipArtQuery');
+  if(qEl) qEl.placeholder = isPhoto
+    ? 'Search Pixabay photos (cat, dog, paw, outdoor, lifestyle…)'
+    : 'Search (sunglasses, top hat, bow tie, mustache, pizza…)';
+
+  // Re-render chips for the current mode (always rebuild — we may switch modes between opens)
   var chips = document.getElementById('clipArtChips');
-  if(chips && !chips.children.length){
-    _CLIP_ART_QUICK_QUERIES.forEach(function(q){
+  if(chips){
+    chips.innerHTML = '';
+    var queries = isPhoto ? _STOCK_PHOTO_QUICK_QUERIES : _CLIP_ART_QUICK_QUERIES;
+    queries.forEach(function(q){
       var chip = document.createElement('button');
       chip.type = 'button';
       chip.textContent = q;
@@ -4623,15 +4670,19 @@ function openClipArtBrowser(){
       chips.appendChild(chip);
     });
   }
-  // Auto-search the first chip on first open — universally useful pet-humanization accessory
+
+  modal.classList.remove('hidden');
+
+  // Always clear the grid when mode changes — otherwise illustration tiles linger when entering
+  // photo mode and vice versa. Then auto-search the mode-appropriate default term.
   var grid = document.getElementById('clipArtGrid');
-  var qEl = document.getElementById('clipArtQuery');
-  if(grid && !grid.children.length){
-    if(qEl && !qEl.value) qEl.value = 'sunglasses';
-    fetchClipArt();
-  } else if(qEl){
-    setTimeout(function(){ qEl.focus(); qEl.select(); }, 50);
+  if(grid) grid.innerHTML = '';
+  var status = document.getElementById('clipArtStatus');
+  if(status) status.textContent = '';
+  if(qEl){
+    qEl.value = isPhoto ? 'cat' : 'sunglasses';
   }
+  fetchClipArt();
 }
 
 function closeClipArtBrowser(){
@@ -4643,6 +4694,8 @@ function fetchClipArt(){
   if(_clipArtFetching) return;
   // v237b: route by selected source. Iconify (default) or Pixabay (free key required).
   // OpenClipart was removed in v237b after their JSON API started returning HTML.
+  // v250: photo mode forces Pixabay regardless of the (hidden) source dropdown.
+  if(_clipArtMode === 'photo') return _fetchPixabay();
   var srcEl = document.getElementById('clipArtSource');
   var src = srcEl ? srcEl.value : 'iconify';
   if(src === 'pixabay') return _fetchPixabay();
@@ -4746,16 +4799,18 @@ function _fetchPixabay(){
   var qEl = document.getElementById('clipArtQuery');
   var q = (qEl ? qEl.value : '').trim();
   if(!q){ q = 'cat'; if(qEl) qEl.value = q; }
-  var cacheKey = 'px:' + q;
+  // v250: image_type depends on which entry point opened the modal.
+  //   'photo'        → real photographs (the new Stock Photo browser)
+  //   'illustration' → cartoony/painted clip-art-style (the original Clip Art browser)
+  var imageType = _clipArtMode === 'photo' ? 'photo' : 'illustration';
+  var cacheKey = 'px:' + imageType + ':' + q;
   if(_clipArtCache[cacheKey]){ _renderPixabayResults(cacheKey, q); return; }
   _clipArtFetching = true;
-  if(status) status.textContent = 'Searching Pixabay illustrations for "' + q + '"…';
+  if(status) status.textContent = 'Searching Pixabay ' + (imageType === 'photo' ? 'photos' : 'illustrations') + ' for "' + q + '"…';
   if(grid) grid.innerHTML = '';
-  // image_type=illustration → cartoony/painted/clip-art-style content. Use vector mode
-  // separately if user wants those (could add as a second sub-option later).
   var url = 'https://pixabay.com/api/?key=' + encodeURIComponent(PIXABAY_API_KEY)
     + '&q=' + encodeURIComponent(q)
-    + '&image_type=illustration'
+    + '&image_type=' + imageType
     + '&per_page=48'
     + '&safesearch=true';
   fetch(url)
@@ -4780,9 +4835,10 @@ function _fetchPixabay(){
         };
       });
       if(status){
+        var kindLabel = imageType === 'photo' ? 'photos' : 'illustrations';
         status.textContent = data.hits.length
-          ? data.hits.length + ' Pixabay results · click any tile to add as an image layer'
-          : 'No Pixabay illustrations for "' + q + '". Try a different keyword.';
+          ? data.hits.length + ' Pixabay ' + kindLabel + ' · click any tile to add as an image layer'
+          : 'No Pixabay ' + kindLabel + ' for "' + q + '". Try a different keyword.';
       }
       _renderPixabayResults(cacheKey, q);
     })
