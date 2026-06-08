@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v253</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v254</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -7459,6 +7459,27 @@ function moveLayerById(layerId, dir){
   redraw();
 }
 
+// v254: toggle the isMask flag on a layer. When ON, the layer immediately ABOVE it in the
+// stack will only render where this layer is opaque (clipping mask, Photoshop / Affinity style).
+// Snapshot for undo so toggling can be reverted with Ctrl+Z.
+function toggleLayerMask(layerId){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer) return;
+  var idx = layers.indexOf(layer);
+  if(idx === layers.length - 1 && !layer.isMask){
+    // Topmost layer — nothing above to mask. Don't toggle ON; let toggle OFF still work.
+    showToast('No layer above to mask — add a layer on top first, then enable mask here.');
+    return;
+  }
+  snapshotState();
+  layer.isMask = !layer.isMask;
+  renderLayerList();
+  redraw();
+  showToast(layer.isMask
+    ? '🪟 ' + layer.name + ' now masks the layer above it'
+    : 'Mask role removed from ' + layer.name);
+}
+
 function renderLayerList(){
   var list=document.getElementById('layerList');list.innerHTML='';
   for(var i=layers.length-1;i>=0;i--){
@@ -7479,6 +7500,17 @@ function renderLayerList(){
       // increase array index. Disabled state shown as dimmed opacity (not clickable).
       var canMoveUp   = layerIdx < layers.length - 1;
       var canMoveDown = layerIdx > 0;
+      // v254: mask toggle. When isMask is set, this layer acts as a clipping shape for the
+      // layer directly above it in the stack. ⬚ icon = inactive, ◉ icon (colored) = active mask.
+      // Only meaningful if there IS a layer above (topmost layer can't be a mask).
+      var hasLayerAbove = layerIdx < layers.length - 1;
+      var maskIcon = layer.isMask ? '◉' : '⬚';
+      var maskColor = layer.isMask ? 'color:#4a8ec4;' : 'color:#999;opacity:'+(hasLayerAbove?'0.55':'0.2')+';';
+      var maskTitle = layer.isMask
+        ? 'This layer is a clipping mask — the layer above only renders where this one is opaque. Click to disable.'
+        : (hasLayerAbove
+            ? 'Use this layer as a clipping mask — the layer above will only show where this one is opaque.'
+            : 'No layer above to mask. Add a layer on top first.');
       item.innerHTML='<span class="ltype" style="cursor:'+(layer.locked?'not-allowed':'grab')+';" title="Drag to reorder">⋮⋮</span>'
         +'<span class="layer-mv-col" style="display:inline-flex;flex-direction:column;line-height:0.85;font-size:8px;color:#666;user-select:none;">'
           +'<span class="layer-mv" data-dir="up" title="Move up" style="cursor:'+(canMoveUp?'pointer':'default')+';padding:1px 2px;opacity:'+(canMoveUp?'1':'0.22')+';">▲</span>'
@@ -7486,6 +7518,8 @@ function renderLayerList(){
         +'</span>'
         +'<span class="ltype">'+(icons[layer.type]||'▫')+'</span>'
         +'<span class="lname">'+layer.name+'</span>'
+        +'<span class="layer-mask" title="'+escAttr(maskTitle)+'" '
+          +'style="cursor:pointer;font-size:13px;font-weight:bold;'+maskColor+'">'+maskIcon+'</span>'
         +'<span class="layer-vis" title="'+(layer.hidden?'Show':'Hide')+' layer" '
           +'style="cursor:pointer;font-size:13px;font-weight:bold;'+eyeColor+'">'+eyeIcon+'</span>'
         +'<span class="layer-lock" title="'+(layer.locked?'Unlock':'Lock')+' layer" '
@@ -7495,6 +7529,11 @@ function renderLayerList(){
         if(e.target.classList.contains('layer-del')){ confirmDeleteLayer(layer.id); return; }
         if(e.target.classList.contains('layer-vis')){ layer.hidden=!layer.hidden; renderLayerList(); redraw(); return; }
         if(e.target.classList.contains('layer-lock')){ layer.locked=!layer.locked; renderLayerList(); renderProps(); return; }
+        if(e.target.classList.contains('layer-mask')){
+          e.stopPropagation();
+          toggleLayerMask(layer.id);
+          return;
+        }
         if(e.target.classList.contains('layer-mv')){
           // v234: explicit up/down reorder. Stop propagation so the click doesn't also fire
           // the layer-select branch below.
@@ -10032,6 +10071,50 @@ function syncPropWH(l){
 }
 
 // ── REDRAW ──
+// v254: helper extracted from the redraw loop so we can render a single layer into either the
+// main canvas context or an offscreen canvas (for mask compositing). Mirrors the per-layer
+// dispatch table from the original loop.
+function _drawSingleLayerInto(ctx, layer){
+  ctx.save();
+  ctx.globalAlpha = (layer.opacity||100)/100;
+  if(layer.type==='image')drawImageLayer(ctx,layer);
+  else if(layer.type==='framedImage')drawFramedImageLayer(ctx,layer);
+  else if(layer.type==='video')drawVideoLayer(ctx,layer);
+  else if(layer.type==='sticker')drawStickerLayer(ctx,layer);
+  else if(layer.type==='shape')drawShapeLayer(ctx,layer);
+  else if(layer.type==='sprinkle')drawSprinkleLayer(ctx,layer);
+  else if(layer.type==='svg')drawSvgLayer(ctx,layer);
+  else if(layer.type==='text')drawTextLayer(ctx,layer);
+  else if(layer.type==='arrow')drawArrowLayer(ctx,layer);
+  ctx.restore();
+}
+
+// v254: composite a mask layer + the content layer above it. Strategy:
+//   1. Render the mask to an offscreen at canvas-pixel dims (alpha channel = the cut shape)
+//   2. Render the content above to another offscreen the same size
+//   3. Use 'destination-in' on the content offscreen to keep only pixels where the mask is opaque
+//   4. drawImage the result onto the main ctx
+// The two offscreens are canvas-sized (no overscan) — they're drawn onto the main ctx which
+// already has the overscan translation applied, so drawImage(off, 0, 0) lands at the right
+// place. Per-mask overhead: two extra canvases per redraw. Fine for typical use (1-3 masks).
+function _drawMaskedPair(ctx, maskLayer, contentLayer){
+  var w = canvasW, h = canvasH;
+  if(w <= 0 || h <= 0) return;
+  var maskOff = document.createElement('canvas');
+  maskOff.width = w; maskOff.height = h;
+  _drawSingleLayerInto(maskOff.getContext('2d'), maskLayer);
+  var contentOff = document.createElement('canvas');
+  contentOff.width = w; contentOff.height = h;
+  var cctx = contentOff.getContext('2d');
+  _drawSingleLayerInto(cctx, contentLayer);
+  // Keep only the content pixels where the mask is opaque
+  cctx.globalCompositeOperation = 'destination-in';
+  cctx.drawImage(maskOff, 0, 0);
+  cctx.globalCompositeOperation = 'source-over';
+  // Composite onto the main canvas (which has overscan translation applied)
+  ctx.drawImage(contentOff, 0, 0);
+}
+
 function redraw(){
   var canvas=document.getElementById('mainCanvas');
   var ctx=canvas.getContext('2d');
@@ -10080,20 +10163,26 @@ function redraw(){
   ctx.translate(ovs, ovs);
   // Checker the in-canvas region only — the user sees clearly what's "inside" the export bounds.
   drawCheckerboard(ctx);
-  layers.forEach(function(layer){
-    if(layer.hidden) return;  // visibility toggle
-    ctx.save();ctx.globalAlpha=(layer.opacity||100)/100;
-    if(layer.type==='image')drawImageLayer(ctx,layer);
-    else if(layer.type==='framedImage')drawFramedImageLayer(ctx,layer);
-    else if(layer.type==='video')drawVideoLayer(ctx,layer);
-    else if(layer.type==='sticker')drawStickerLayer(ctx,layer);
-    else if(layer.type==='shape')drawShapeLayer(ctx,layer);
-    else if(layer.type==='sprinkle')drawSprinkleLayer(ctx,layer);
-    else if(layer.type==='svg')drawSvgLayer(ctx,layer);
-    else if(layer.type==='text')drawTextLayer(ctx,layer);
-    else if(layer.type==='arrow')drawArrowLayer(ctx,layer);
-    ctx.restore();
-  });
+  // v254: switched from forEach to indexed loop so we can detect mask layers and consume the
+  // following layer as the masked content. A layer with isMask:true acts as a clipping shape
+  // for the layer immediately above it in the stack — the masked content only renders where
+  // the mask is opaque (alpha > 0). The mask layer itself doesn't render visibly; it just
+  // defines the alpha cut.
+  for(var li = 0; li < layers.length; li++){
+    var layer = layers[li];
+    if(layer.hidden) continue;
+    if(layer.isMask && li + 1 < layers.length){
+      var above = layers[li + 1];
+      if(!above.hidden){
+        _drawMaskedPair(ctx, layer, above);
+        li++;   // skip the layer above since we just composited it
+        continue;
+      }
+      // If the layer above is hidden, fall through and render the mask layer normally so it's
+      // not invisible (otherwise the user sees nothing and is confused).
+    }
+    _drawSingleLayerInto(ctx, layer);
+  }
   // draw selection outline + resize handle (but NOT during crop mode — crop has its own overlay)
   var sel=layers.find(function(l){return l.id===selectedId;});
   if(sel && !cropState && !sel.hidden){
