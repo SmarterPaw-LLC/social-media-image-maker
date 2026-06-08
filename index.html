@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v251</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v252</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1003,22 +1003,23 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
             <label style="font-weight:600;font-size:12px;">Keep / Trim edges</label>
             <span id="bgRefineBiasVal" style="font-size:11px;color:var(--muted);font-family:monospace;">0</span>
           </div>
-          <input type="range" id="bgRefineBias" min="-50" max="50" value="0" step="1" oninput="bgRefineUpdate()" style="width:100%;">
-          <div style="font-size:10px;color:var(--muted);line-height:1.3;">Negative keeps more detail (fur, hair, soft edges). Positive trims halos and background bleed.</div>
+          <input type="range" id="bgRefineBias" min="-100" max="100" value="5" step="1" oninput="bgRefineUpdate()" style="width:100%;">
+          <div style="font-size:10px;color:var(--muted);line-height:1.3;">Negative keeps more detail (fur, hair, soft edges). Positive trims halos and background bleed. ±50 was the old cap — ±100 gives full control for stubborn cases.</div>
         </div>
         <div>
           <div style="display:flex;justify-content:space-between;align-items:baseline;">
             <label style="font-weight:600;font-size:12px;">Edge softness</label>
             <span id="bgRefineSoftnessVal" style="font-size:11px;color:var(--muted);font-family:monospace;">30</span>
           </div>
-          <input type="range" id="bgRefineSoftness" min="0" max="100" value="30" step="1" oninput="bgRefineUpdate()" style="width:100%;">
-          <div style="font-size:10px;color:var(--muted);line-height:1.3;">0 = hard binary edges. Higher = softer feathered transition.</div>
+          <input type="range" id="bgRefineSoftness" min="0" max="100" value="15" step="1" oninput="bgRefineUpdate()" style="width:100%;">
+          <div style="font-size:10px;color:var(--muted);line-height:1.3;">0 = hard binary edges. Higher = softer feathered transition. Most images look best at 5–25; 100 is very fuzzy and tends to keep background bleed.</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:10px;">
           <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Presets</div>
           <button type="button" onclick="bgRefinePreset('hair')" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11px;cursor:pointer;text-align:left;">🐾 Fur / Hair (soft)</button>
           <button type="button" onclick="bgRefinePreset('clean')" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11px;cursor:pointer;text-align:left;">✂️ Clean Object (hard)</button>
           <button type="button" onclick="bgRefinePreset('trim')" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11px;cursor:pointer;text-align:left;">🧹 Trim Halos</button>
+          <button type="button" onclick="bgRefinePreset('aggressive')" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11px;cursor:pointer;text-align:left;">🔪 Aggressive Cut (kill bleed)</button>
           <button type="button" onclick="bgRefinePreset('default')" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11px;cursor:pointer;text-align:left;">↺ Reset to default</button>
         </div>
       </div>
@@ -14342,16 +14343,18 @@ function _createBgPreviewData(srcData, maskData, maxSide){
 var _bgRefineState = null;
 
 function _bgGetSavedSettings(){
+  // v252: bias clamp expanded to ±100 (was ±50). Default tightened to {bias:5, softness:15} —
+  // slightly trimmed + crisp — instead of {0, 30} which often left visible halos.
   try {
     var stored = localStorage.getItem('bgRemoveSettings');
     if(stored){
       var p = JSON.parse(stored);
-      var bias = Math.max(-50, Math.min(50, p.bias || 0));
-      var soft = Math.max(0, Math.min(100, p.softness == null ? 30 : p.softness));
+      var bias = Math.max(-100, Math.min(100, p.bias || 0));
+      var soft = Math.max(0, Math.min(100, p.softness == null ? 15 : p.softness));
       return { bias: bias, softness: soft };
     }
   } catch(e){}
-  return { bias: 0, softness: 30 };
+  return { bias: 5, softness: 15 };
 }
 function _bgSaveSettings(s){
   try { localStorage.setItem('bgRemoveSettings', JSON.stringify(s)); } catch(e){}
@@ -14392,11 +14395,15 @@ function bgRefineUpdate(){
 }
 
 function bgRefinePreset(name){
+  // v252: rebalanced. Old values were too conservative — "Trim Halos" at bias=+20 still left
+  // visible background bleed on tough cases (the cat-on-blanket photo Jason showed). Pushed
+  // every preset toward sharper edges and stronger trim; added "aggressive" for stubborn cases.
   var presets = {
-    'default': { bias: 0,   softness: 30 },
-    'hair':    { bias: -10, softness: 55 },
-    'clean':   { bias: 5,   softness: 5  },
-    'trim':    { bias: 20,  softness: 15 }
+    'default':    { bias:  5, softness: 15 },   // slight trim + crisp default — was 0/30
+    'hair':       { bias:-15, softness: 45 },   // preserves fur tips but doesn't smear bg
+    'clean':      { bias: 15, softness:  8 },   // crisp non-furry subjects (logos, products)
+    'trim':       { bias: 35, softness: 12 },   // visibly trims halos (was bias=20)
+    'aggressive': { bias: 60, softness:  5 }    // NEW — for cases with stubborn bg bleed
   };
   var p = presets[name] || presets['default'];
   document.getElementById('bgRefineBias').value = p.bias;
