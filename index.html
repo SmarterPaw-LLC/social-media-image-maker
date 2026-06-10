@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v255</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v256</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -6370,6 +6370,37 @@ function addStickerLayer(){
 }
 
 // ── TEXT LAYER ──
+// v256: explicit setters for the text-align buttons in the property panel. setTextLayerAlign
+// changes how text flows INSIDE the layer's bounding box (left-flush / centered / right-flush).
+// alignLayerToCanvas moves the layer itself to canvas edges or center. Both apply to any layer
+// that has x/y/w/h (the canvas-align variant) — works for images, shapes, text, stickers, svg.
+function setTextLayerAlign(layerId, val){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer || layer.type !== 'text') return;
+  if(['left','center','right'].indexOf(val) < 0) return;
+  snapshotState();
+  layer.align = val;
+  redraw();
+  renderProps();
+}
+
+function alignLayerToCanvas(layerId, direction){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer) return;
+  if(typeof layer.x !== 'number' || typeof layer.w !== 'number') return;
+  if(typeof layer.y !== 'number' || typeof layer.h !== 'number') return;
+  snapshotState();
+  if(direction === 'left')          layer.x = 0;
+  else if(direction === 'right')    layer.x = canvasW - layer.w;
+  else if(direction === 'hcenter')  layer.x = Math.round((canvasW - layer.w) / 2);
+  else if(direction === 'top')      layer.y = 0;
+  else if(direction === 'bottom')   layer.y = canvasH - layer.h;
+  else if(direction === 'vmiddle')  layer.y = Math.round((canvasH - layer.h) / 2);
+  else return;
+  redraw();
+  renderProps();
+}
+
 function addTextLayer(){
   snapshotState();
   var id=nextId++;
@@ -8508,9 +8539,39 @@ function buildTextProps(l){
         +'</div>'
         +brandSwatchesHtml('ptxt_color')
     )
-    +'<div style="margin-bottom:5px;margin-top:8px;">'
-    +SEL('Align','ptxt_align',[['left','Left'],['center','Center'],['right','Right']],l.align)
-    +'</div>'
+    // v256: replaced the Align dropdown with 3 visible buttons. The dropdown WORKS (sets
+    // layer.align, redraws), but if your text fills the layer width, left/center/right look
+    // identical — confused people thought the control was broken. Buttons make the choice
+    // obvious AND we add canvas-position alignment underneath for when the actual goal is
+    // "move this whole text layer to the canvas's left/center/right".
+    + (function(){
+        var a = l.align || 'left';
+        var btn = function(val, label){
+          var on = a === val;
+          return '<button type="button" class="btn-sm" style="flex:1;'
+            + (on ? 'background:var(--green);color:#fff;border-color:var(--green-dark);font-weight:700;' : 'background:#fafafa;color:#444;')
+            + '" onclick="setTextLayerAlign(' + l.id + ',\'' + val + '\')">'
+            + label
+            + '</button>';
+        };
+        return '<label style="font-size:10px;color:var(--muted);margin-top:8px;display:block;">Text align (within box)</label>'
+          + '<div style="display:flex;gap:4px;margin-bottom:6px;">'
+            + btn('left',   '◧ Left')
+            + btn('center', '☰ Center')
+            + btn('right',  '◨ Right')
+          + '</div>'
+          + '<label style="font-size:10px;color:var(--muted);margin-top:4px;display:block;">Align layer to canvas</label>'
+          + '<div style="display:flex;gap:4px;margin-bottom:4px;">'
+            + '<button type="button" class="btn-sm" style="flex:1;background:#fafafa;" onclick="alignLayerToCanvas(' + l.id + ',\'left\')" title="Move this layer to the canvas\'s left edge">⬅ Left</button>'
+            + '<button type="button" class="btn-sm" style="flex:1;background:#fafafa;" onclick="alignLayerToCanvas(' + l.id + ',\'hcenter\')" title="Center this layer horizontally on the canvas">↔ Center</button>'
+            + '<button type="button" class="btn-sm" style="flex:1;background:#fafafa;" onclick="alignLayerToCanvas(' + l.id + ',\'right\')" title="Move this layer to the canvas\'s right edge">➡ Right</button>'
+          + '</div>'
+          + '<div style="display:flex;gap:4px;margin-bottom:6px;">'
+            + '<button type="button" class="btn-sm" style="flex:1;background:#fafafa;" onclick="alignLayerToCanvas(' + l.id + ',\'top\')" title="Move this layer to the canvas\'s top">⬆ Top</button>'
+            + '<button type="button" class="btn-sm" style="flex:1;background:#fafafa;" onclick="alignLayerToCanvas(' + l.id + ',\'vmiddle\')" title="Center this layer vertically on the canvas">↕ Middle</button>'
+            + '<button type="button" class="btn-sm" style="flex:1;background:#fafafa;" onclick="alignLayerToCanvas(' + l.id + ',\'bottom\')" title="Move this layer to the canvas\'s bottom">⬇ Bottom</button>'
+          + '</div>';
+      })()
     +R('Line Height','ptxt_lineh',l.lineHeight*100,50,500,1)
     +R('Letter Spacing','ptxt_ls',l.letterSpacing,-50,200,0.5)
     +NUMPAIR('X (px)','ntxtx',l.x,'Y (px)','ntxty',l.y)
