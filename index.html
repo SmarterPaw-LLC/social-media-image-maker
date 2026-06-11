@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v258</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v259</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -926,8 +926,11 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 </div>
 
 <!-- My Designs modal -->
+<!-- v259: explicit width override. .modal base class sets width:340px which beat the
+     max-width:640px and squished design names into single-character columns. Same root
+     cause as the clip art (v250) and bg-refine (v251) modal width bugs. -->
 <div class="modal-overlay hidden" id="myDesignsModal">
-  <div class="modal" style="max-width:640px;">
+  <div class="modal" style="width:min(95vw,720px);max-width:720px;">
     <h2>📂 My Designs</h2>
     <!-- v139: tab toggle — Folders (default) vs Recent (flat list sorted by most-recent).
          v258: third tab — Shared with me (designs other users have granted to this account). -->
