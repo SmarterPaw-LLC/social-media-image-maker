@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v257</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v258</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -929,10 +929,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <div class="modal-overlay hidden" id="myDesignsModal">
   <div class="modal" style="max-width:640px;">
     <h2>📂 My Designs</h2>
-    <!-- v139: tab toggle — Folders (default) vs Recent (flat list sorted by most-recent) -->
+    <!-- v139: tab toggle — Folders (default) vs Recent (flat list sorted by most-recent).
+         v258: third tab — Shared with me (designs other users have granted to this account). -->
     <div style="display:flex;gap:4px;margin-bottom:8px;">
       <button type="button" class="my-designs-tab" id="myDesignsTabFolders" onclick="setMyDesignsView('folders')">📁 Folders</button>
       <button type="button" class="my-designs-tab" id="myDesignsTabRecent" onclick="setMyDesignsView('recent')">⏱ Recent</button>
+      <button type="button" class="my-designs-tab" id="myDesignsTabShared" onclick="setMyDesignsView('shared')">👥 Shared with me</button>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:8px;">
       <input type="file" id="loadFileInput" accept=".json,application/json" style="display:none;" onchange="loadFromFileInput(event)">
@@ -948,6 +950,49 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMyDesignsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Share Design modal (v258) — opened from the 👥 button on a design row in My Designs.
+     Lists existing shares with × remove buttons, lets you add a recipient by email,
+     and offers a "Share with everyone" toggle (anyone signed in to this Supabase project). -->
+<div class="modal-overlay hidden" id="shareDesignModal" style="z-index:1100;">
+  <div class="modal" style="max-width:520px;">
+    <h2>👥 Share Design</h2>
+    <div id="shareDesignTitle" style="font-size:12px;color:var(--muted);margin-bottom:10px;"></div>
+
+    <div style="border:1px solid var(--border);border-radius:7px;padding:10px 12px;background:#fafafa;margin-bottom:12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px;">Share with a specific person</div>
+      <div style="display:flex;gap:6px;">
+        <input type="email" id="shareEmailInput" placeholder="teammate@smarterpaw.com" autocomplete="off" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+        <button class="btn-primary" id="shareAddBtn" onclick="submitShareWithEmail()">Add</button>
+      </div>
+      <div id="shareEmailError" class="hidden" style="margin-top:6px;padding:6px 8px;background:#fef2f0;border:1px solid #fbcaba;border-radius:5px;font-size:11px;color:#b3261e;"></div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;">
+        Person must have signed in to this tool at least once so their account exists.
+      </div>
+    </div>
+
+    <div style="border:1px solid var(--border);border-radius:7px;padding:10px 12px;background:#fafafa;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <label style="flex:1;cursor:pointer;font-size:12px;font-weight:600;">
+          <input type="checkbox" id="sharePublicToggle" onchange="toggleSharePublic(this.checked)" style="margin-right:8px;vertical-align:middle;">
+          🌐 Share with everyone
+        </label>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;">
+        Any user signed in to this Supabase project can load and clone the design. Owners still control the original.
+      </div>
+    </div>
+
+    <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Current shares</div>
+    <div id="shareList" style="display:flex;flex-direction:column;gap:5px;max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:7px;padding:6px;background:#fff;min-height:60px;">
+      <!-- populated by openShareDesignModal -->
+    </div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeShareDesignModal()">Done</button>
     </div>
   </div>
 </div>
@@ -3008,11 +3053,14 @@ function hideAutosaveWarning(){
 // ── My Designs modal ──
 function openMyDesignsModal(){
   document.getElementById('myDesignsModal').classList.remove('hidden');
-  // v139: sync the tab active class to the persisted view mode each time the modal opens
+  // v139: sync the tab active class to the persisted view mode each time the modal opens.
+  // v258: include the "Shared with me" tab.
   var fBtn = document.getElementById('myDesignsTabFolders');
   var rBtn = document.getElementById('myDesignsTabRecent');
+  var sBtn = document.getElementById('myDesignsTabShared');
   if(fBtn) fBtn.classList.toggle('active', _myDesignsViewMode === 'folders');
   if(rBtn) rBtn.classList.toggle('active', _myDesignsViewMode === 'recent');
+  if(sBtn) sBtn.classList.toggle('active', _myDesignsViewMode === 'shared');
   // v141: clear search each time the modal opens so the user starts with a clean view
   var search = document.getElementById('myDesignsSearch');
   if(search) search.value = '';
@@ -3039,10 +3087,64 @@ function renderMyDesigns(){
 
   // Disable folder controls if not signed in (folders are cloud-only)
   // v139: also hide the New Folder button in 'recent' mode since folder context doesn't apply there
+  // v258: also hide in 'shared' mode — the shared list is flat across owners.
   if(newFolderBtn){
-    newFolderBtn.style.display = (_myDesignsViewMode === 'recent') ? 'none' : '';
+    newFolderBtn.style.display = (_myDesignsViewMode === 'recent' || _myDesignsViewMode === 'shared') ? 'none' : '';
     newFolderBtn.style.opacity = currentUser ? '1' : '0.4';
     newFolderBtn.title = currentUser ? 'Create a folder inside the current location' : 'Sign in to create folders';
+  }
+
+  // v258: Shared-with-me branch — completely separate render path. We don't merge with IDB or
+  // folders here; shared designs always come from the cloud and load directly via cloudGetDesign
+  // (RLS+storage policies grant the recipient read access on the owner's row+files).
+  if(_myDesignsViewMode === 'shared'){
+    breadcrumb.innerHTML = '';
+    breadcrumb.textContent = 'Designs other users have shared with you';
+    breadcrumb.style.fontStyle = 'italic';
+    if(!currentUser){
+      container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-size:12px;">Sign in to see designs shared with your account.</div>';
+      return;
+    }
+    var searchInputS = document.getElementById('myDesignsSearch');
+    var searchQS = (searchInputS ? searchInputS.value : '').trim().toLowerCase();
+    cloudListSharedWithMe().then(function(rows){
+      container.innerHTML = '';
+      if(searchQS){
+        rows = rows.filter(function(r){
+          var hay = ((r.design_name || '') + ' ' + (r.owner_email || '') + ' ' + (r.owner_name || '')).toLowerCase();
+          return hay.indexOf(searchQS) >= 0;
+        });
+      }
+      if(!rows.length){
+        var empty = document.createElement('div');
+        empty.style.cssText = 'text-align:center;padding:20px;color:var(--muted);font-size:12px;';
+        empty.textContent = searchQS ? 'No matches for "' + searchQS + '".' : 'No designs have been shared with you yet.';
+        container.appendChild(empty);
+        return;
+      }
+      rows.forEach(function(r){
+        var displayTime = r.updated_at ? new Date(r.updated_at).toLocaleString() : '—';
+        var ownerLabel = r.is_public ? '🌐 Shared with everyone' : ('shared by ' + (r.owner_email || r.owner_name || 'someone'));
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid var(--border);border-radius:7px;background:#fafafa;';
+        row.innerHTML =
+          '<div style="flex:1;min-width:0;overflow:hidden;">'
+            + '<b><span title="Shared" style="font-size:11px;">👥</span> ' + escAttr(r.design_name || 'Untitled') + '</b>'
+            + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">'
+              + (r.canvas_w||'?') + '×' + (r.canvas_h||'?') + ' · ' + displayTime + ' · ' + escAttr(ownerLabel)
+            + '</div>'
+          + '</div>'
+          + '<button class="btn-sm" data-action="load" title="Load a read-only copy (Save creates your own)">Load</button>';
+        row.querySelector('[data-action="load"]').onclick = function(){
+          loadSharedDesign(r);
+        };
+        container.appendChild(row);
+      });
+    }).catch(function(e){
+      console.error('[my-designs] shared list error:', e);
+      container.innerHTML = '<div style="color:#a00;font-size:12px;">Could not load shared designs: ' + (e.message || e) + '</div>';
+    });
+    return;
   }
 
   Promise.all([
@@ -3246,6 +3348,7 @@ function renderMyDesigns(){
         + '<button class="btn-sm" data-action="load" title="Load this design">Load</button>'
         + (m.idb && !m.isAutosave ? '<button class="btn-sm" data-action="download" title="Download as .json file">⬇</button>' : '')
         + (m.cloud && !m.isAutosave ? '<button class="btn-sm" data-action="move" title="Move to a different folder">↪</button>' : '')
+        + (m.cloud && !m.isAutosave ? '<button class="btn-sm" data-action="share" title="Share with other users">👥</button>' : '')
         + (m.isAutosave ? '' : '<button class="btn-sm danger" data-action="delete" title="Delete">✕</button>');
 
       row.querySelector('[data-action="load"]').onclick = function(){ loadMergedDesign(m); };
@@ -3253,6 +3356,9 @@ function renderMyDesigns(){
       if(dlBtn) dlBtn.onclick = function(){ downloadDesignFile(m.idb, m.idb.name || 'design'); };
       var mvBtn = row.querySelector('[data-action="move"]');
       if(mvBtn) mvBtn.onclick = function(){ openMoveFolderModal(m); };
+      // v258: Share — opens the Share Design modal with current grants
+      var shBtn = row.querySelector('[data-action="share"]');
+      if(shBtn) shBtn.onclick = function(){ openShareDesignModal(m.cloud.id, m.cloud.name || displayName); };
       var delBtn = row.querySelector('[data-action="delete"]');
       if(delBtn){
         delBtn.onclick = function(){
@@ -12984,6 +13090,263 @@ function cloudDeleteDesign(id){
   });
 }
 
+// ── DESIGN SHARING (v258) ──
+// Backed by public.social_design_shares + the lookup_user_id_by_email RPC.
+// The four user-facing operations: list grants for one design, share with an email,
+// flip the "share with everyone" bit, revoke a grant.
+
+// Returns the rows from public.shared_designs_for_me (the view defined in
+// supabase_add_design_sharing.sql) — every design currently shared with this user,
+// either directly or via is_public=true. Filters out anything I happen to own
+// (a design I shared with "everyone" otherwise shows up in my own Shared list).
+function cloudListSharedWithMe(){
+  if(!sb || !currentUser) return Promise.resolve([]);
+  return sb.from('shared_designs_for_me')
+    .select('design_id, design_name, brand, canvas_w, canvas_h, updated_at, share_id, permission, is_public, owner_id, owner_email, owner_name')
+    .order('updated_at', {ascending: false})
+    .then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Shared list failed');
+      var rows = res.data || [];
+      // Hide rows I own — happens when I made one of my own designs public
+      return rows.filter(function(r){ return r.owner_id !== currentUser.id; });
+    });
+}
+
+// List all share grants on a design I own — feeds the Share modal's "current shares" list.
+function cloudListDesignShares(designId){
+  if(!sb || !currentUser) return Promise.resolve([]);
+  return sb.from('social_design_shares')
+    .select('id, design_id, shared_with_user_id, is_public, permission, created_at')
+    .eq('design_id', designId)
+    .then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Share list failed');
+      var rows = res.data || [];
+      // Resolve recipient emails in a second hop. We can't join user_profiles in one query
+      // because user_profiles RLS only lets you see your own row. The lookup RPC bypasses RLS.
+      var ids = rows.map(function(r){ return r.shared_with_user_id; }).filter(Boolean);
+      if(!ids.length) return rows.map(function(r){ return Object.assign({}, r, {recipient_email: null}); });
+      return sb.rpc('lookup_emails_by_user_ids', { p_ids: ids }).then(function(res2){
+        // The companion RPC isn't created in the SQL migration (kept it lean) — fall back to
+        // per-row lookup_user_id_by_email's inverse. Since we don't have that, we synthesize a
+        // display string from the user_id when emails aren't resolvable. The Share modal still
+        // shows the user_id tail so the owner can identify rows.
+        var byId = {};
+        if(res2 && !res2.error && res2.data){
+          (res2.data || []).forEach(function(row){ byId[row.id] = row.email; });
+        }
+        return rows.map(function(r){
+          return Object.assign({}, r, {recipient_email: r.shared_with_user_id ? (byId[r.shared_with_user_id] || null) : null});
+        });
+      }).catch(function(){
+        return rows.map(function(r){ return Object.assign({}, r, {recipient_email: null}); });
+      });
+    });
+}
+
+// Look up a user's id by email via the SECURITY DEFINER RPC. Returns null if no account exists
+// for that email. Trimmed and lowercased server-side.
+function cloudLookupUserByEmail(email){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  return sb.rpc('lookup_user_id_by_email', { p_email: email }).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Lookup failed');
+    return res.data || null;
+  });
+}
+
+// Create a per-user share grant. Caller is the owner; the recipient must already have an account
+// (the lookup RPC returns null otherwise — we surface a friendly error).
+function cloudShareDesignWithUser(designId, email){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  return cloudLookupUserByEmail(email).then(function(uid){
+    if(!uid) throw new Error('No account found for "' + email + '". They need to sign in to this tool at least once.');
+    if(uid === currentUser.id) throw new Error('That\'s you — you already own this design.');
+    return sb.from('social_design_shares').insert({
+      design_id: designId,
+      owner_id: currentUser.id,
+      shared_with_user_id: uid,
+      is_public: false,
+      permission: 'view'
+    }).select('id').single();
+  }).then(function(res){
+    if(res.error){
+      if(res.error.code === '23505') throw new Error('Already shared with that user.');
+      throw new Error(res.error.message || 'Share failed');
+    }
+    return res.data;
+  });
+}
+
+// Flip the "share with everyone" bit. When `on` is true, inserts a public row (if one isn't there);
+// when false, deletes the public row for this design.
+function cloudShareDesignPublic(designId, on){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  if(on){
+    return sb.from('social_design_shares').insert({
+      design_id: designId,
+      owner_id: currentUser.id,
+      shared_with_user_id: null,
+      is_public: true,
+      permission: 'view'
+    }).select('id').single().then(function(res){
+      if(res.error){
+        if(res.error.code === '23505') return null;   // already public — fine
+        throw new Error(res.error.message || 'Public share failed');
+      }
+      return res.data;
+    });
+  }
+  return sb.from('social_design_shares')
+    .delete()
+    .eq('design_id', designId)
+    .eq('is_public', true)
+    .then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Unshare failed');
+    });
+}
+
+// Revoke a single share grant by its row id.
+function cloudUnshareDesign(shareId){
+  if(!sb || !currentUser) return Promise.reject(new Error('Not signed in.'));
+  return sb.from('social_design_shares').delete().eq('id', shareId).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Unshare failed');
+  });
+}
+
+// Open a shared design read-only. Calls cloudGetDesign (which RLS allows for shared rows), then
+// restores the design state into the editor WITHOUT setting _currentCloudId — so any Save creates
+// a brand-new design owned by the viewer rather than mutating the original. Pre-populates the
+// design name with a "Copy of …" prefix so the user has a clean starting point for their fork.
+function loadSharedDesign(r){
+  cloudGetDesign(r.design_id).then(function(state){
+    if(!state) throw new Error('Cloud returned empty state');
+    if(!restoreDesignState(state)) throw new Error('Could not restore design');
+    _lastDesignName = 'Copy of ' + (state.name || r.design_name || 'shared design');
+    _currentDesignId = null;   // not in IDB
+    _currentCloudId = null;    // critical — next Save creates a NEW cloud row owned by viewer
+    _currentFolderIdForSave = null;
+    updateCloudSyncStatus();
+    closeMyDesignsModal();
+    if(typeof showToast === 'function'){
+      showToast('Loaded a copy. Save to keep your own version.');
+    }
+  }).catch(function(e){
+    console.error('[shared-load] error:', e);
+    alert('Could not load shared design: ' + (e.message || e));
+  });
+}
+
+// ── SHARE DESIGN MODAL (v258) ──
+
+var _shareModalContext = null;   // { designId, designName }
+
+function openShareDesignModal(designId, designName){
+  if(!sb || !currentUser){ alert('Sign in to share designs.'); return; }
+  _shareModalContext = { designId: designId, designName: designName || 'Untitled' };
+  document.getElementById('shareDesignTitle').textContent = 'Sharing: ' + (designName || 'Untitled');
+  document.getElementById('shareEmailInput').value = '';
+  hideShareEmailError();
+  document.getElementById('shareDesignModal').classList.remove('hidden');
+  refreshShareList();
+}
+
+function closeShareDesignModal(){
+  document.getElementById('shareDesignModal').classList.add('hidden');
+  _shareModalContext = null;
+  // The list of shares may have changed; refresh My Designs in case the user
+  // immediately re-opens the share modal or switches tabs.
+  if(document.getElementById('myDesignsModal') && !document.getElementById('myDesignsModal').classList.contains('hidden')){
+    renderMyDesigns();
+  }
+}
+
+function showShareEmailError(msg){
+  var el = document.getElementById('shareEmailError');
+  if(!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+function hideShareEmailError(){
+  var el = document.getElementById('shareEmailError');
+  if(el) el.classList.add('hidden');
+}
+
+function refreshShareList(){
+  if(!_shareModalContext) return;
+  var list = document.getElementById('shareList');
+  list.innerHTML = '<div style="text-align:center;padding:14px;color:var(--muted);font-size:11px;">Loading…</div>';
+  cloudListDesignShares(_shareModalContext.designId).then(function(rows){
+    // Reflect the public bit on the toggle
+    var pubRow = rows.find(function(r){ return r.is_public; });
+    var toggle = document.getElementById('sharePublicToggle');
+    if(toggle) toggle.checked = !!pubRow;
+
+    var userRows = rows.filter(function(r){ return !r.is_public; });
+    list.innerHTML = '';
+    if(!userRows.length && !pubRow){
+      var empty = document.createElement('div');
+      empty.style.cssText = 'text-align:center;padding:14px;color:var(--muted);font-size:11px;';
+      empty.textContent = 'Not shared yet.';
+      list.appendChild(empty);
+      return;
+    }
+    if(pubRow){
+      var pubItem = document.createElement('div');
+      pubItem.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f0f7ff;border:1px solid #cce4ff;border-radius:5px;font-size:12px;';
+      pubItem.innerHTML = '<span style="flex:1;">🌐 <b>Everyone signed in</b></span>'
+        + '<button class="btn-sm danger" data-action="revoke-pub" title="Stop sharing with everyone">✕</button>';
+      pubItem.querySelector('[data-action="revoke-pub"]').onclick = function(){
+        cloudShareDesignPublic(_shareModalContext.designId, false).then(refreshShareList).catch(function(e){
+          alert('Could not revoke: ' + (e.message || e));
+        });
+      };
+      list.appendChild(pubItem);
+    }
+    userRows.forEach(function(r){
+      var item = document.createElement('div');
+      item.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;background:#fafafa;border:1px solid var(--border);border-radius:5px;font-size:12px;';
+      var label = r.recipient_email || ('User ' + (r.shared_with_user_id || '').slice(0, 8));
+      item.innerHTML = '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">👤 ' + escAttr(label) + '</span>'
+        + '<button class="btn-sm danger" data-action="revoke" title="Revoke access">✕</button>';
+      item.querySelector('[data-action="revoke"]').onclick = function(){
+        cloudUnshareDesign(r.id).then(refreshShareList).catch(function(e){
+          alert('Could not revoke: ' + (e.message || e));
+        });
+      };
+      list.appendChild(item);
+    });
+  }).catch(function(e){
+    console.error('[share-modal] list error:', e);
+    list.innerHTML = '<div style="color:#a00;font-size:11px;padding:10px;">Could not list shares: ' + (e.message || e) + '</div>';
+  });
+}
+
+function submitShareWithEmail(){
+  if(!_shareModalContext) return;
+  hideShareEmailError();
+  var input = document.getElementById('shareEmailInput');
+  var email = (input.value || '').trim();
+  if(!email){ showShareEmailError('Enter an email address.'); return; }
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ showShareEmailError('That doesn\'t look like a valid email.'); return; }
+  var btn = document.getElementById('shareAddBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '…'; }
+  cloudShareDesignWithUser(_shareModalContext.designId, email).then(function(){
+    input.value = '';
+    refreshShareList();
+  }).catch(function(e){
+    showShareEmailError(e.message || String(e));
+  }).then(function(){
+    if(btn){ btn.disabled = false; btn.textContent = 'Add'; }
+  });
+}
+
+function toggleSharePublic(on){
+  if(!_shareModalContext) return;
+  cloudShareDesignPublic(_shareModalContext.designId, !!on).then(refreshShareList).catch(function(e){
+    alert('Could not update: ' + (e.message || e));
+    refreshShareList();
+  });
+}
+
 // Load a merged row (one of {idb-only, cloud-only, synced}) into the editor.
 // If IDB has the record, restore directly (faster — layers already in memory). Otherwise fetch
 // state from the cloud and opportunistically cache it to IDB so subsequent loads are instant.
@@ -13055,13 +13418,16 @@ var _myDesignsViewMode = (function(){
   try { return localStorage.getItem('myDesignsViewMode') || 'folders'; } catch(e){ return 'folders'; }
 })();
 function setMyDesignsView(mode){
-  if(mode !== 'folders' && mode !== 'recent') mode = 'folders';
+  // v258: third mode 'shared' for designs other users granted to this account.
+  if(mode !== 'folders' && mode !== 'recent' && mode !== 'shared') mode = 'folders';
   _myDesignsViewMode = mode;
   try { localStorage.setItem('myDesignsViewMode', mode); } catch(e){}
   var fBtn = document.getElementById('myDesignsTabFolders');
   var rBtn = document.getElementById('myDesignsTabRecent');
+  var sBtn = document.getElementById('myDesignsTabShared');
   if(fBtn) fBtn.classList.toggle('active', mode === 'folders');
   if(rBtn) rBtn.classList.toggle('active', mode === 'recent');
+  if(sBtn) sBtn.classList.toggle('active', mode === 'shared');
   renderMyDesigns();
 }
 
