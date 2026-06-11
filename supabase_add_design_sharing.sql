@@ -152,13 +152,15 @@ create policy "design-images: read shared" on storage.objects
 --    SECURITY DEFINER function runs as the table owner, bypassing RLS just
 --    for the lookup. Returns NULL if no match.
 -- ──────────────────────────────────────────────────────────────────────────
+-- NOTE: user_profiles primary key is `user_id` (not `id`) — see supabase_auth_setup.sql.
+-- All references below alias `user_id` to `id` in the output so the client-facing shape is stable.
 create or replace function public.lookup_user_id_by_email(p_email text)
 returns uuid
 language sql
 security definer
 set search_path = public, auth
 as $$
-  select id from public.user_profiles
+  select user_id from public.user_profiles
    where lower(email) = lower(trim(p_email))
    limit 1;
 $$;
@@ -176,9 +178,9 @@ language sql
 security definer
 set search_path = public, auth
 as $$
-  select id, email
+  select user_id as id, email
     from public.user_profiles
-   where id = any(p_ids);
+   where user_id = any(p_ids);
 $$;
 
 revoke all on function public.lookup_emails_by_user_ids(uuid[]) from public;
@@ -205,7 +207,7 @@ create or replace view public.shared_designs_for_me as
     p.full_name         as owner_name
   from public.social_design_shares s
   join public.social_designs       d on d.id = s.design_id
-  left join public.user_profiles    p on p.id = s.owner_id
+  left join public.user_profiles    p on p.user_id = s.owner_id
   where s.shared_with_user_id = auth.uid()
      or s.is_public = true;
 

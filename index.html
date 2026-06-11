@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v259</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v260</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -853,7 +853,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadLibraryCsv()" title="Download a CSV of every image's name, brand, category, and tags — edit it in Excel/Sheets, then re-upload to apply changes in bulk">⬇ CSV</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryCsvInput').click()" title="Upload an edited CSV to bulk-update brand, category, and tags (matched by the id column)">⬆ CSV</button>
       <input type="file" id="libraryCsvInput" accept=".csv,text/csv" style="display:none;" onchange="handleLibraryCsvUpload(event)">
-      <input type="file" id="libraryUploadInput" accept="image/*" multiple style="display:none;" onchange="handleLibraryUpload(event)">
+      <input type="file" id="libraryUploadInput" accept="image/*,.heic,.heif" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
            Safari, and Firefox — covers all browsers SmarterPaw uses. Non-image files in the folder
            are filtered out in handleLibraryUpload before the upload loop. -->
@@ -9379,41 +9379,99 @@ function removeStickerLine(id,i){
 }
 
 // ── IMAGE UPLOAD ──
+// v260: HEIC support. iPhone photos default to HEIC, which Chrome/Firefox/Edge can't decode
+// natively (only Safari can). For the rest, we lazy-load heic2any from CDN the FIRST time a
+// HEIC file is detected, convert to JPEG client-side, then proceed normally. Lazy loading keeps
+// the page weight zero for users who never upload HEIC (the library is ~1.3MB minified — too
+// big to inline). Blessed CDN dependency, same exception class as supabase-js.
+var _heic2anyLoading = null;   // Promise that resolves to the heic2any global once loaded
+function _isHeicFile(file){
+  if(!file) return false;
+  var t = (file.type || '').toLowerCase();
+  if(t === 'image/heic' || t === 'image/heif' || t === 'image/heic-sequence' || t === 'image/heif-sequence') return true;
+  var n = (file.name || '').toLowerCase();
+  return n.endsWith('.heic') || n.endsWith('.heif');
+}
+function _loadHeic2anyLib(){
+  if(typeof heic2any === 'function') return Promise.resolve(window.heic2any);
+  if(_heic2anyLoading) return _heic2anyLoading;
+  _heic2anyLoading = new Promise(function(resolve, reject){
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+    s.onload = function(){
+      if(typeof heic2any === 'function') resolve(window.heic2any);
+      else reject(new Error('heic2any loaded but global not found'));
+    };
+    s.onerror = function(){ reject(new Error('Failed to load HEIC converter from CDN.')); };
+    document.head.appendChild(s);
+  });
+  return _heic2anyLoading;
+}
+// Returns a Promise<File>. If the input isn't HEIC, resolves immediately with the original.
+// If it is HEIC, lazy-loads the converter, converts to JPEG, and resolves with a renamed File so
+// downstream code (which keys off file.name for the layer label) gets a sensible "photo.jpg".
+function prepareImageFileForLoad(file){
+  if(!_isHeicFile(file)) return Promise.resolve(file);
+  return _loadHeic2anyLib().then(function(convert){
+    return convert({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+  }).then(function(blob){
+    // heic2any may return an array when the HEIC contained multiple images — take the first.
+    if(Array.isArray(blob)) blob = blob[0];
+    var newName = (file.name || 'photo').replace(/\.(heic|heif)$/i, '.jpg');
+    if(newName === file.name) newName += '.jpg';
+    // Wrap the converted blob in a File so the rest of the pipeline (which often reads .name)
+    // sees a sensible name; use the original lastModified so library timestamps stay correct.
+    try {
+      return new File([blob], newName, { type: 'image/jpeg', lastModified: file.lastModified || Date.now() });
+    } catch(e){
+      // Older browsers without the File constructor — fall back to a Blob with a name shim.
+      blob.name = newName;
+      return blob;
+    }
+  });
+}
 function promptImageUpload(layerId){
   var fi=document.getElementById('fi_'+layerId);
   if(fi){fi.click();return;}
-  var input=document.createElement('input');input.type='file';input.accept='image/*';
+  // v260: include .heic/.heif in accept — image/* on Windows often skips them, on Mac includes them.
+  var input=document.createElement('input');input.type='file';input.accept='image/*,.heic,.heif';
   input.onchange=function(e){handleFileInput(e,layerId);};input.click();
 }
 function handleFileInput(e,layerId){
   var file=e.target.files[0];if(!file)return;
-  var reader=new FileReader();
-  reader.onload=function(ev){
-    var img=new Image();
-    img.onload=function(){
-      var l=layers.find(function(x){return x.id===layerId;});
-      if(!l) return;
-      // v155: distinguish between "new image" (layer was a placeholder, no img yet) and "replace"
-      // (layer already had an img). New = compute fit-to-canvas sizing; replace = keep current
-      // layer dimensions so the new image slots into the same on-canvas footprint as the old one.
-      var wasPlaceholder = !l.img;
-      // v190: snapshot BEFORE the replace so undo can restore. Full snapshot (includes _imgSrc)
-      // because the standard undo snapshot strips image bytes and would only restore transforms,
-      // not the previous image itself.
-      snapshotStateFull();
-      l.img = img;
-      l.name = file.name.replace(/\.[^.]+$/, '');
-      if(wasPlaceholder){
-        var sizing = _computeImageLayerSize(img);
-        l.x = sizing.x; l.y = sizing.y; l.w = sizing.w; l.h = sizing.h;
-        l._baseW = sizing._baseW; l._baseH = sizing._baseH;
-      }
-      // else: replacing an existing image — preserve x/y/w/h so the layer stays where it was
-      renderLayerList(); renderProps(); redraw();
+  // v260: route through prepareImageFileForLoad so HEIC gets converted to JPEG transparently.
+  prepareImageFileForLoad(file).then(function(usable){
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      var img=new Image();
+      img.onload=function(){
+        var l=layers.find(function(x){return x.id===layerId;});
+        if(!l) return;
+        // v155: distinguish between "new image" (layer was a placeholder, no img yet) and "replace"
+        // (layer already had an img). New = compute fit-to-canvas sizing; replace = keep current
+        // layer dimensions so the new image slots into the same on-canvas footprint as the old one.
+        var wasPlaceholder = !l.img;
+        // v190: snapshot BEFORE the replace so undo can restore. Full snapshot (includes _imgSrc)
+        // because the standard undo snapshot strips image bytes and would only restore transforms,
+        // not the previous image itself.
+        snapshotStateFull();
+        l.img = img;
+        l.name = (usable.name || file.name).replace(/\.[^.]+$/, '');
+        if(wasPlaceholder){
+          var sizing = _computeImageLayerSize(img);
+          l.x = sizing.x; l.y = sizing.y; l.w = sizing.w; l.h = sizing.h;
+          l._baseW = sizing._baseW; l._baseH = sizing._baseH;
+        }
+        // else: replacing an existing image — preserve x/y/w/h so the layer stays where it was
+        renderLayerList(); renderProps(); redraw();
+      };
+      img.onerror = function(){ alert('Could not decode that image. If it\'s a HEIC file, the converter may have failed.'); };
+      img.src=ev.target.result;
     };
-    img.src=ev.target.result;
-  };
-  reader.readAsDataURL(file);
+    reader.readAsDataURL(usable);
+  }).catch(function(err){
+    alert('Could not load image: ' + (err.message || err));
+  });
 }
 
 // ── DRAG & DROP FILES ──
@@ -9432,12 +9490,21 @@ function bindDrop(){
         var reader=new FileReader();
         reader.onload=function(ev){ createSvgLayerFromText(ev.target.result, file.name); };
         reader.readAsText(file);
-      } else if(file.type.startsWith('image/')){
-        var reader=new FileReader();
-        reader.onload=function(ev){
-          var img=new Image();img.onload=function(){addImageLayer(img,file.name.replace(/\.[^.]+$/,''));};
-          img.src=ev.target.result;
-        };reader.readAsDataURL(file);
+      } else if(file.type.startsWith('image/') || _isHeicFile(file)){
+        // v260: HEIC has no MIME on some Windows drag sources, so the extension check via
+        // _isHeicFile catches files that would otherwise be dropped silently.
+        prepareImageFileForLoad(file).then(function(usable){
+          var reader=new FileReader();
+          reader.onload=function(ev){
+            var img=new Image();
+            img.onload=function(){addImageLayer(img,(usable.name||file.name).replace(/\.[^.]+$/,''));};
+            img.onerror=function(){ alert('Could not decode dropped image.'); };
+            img.src=ev.target.result;
+          };
+          reader.readAsDataURL(usable);
+        }).catch(function(err){
+          alert('Could not load dropped image: ' + (err.message || err));
+        });
       }
     });
   });
@@ -14691,8 +14758,10 @@ function handleLibraryUpload(event){
   if(!files || !files.length) return;
   // v147: when uploading from a folder (webkitdirectory), the browser hands us every file
   // including non-images and OS junk. Filter to images only before the upload loop.
+  // v260: also accept HEIC/HEIF by extension since some Windows drag sources hand them over
+  // with empty MIME type — _isHeicFile checks the filename as a fallback.
   files = Array.prototype.slice.call(files).filter(function(f){
-    return (f.type || '').indexOf('image/') === 0;
+    return (f.type || '').indexOf('image/') === 0 || _isHeicFile(f);
   });
   if(!files.length){
     var statusEl0 = document.getElementById('imageLibraryStatus');
@@ -14769,13 +14838,22 @@ function runLibraryUpload(brand){
     }
     // v132: compress before upload to keep Supabase storage quota usable. SVG / GIF / already-small
     // files pass through unchanged; PNG/JPG get re-encoded to WebP @ 85% with a 2000px max dimension.
-    statusEl.textContent = 'Compressing ' + (i + 1) + '/' + fileArr.length + ': ' + fileArr[i].name + '…';
-    compressImageForLibrary(fileArr[i]).then(function(result){
+    // v260: HEIC files get pre-converted to JPEG via heic2any before compression — compressor uses
+    // <img> decoding which can't handle HEIC in Chrome/Firefox/Edge.
+    var srcFile = fileArr[i];
+    statusEl.textContent = (_isHeicFile(srcFile) ? 'Converting HEIC ' : 'Compressing ')
+      + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + '…';
+    prepareImageFileForLoad(srcFile).then(function(prepared){
+      srcFile = prepared;   // use the converted file's name in the displayName below
+      return compressImageForLibrary(prepared);
+    }).then(function(result){
       var compressMsg = result.skipped
         ? ' (' + _formatBytes(result.originalSize) + ', not compressed: ' + result.skipped + ')'
         : ' (' + _formatBytes(result.originalSize) + ' → ' + _formatBytes(result.compressedSize) + ')';
-      statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + fileArr[i].name + compressMsg;
+      statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + compressMsg;
       bytesSaved += Math.max(0, result.originalSize - result.compressedSize);
+      // Strip extension AND any "(2)"-style dupe suffix the OS may have added so the library shows
+      // a clean name. Preserve the original filename (pre-HEIC-rename) when possible.
       var displayName = (fileArr[i].name || 'Untitled').replace(/\.[^.]+$/, '');
       return cloudUploadLibraryItem(result.file, catId, displayName, brand);
     }).then(function(){
