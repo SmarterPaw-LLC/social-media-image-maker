@@ -241,7 +241,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v256</span></div>
+    <div><h1>🐾 Social Image Tool</h1><span>SmarterPaw Marketing · v257</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -7636,13 +7636,58 @@ function renderProps(){
   else if(layer.type==='svg')     innerHtml=buildSvgProps(layer);
   else if(layer.type==='text')    innerHtml=buildTextProps(layer);
   else if(layer.type==='arrow')   innerHtml=buildArrowProps(layer);
+  // v257: append a shared blend-mode dropdown to every layer panel. Applied in
+  // _drawSingleLayerInto via globalCompositeOperation so it composes with whatever
+  // pixels the layer below has already rendered. Works for any layer type.
+  innerHtml += commonLayerEffectsHtml(layer);
   // If locked, wrap the controls with pointer-events:none and dim them
   if(layer.locked){
     el.innerHTML = lockedBanner + '<div style="pointer-events:none;opacity:0.55;">'+innerHtml+'</div>';
   } else {
     el.innerHTML = innerHtml;
     bindPropEvents(layer);
+    bindCommonLayerEffectsEvents(layer);
   }
+}
+
+// v257: blend-mode dropdown shared across every layer type. Photoshop-style modes mapped 1:1 to
+// canvas globalCompositeOperation values. 'source-over' is the canvas name for "normal" so it's
+// the default when blendMode is unset.
+function commonLayerEffectsHtml(layer){
+  var modes = [
+    ['source-over','Normal'],
+    ['multiply','Multiply'],
+    ['screen','Screen'],
+    ['overlay','Overlay'],
+    ['darken','Darken'],
+    ['lighten','Lighten'],
+    ['soft-light','Soft Light'],
+    ['hard-light','Hard Light'],
+    ['color-dodge','Color Dodge'],
+    ['color-burn','Color Burn'],
+    ['difference','Difference'],
+    ['exclusion','Exclusion'],
+    ['hue','Hue'],
+    ['saturation','Saturation'],
+    ['color','Color'],
+    ['luminosity','Luminosity']
+  ];
+  var cur = layer.blendMode || 'source-over';
+  return '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);">'
+    + SEL('Blend Mode','pBlendMode',modes,cur)
+    + '</div>';
+}
+
+// v257: bound separately from bindPropEvents so every layer panel picks it up regardless of
+// which build*Props was used. snapshotState before the change so it's undoable.
+function bindCommonLayerEffectsEvents(layer){
+  var el = document.getElementById('pBlendMode');
+  if(!el) return;
+  el.addEventListener('change', function(){
+    snapshotState();
+    layer.blendMode = el.value;
+    redraw();
+  });
 }
 
 function R(label,id,val,min,max,step){
@@ -10138,6 +10183,14 @@ function syncPropWH(l){
 function _drawSingleLayerInto(ctx, layer){
   ctx.save();
   ctx.globalAlpha = (layer.opacity||100)/100;
+  // v257: blend mode. Canvas supports the same set Photoshop calls "blend modes" via
+  // globalCompositeOperation: multiply, screen, overlay, darken, lighten, soft-light, hard-light,
+  // color-dodge, color-burn, difference, exclusion, hue, saturation, color, luminosity. Default
+  // 'source-over' is normal pixel-on-top blending. Skip the set if the value is normal so the
+  // common case stays on the fast path.
+  if(layer.blendMode && layer.blendMode !== 'source-over' && layer.blendMode !== 'normal'){
+    ctx.globalCompositeOperation = layer.blendMode;
+  }
   if(layer.type==='image')drawImageLayer(ctx,layer);
   else if(layer.type==='framedImage')drawFramedImageLayer(ctx,layer);
   else if(layer.type==='video')drawVideoLayer(ctx,layer);

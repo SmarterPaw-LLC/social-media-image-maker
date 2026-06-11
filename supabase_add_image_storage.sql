@@ -23,13 +23,15 @@
 -- ============================================================================
 
 -- ──────────────────────────────────────────────────────────────────────────
--- 1. Create the design-images bucket. Private; per-image cap 15 MB (plenty
---    for a single PNG/JPG even at high res). Content-addressable so the same
---    image used in multiple designs only consumes one slot.
+-- 1. Create the design-images bucket. Private; per-image cap NULL (no limit
+--    from the bucket — the Supabase plan ceiling applies). Earlier revisions
+--    capped at 15 MB which blocked large hero photos and 4K product shots.
+--    Lifted because the project is on a paid plan. Content-addressable so
+--    the same image used in multiple designs only consumes one slot.
 -- ──────────────────────────────────────────────────────────────────────────
 insert into storage.buckets (id, name, public, file_size_limit)
-  values ('design-images', 'design-images', false, 15728640)
-  on conflict (id) do update set file_size_limit = 15728640;
+  values ('design-images', 'design-images', false, null)
+  on conflict (id) do update set file_size_limit = null;
 
 -- ──────────────────────────────────────────────────────────────────────────
 -- 2. RLS — per-user isolation, same pattern as design-states.
