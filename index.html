@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SmarterImage</title>
-<link rel="icon" type="image/png" href="smarterimage_favicon-256x256.png">
+<link rel="icon" type="image/png" href="smarterimage_icon.png">
 <style>
 :root {
   --green:#8ab81d;--green-dark:#3c8e14;--orange:#f6ae40;--orange-dark:#f07830;
@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 SmarterImage</h1><span>SmarterPaw Marketing · v264</span></div>
+    <div><h1>🐾 SmarterImage</h1><span>SmarterPaw Marketing · v265</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2547,12 +2547,28 @@ function snapshotStateFull(){
 
 function undo(){
   if(!undoStack.length) return;
-  // Capture the CURRENT state so redo can get back to it (lightweight too)
-  redoStack.push(serializeForUndo());
-  // Pop the most recent snapshot (which is the state BEFORE the most recent change) and restore it
-  var prior = undoStack.pop();
+  // v265: peek at the entry before popping so we can pick the right redo-capture shape. If the
+  // entry we're about to undo is a resize, the redo entry has to include current canvas dims
+  // too (so a future Ctrl+Y restores them); otherwise the plain layer snapshot is enough.
+  var prior = undoStack[undoStack.length - 1];
+  var resizeSnap = _tryParseResizeSnap(prior);
+  if(resizeSnap){
+    redoStack.push(JSON.stringify({
+      __kind: 'resize',
+      w: canvasW, h: canvasH,
+      layers: serializeForUndo()
+    }));
+  } else {
+    redoStack.push(serializeForUndo());
+  }
+  undoStack.pop();
   _undoSuppressed = true;
-  layers = deserializeLayers(prior);
+  if(resizeSnap){
+    setCanvasSize(resizeSnap.w, resizeSnap.h);
+    layers = deserializeLayers(resizeSnap.layers);
+  } else {
+    layers = deserializeLayers(prior);
+  }
   if(!layers.find(function(l){return l.id===selectedId;})) selectedId = null;
   cropState = null; dragState = null; resizeState = null; rotateState = null; if(typeof eraseState !== 'undefined' && eraseState) { hideEraseToolbar(); eraseState = null; }
   hideCropToolbar();
@@ -2563,11 +2579,26 @@ function undo(){
 
 function redo(){
   if(!redoStack.length) return;
-  // Current state goes back onto undo stack (lightweight)
-  undoStack.push(serializeForUndo());
-  var next = redoStack.pop();
+  // v265: mirror of undo — detect resize-shaped redo entries to restore canvas dims along with layers.
+  var next = redoStack[redoStack.length - 1];
+  var resizeSnap = _tryParseResizeSnap(next);
+  if(resizeSnap){
+    undoStack.push(JSON.stringify({
+      __kind: 'resize',
+      w: canvasW, h: canvasH,
+      layers: serializeForUndo()
+    }));
+  } else {
+    undoStack.push(serializeForUndo());
+  }
+  redoStack.pop();
   _undoSuppressed = true;
-  layers = deserializeLayers(next);
+  if(resizeSnap){
+    setCanvasSize(resizeSnap.w, resizeSnap.h);
+    layers = deserializeLayers(resizeSnap.layers);
+  } else {
+    layers = deserializeLayers(next);
+  }
   if(!layers.find(function(l){return l.id===selectedId;})) selectedId = null;
   cropState = null; dragState = null; resizeState = null; rotateState = null; if(typeof eraseState !== 'undefined' && eraseState) { hideEraseToolbar(); eraseState = null; }
   hideCropToolbar();
@@ -3734,7 +3765,8 @@ function _buildResizeAnchorGrid(){
   });
 }
 
-// Live-updates the scale-factor + offset preview as the user types new dimensions.
+// v265: now describes the canvas-resize-with-anchor behavior (no scaling). Layers keep their
+// dimensions; positions shift by (newW-oldW)*anchorX, (newH-oldH)*anchorY.
 function _updateResizePreviewInfo(){
   var info = document.getElementById('resizePreviewInfo');
   var newW = parseInt(document.getElementById('resizeNewW').value, 10);
@@ -3743,15 +3775,18 @@ function _updateResizePreviewInfo(){
     info.textContent = 'Enter new dimensions (50–10000).';
     return;
   }
-  var s = Math.min(newW / canvasW, newH / canvasH);
-  var contentW = canvasW * s, contentH = canvasH * s;
-  var dx = (newW - contentW) * _resizeAnchorX;
-  var dy = (newH - contentH) * _resizeAnchorY;
+  var dx = (newW - canvasW) * _resizeAnchorX;
+  var dy = (newH - canvasH) * _resizeAnchorY;
+  var dimChange = (newW !== canvasW || newH !== canvasH);
+  var shiftMsg = (dx === 0 && dy === 0)
+    ? 'Layers stay in place.'
+    : 'Layers shift ' + (dx >= 0 ? '+' : '') + Math.round(dx) + 'px X, ' + (dy >= 0 ? '+' : '') + Math.round(dy) + 'px Y.';
   info.innerHTML =
-    '<div><b>Scale factor:</b> ' + (s * 100).toFixed(1) + '% (' + (s < 1 ? 'shrink' : s > 1 ? 'grow' : 'unchanged') + ')</div>'
-    + '<div><b>Scaled content:</b> ' + Math.round(contentW) + '×' + Math.round(contentH) + ' inside ' + newW + '×' + newH + '</div>'
-    + (Math.abs(newW - contentW) + Math.abs(newH - contentH) > 0.5
-        ? '<div><b>Margin from anchor:</b> ' + Math.round(dx) + 'px left, ' + Math.round(dy) + 'px top</div>'
+    '<div><b>Canvas:</b> ' + canvasW + '×' + canvasH + ' → ' + newW + '×' + newH + '</div>'
+    + '<div><b>Layer sizes:</b> unchanged (no scaling)</div>'
+    + '<div><b>Position:</b> ' + shiftMsg + '</div>'
+    + ((newW < canvasW || newH < canvasH) && dimChange
+        ? '<div style="color:#a86c10;margin-top:4px;"><b>Note:</b> Content past the new edges goes off-canvas (visible via the ⤢ overscan toggle).</div>'
         : '');
 }
 
@@ -3766,58 +3801,60 @@ function applyResizeDesign(){
   closeResizeDesignModal();
 }
 
-// Core operation. snapshotState first so undo restores the pre-resize state.
+// v265: REWRITE. The v262 implementation scaled every layer uniformly to fit the new canvas —
+// which made a 1080×1080 → 1080×300 banner shrink the contained logo to 28% of its original
+// size. That's not what marketing reflow wants. The new behavior matches Photoshop's "Canvas
+// Size" dialog: layer dimensions stay unchanged, layer POSITIONS shift by the canvas-delta
+// weighted by the chosen anchor. Top-left anchor = layers stay put (anything beyond the new
+// bottom/right edge is now off-canvas, visible via overscan). Center anchor = layers shift by
+// half the delta. Bottom-right anchor = layers shift by the full delta. Background layers
+// (_fillsCanvas) snap to the new canvas dims.
 function resizeDesign(newW, newH, anchorX, anchorY){
   if(!canvasW || !canvasH) return;
-  snapshotStateFull();
-  var s = Math.min(newW / canvasW, newH / canvasH);
-  var contentW = canvasW * s, contentH = canvasH * s;
-  var dx = (newW - contentW) * anchorX;
-  var dy = (newH - contentH) * anchorY;
-  layers.forEach(function(l){ _scaleLayerForResize(l, s, dx, dy); });
+  var oldW = canvasW, oldH = canvasH;
+  _snapshotForResize(oldW, oldH);
+  var dx = (newW - oldW) * anchorX;
+  var dy = (newH - oldH) * anchorY;
+  layers.forEach(function(l){
+    if(l._fillsCanvas){
+      // Background layers auto-snap to canvas dims in redraw(); set them now so there's no
+      // single-frame flash of the old size during the transition.
+      l.x = 0; l.y = 0; l.w = newW; l.h = newH;
+      return;
+    }
+    if(typeof l.x === 'number') l.x += dx;
+    if(typeof l.y === 'number') l.y += dy;
+  });
   setCanvasSize(newW, newH);
   renderLayerList(); renderProps(); redraw();
 }
 
-// Per-layer scaling — applies the uniform factor `s` to position+size and to type-specific
-// "visual size" knobs (text size, stroke width, sticker textScale, sprinkle piece scales).
-// Then translates by (dx, dy) so the scaled content lands at the user's chosen anchor in the
-// new canvas. Layers that escape the new canvas bounds are left as-is — they're still in
-// the design, just off-canvas (visible via overscan).
-function _scaleLayerForResize(l, s, dx, dy){
-  if(typeof l.x === 'number') l.x = l.x * s + dx;
-  if(typeof l.y === 'number') l.y = l.y * s + dy;
-  if(typeof l.w === 'number') l.w *= s;
-  if(typeof l.h === 'number') l.h *= s;
-  if(typeof l._baseW === 'number') l._baseW *= s;
-  if(typeof l._baseH === 'number') l._baseH *= s;
+// v265: resize-aware undo snapshot. Captures BOTH layers and canvas dims so a single Ctrl+Z
+// restores everything. The base snapshotState/snapshotStateFull only capture `layers`, which
+// is why v262's resize had a broken undo (layers rolled back but canvas stayed at new size).
+function _snapshotForResize(prevW, prevH){
+  if(_undoSuppressed) return;
+  var snap = JSON.stringify({
+    __kind: 'resize',
+    w: prevW, h: prevH,
+    layers: serializeLayers()
+  });
+  undoStack.push(snap);
+  if(undoStack.length > UNDO_LIMIT) undoStack.shift();
+  redoStack = [];
+  if(typeof scheduleAutosave === 'function') scheduleAutosave();
+  _refreshUndoButtons();
+}
 
-  if(l.type === 'text'){
-    if(typeof l.size === 'number') l.size *= s;
-    if(typeof l.strokeWidth === 'number') l.strokeWidth *= s;
-    if(typeof l.shadowBlur === 'number') l.shadowBlur *= s;
-    if(typeof l.shadowOffsetX === 'number') l.shadowOffsetX *= s;
-    if(typeof l.shadowOffsetY === 'number') l.shadowOffsetY *= s;
-  } else if(l.type === 'sticker'){
-    // textScale is a percentage (100 = 100%); multiplying scales every line proportionally.
-    if(typeof l.textScale === 'number') l.textScale *= s;
-    if(typeof l.padTop === 'number') l.padTop *= s;
-    if(typeof l.padBottom === 'number') l.padBottom *= s;
-    if(typeof l.bleed === 'number') l.bleed *= s;
-    if(typeof l.shadowSpread === 'number') l.shadowSpread *= s;
-  } else if(l.type === 'shape'){
-    if(typeof l.strokeWidth === 'number') l.strokeWidth *= s;
-    if(typeof l.cornerRadius === 'number') l.cornerRadius *= s;
-  } else if(l.type === 'sprinkle'){
-    // Each piece has x,y in 0..1 (fractions of layer bounds) so they auto-scale with layer w/h;
-    // only the per-piece scale knob would need touching if it referenced pixels — it doesn't, so
-    // there's nothing extra to do for sprinkles beyond x/y/w/h.
-  } else if(l.type === 'image' || l.type === 'framedImage'){
-    if(typeof l.shadowBlur === 'number') l.shadowBlur *= s;
-    if(typeof l.shadowOffsetX === 'number') l.shadowOffsetX *= s;
-    if(typeof l.shadowOffsetY === 'number') l.shadowOffsetY *= s;
-    if(typeof l.cornerRadius === 'number') l.cornerRadius *= s;   // v264
-  }
+// Detects v265 resize-shaped undo entries vs. plain layer JSON. Plain entries start with `[`
+// (a serialized array); resize entries start with `{` and have __kind:'resize'. Defensive parse —
+// arbitrary stringified-array-of-objects entries also start with `[`, never with `{`.
+function _tryParseResizeSnap(s){
+  if(typeof s !== 'string' || s.charAt(0) !== '{') return null;
+  try {
+    var p = JSON.parse(s);
+    return (p && p.__kind === 'resize' && typeof p.w === 'number' && typeof p.h === 'number') ? p : null;
+  } catch(e){ return null; }
 }
 function setCanvasSize(w,h){
   canvasW=w;canvasH=h;
