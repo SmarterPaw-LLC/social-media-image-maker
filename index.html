@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SmarterImage</title>
-<link rel="icon" type="image/png" href="favicon.png">
+<link rel="icon" type="image/png" href="smarterimage_favicon-256x256.png">
 <style>
 :root {
   --green:#8ab81d;--green-dark:#3c8e14;--orange:#f6ae40;--orange-dark:#f07830;
@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 SmarterImage</h1><span>SmarterPaw Marketing · v262</span></div>
+    <div><h1>🐾 SmarterImage</h1><span>SmarterPaw Marketing · v264</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3816,6 +3816,7 @@ function _scaleLayerForResize(l, s, dx, dy){
     if(typeof l.shadowBlur === 'number') l.shadowBlur *= s;
     if(typeof l.shadowOffsetX === 'number') l.shadowOffsetX *= s;
     if(typeof l.shadowOffsetY === 'number') l.shadowOffsetY *= s;
+    if(typeof l.cornerRadius === 'number') l.cornerRadius *= s;   // v264
   }
 }
 function setCanvasSize(w,h){
@@ -8462,6 +8463,9 @@ function buildImageProps(l){
     +SEL('Fit','pfit',[['cover','Cover'],['contain','Contain'],['fill','Stretch']],l.fit)
     +R('Rotation','protation',l.rotation,-180,180,1)
     +R('Opacity','popacity',l.opacity,0,100,1)
+    // v264: corner radius (clip to rounded rect). Range goes up to half the smaller layer side
+    // so a max-slider value gives a perfect pill / circle; helper clamps anything larger anyway.
+    +R('Corner Radius','pimg_cornerRadius',l.cornerRadius||0,0,Math.round(Math.min(l.w,l.h)/2),1)
     +'<div class="col2" style="margin-bottom:5px;">'
     +'<label style="display:flex;align-items:center;gap:5px;font-size:11px;"><input type="checkbox" id="pflipH"'+(l.flipH?' checked':'')+'>Flip H</label>'
     +'<label style="display:flex;align-items:center;gap:5px;font-size:11px;"><input type="checkbox" id="pflipV"'+(l.flipV?' checked':'')+'>Flip V</label>'
@@ -9055,6 +9059,8 @@ function bindPropEvents(layer){
     on('pfit','change',function(e){layer.fit=e.target.value;redraw();});
     rng('protation',function(v){layer.rotation=v;redraw();});
     rng('popacity',function(v){layer.opacity=v;redraw();});
+    // v264: rounded-corner clip on the image layer's bounding rect (primary use: backgrounds)
+    rng('pimg_cornerRadius',function(v){layer.cornerRadius=v;redraw();});
     on('pflipH','change',function(e){layer.flipH=e.target.checked;redraw();});
     on('pflipV','change',function(e){layer.flipV=e.target.checked;redraw();});
     bindShadowEvents('pimg_', layer);
@@ -11157,6 +11163,31 @@ function withRotation(ctx,layer,fn){
   ctx.save();ctx.translate(cx,cy);ctx.rotate(layer.rotation*Math.PI/180);ctx.translate(-cx,-cy);fn();ctx.restore();
 }
 
+// v264: Rounded-rect path. Used by drawImageLayer (and any future layer that wants rounded
+// corners — backgrounds being the primary use case). Falls back to a manual arcTo construction
+// if the browser lacks ctx.roundRect (which has been Chrome 99+/FF 113+/Safari 16+ since ~2023,
+// so the fallback is precautionary). Caller is responsible for beginPath() before this and
+// clip()/fill()/stroke() after.
+function _pathRoundRect(ctx, x, y, w, h, r){
+  if(!r || r <= 0){ ctx.rect(x, y, w, h); return; }
+  // Clamp radius to half the smaller side so a too-large radius can't invert the shape.
+  var rr = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+  if(typeof ctx.roundRect === 'function'){
+    ctx.roundRect(x, y, w, h, rr);
+    return;
+  }
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.arcTo(x + w, y,         x + w, y + rr,     rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.arcTo(x + w, y + h,     x + w - rr, y + h, rr);
+  ctx.lineTo(x + rr, y + h);
+  ctx.arcTo(x,     y + h,     x, y + h - rr,     rr);
+  ctx.lineTo(x, y + rr);
+  ctx.arcTo(x,     y,         x + rr, y,         rr);
+  ctx.closePath();
+}
+
 // ── IMAGE FILL FOR TEXT (text-as-mask effect) ──
 // Used by the "Image fill" text effect: lets the user upload an image which is then masked
 // by the glyph silhouettes. Supports tile (repeat the image) and cover (fit one copy to the
@@ -11538,11 +11569,15 @@ function drawImageLayer(ctx,layer){
     var sy=(layer.cropY!=null)?layer.cropY:0;
     var sw=(layer.cropW!=null)?layer.cropW:natW;
     var sh=(layer.cropH!=null)?layer.cropH:natH;
+    // v264: rounded-corner support — primary use case is background layers (the "+ Background"
+    // gradient/pattern picker creates image layers that fill the canvas), but works for any image.
+    // Both clip calls below use _pathRoundRect; when cornerRadius is 0 it degrades to a plain rect.
+    var _cr = layer.cornerRadius || 0;
     // Drop shadow that follows the image's alpha silhouette (so transparent PNG logos cast a
     // shadow shaped like the logo, not a rectangle). Done before the clip + paint.
     paintImageShadow(ctx, layer, function(c){
       c.save();
-      c.beginPath(); c.rect(x,y,w,h); c.clip();
+      c.beginPath(); _pathRoundRect(c, x, y, w, h, _cr); c.clip();
       if(layer.flipH||layer.flipV){c.translate(x+w/2,y+h/2);c.scale(layer.flipH?-1:1,layer.flipV?-1:1);c.translate(-(x+w/2),-(y+h/2));}
       if(layer.fit==='fill'){ c.drawImage(img,sx,sy,sw,sh,x,y,w,h); }
       else{
@@ -11552,7 +11587,7 @@ function drawImageLayer(ctx,layer){
       }
       c.restore();
     });
-    ctx.save();ctx.beginPath();ctx.rect(x,y,w,h);ctx.clip();
+    ctx.save();ctx.beginPath();_pathRoundRect(ctx, x, y, w, h, _cr);ctx.clip();
     if(layer.flipH||layer.flipV){ctx.translate(x+w/2,y+h/2);ctx.scale(layer.flipH?-1:1,layer.flipV?-1:1);ctx.translate(-(x+w/2),-(y+h/2));}
     if(layer.fit==='fill'){ctx.drawImage(img,sx,sy,sw,sh,x,y,w,h);}
     else{
