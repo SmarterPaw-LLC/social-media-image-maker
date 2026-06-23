@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1>🐾 SmarterImage</h1><span>SmarterPaw Marketing · v261</span></div>
+    <div><h1>🐾 SmarterImage</h1><span>SmarterPaw Marketing · v262</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -293,6 +293,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <div><label>W (px)</label><input type="number" id="customW" value="1080" min="100" max="6000" onchange="applyCustomSize()"></div>
       <div><label>H (px)</label><input type="number" id="customH" value="1080" min="100" max="6000" onchange="applyCustomSize()"></div>
     </div>
+    <!-- v262: scaled resize. The W/H fields above change canvas dimensions but leave layer positions
+         and sizes alone (Photoshop "Canvas Size" mode). This button opens a dialog that ALSO scales
+         every layer uniformly to fit the new canvas, anchored to a chosen corner — preserving image
+         aspect ratios and letting you reflow a 1080×1080 IG post into a 1920×1080 landscape ad in
+         one click. -->
+    <button type="button" class="btn-add" style="margin-top:6px;font-size:11px;padding:5px 10px;" onclick="openResizeDesignModal()" title="Resize canvas and scale all layers proportionally, anchored to a corner">📐 Resize Design…</button>
   </div>
 
   <div class="divider"></div>
@@ -954,6 +960,36 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMyDesignsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- v262: Resize Design modal — scales the whole composition uniformly to fit a new canvas size,
+     anchored to a chosen point. Layer aspect ratios are preserved (single uniform scale factor
+     applied to x/y/w/h plus type-specific knobs like font size, stroke width, sticker textScale). -->
+<div class="modal-overlay hidden" id="resizeDesignModal" style="z-index:1100;">
+  <div class="modal" style="width:min(95vw,480px);max-width:480px;">
+    <h2>📐 Resize Design</h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+      Scales every layer uniformly to fit the new canvas. Aspect ratios are preserved — no horizontal/vertical squishing. Pick which point of the design stays "fixed" relative to the new canvas.
+    </div>
+
+    <div class="col2" style="margin-bottom:10px;">
+      <div><label>New Width (px)</label><input type="number" id="resizeNewW" min="50" max="10000"></div>
+      <div><label>New Height (px)</label><input type="number" id="resizeNewH" min="50" max="10000"></div>
+    </div>
+
+    <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Anchor point</div>
+    <div id="resizeAnchorGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;background:#f4faf4;padding:8px;border:1px solid var(--border);border-radius:7px;margin-bottom:6px;">
+      <!-- 9 anchor buttons, populated by openResizeDesignModal -->
+    </div>
+    <div id="resizeAnchorLabel" style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:12px;">Center</div>
+
+    <div id="resizePreviewInfo" style="font-size:11px;color:var(--muted);background:#fafafa;border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;"></div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeResizeDesignModal()">Cancel</button>
+      <button class="btn-primary" onclick="applyResizeDesign()">Apply</button>
     </div>
   </div>
 </div>
@@ -3636,6 +3672,151 @@ function applyCustomSize(){
   var h=parseInt(document.getElementById('customH').value)||1080;
   document.querySelectorAll('.size-btn').forEach(function(x){x.classList.remove('active');});
   setCanvasSize(w,h);
+}
+
+// ── RESIZE DESIGN (v262) ──
+// Unlike setCanvasSize (which leaves layers untouched), resizeDesign uniformly scales every layer
+// to fit a new canvas, with a user-picked anchor point determining how the scaled content is
+// positioned in the new canvas. Used for re-targeting an existing composition to a different
+// aspect ratio (e.g. 1080×1080 IG post → 1920×1080 landscape ad) without distorting any image.
+
+var _resizeAnchorX = 0.5;   // 0 = left, 0.5 = center, 1 = right
+var _resizeAnchorY = 0.5;   // 0 = top,  0.5 = center, 1 = bottom
+
+function openResizeDesignModal(){
+  document.getElementById('resizeNewW').value = canvasW;
+  document.getElementById('resizeNewH').value = canvasH;
+  _resizeAnchorX = 0.5;
+  _resizeAnchorY = 0.5;
+  _buildResizeAnchorGrid();
+  _updateResizePreviewInfo();
+  document.getElementById('resizeNewW').oninput = _updateResizePreviewInfo;
+  document.getElementById('resizeNewH').oninput = _updateResizePreviewInfo;
+  document.getElementById('resizeDesignModal').classList.remove('hidden');
+}
+function closeResizeDesignModal(){
+  document.getElementById('resizeDesignModal').classList.add('hidden');
+}
+
+// 3×3 anchor button grid. Each cell sets _resizeAnchorX/Y to a (0|0.5|1) pair.
+function _buildResizeAnchorGrid(){
+  var grid = document.getElementById('resizeAnchorGrid');
+  grid.innerHTML = '';
+  var cells = [
+    {x:0,   y:0,   label:'Top Left',     icon:'↖'},
+    {x:0.5, y:0,   label:'Top',          icon:'↑'},
+    {x:1,   y:0,   label:'Top Right',    icon:'↗'},
+    {x:0,   y:0.5, label:'Left',         icon:'←'},
+    {x:0.5, y:0.5, label:'Center',       icon:'•'},
+    {x:1,   y:0.5, label:'Right',        icon:'→'},
+    {x:0,   y:1,   label:'Bottom Left',  icon:'↙'},
+    {x:0.5, y:1,   label:'Bottom',       icon:'↓'},
+    {x:1,   y:1,   label:'Bottom Right', icon:'↘'}
+  ];
+  cells.forEach(function(c){
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.x = c.x; b.dataset.y = c.y;
+    b.title = c.label;
+    var active = (c.x === _resizeAnchorX && c.y === _resizeAnchorY);
+    b.style.cssText = 'padding:10px 0;font-size:18px;font-weight:700;border:1.5px solid '
+      + (active ? 'var(--green-dark)' : 'var(--border)') + ';border-radius:6px;background:'
+      + (active ? 'var(--green)' : '#fff') + ';color:' + (active ? '#fff' : 'var(--text)')
+      + ';cursor:pointer;transition:all 0.12s;';
+    b.textContent = c.icon;
+    b.onclick = function(){
+      _resizeAnchorX = c.x; _resizeAnchorY = c.y;
+      document.getElementById('resizeAnchorLabel').textContent = c.label;
+      _buildResizeAnchorGrid();
+      _updateResizePreviewInfo();
+    };
+    grid.appendChild(b);
+  });
+}
+
+// Live-updates the scale-factor + offset preview as the user types new dimensions.
+function _updateResizePreviewInfo(){
+  var info = document.getElementById('resizePreviewInfo');
+  var newW = parseInt(document.getElementById('resizeNewW').value, 10);
+  var newH = parseInt(document.getElementById('resizeNewH').value, 10);
+  if(!newW || !newH || newW < 50 || newH < 50){
+    info.textContent = 'Enter new dimensions (50–10000).';
+    return;
+  }
+  var s = Math.min(newW / canvasW, newH / canvasH);
+  var contentW = canvasW * s, contentH = canvasH * s;
+  var dx = (newW - contentW) * _resizeAnchorX;
+  var dy = (newH - contentH) * _resizeAnchorY;
+  info.innerHTML =
+    '<div><b>Scale factor:</b> ' + (s * 100).toFixed(1) + '% (' + (s < 1 ? 'shrink' : s > 1 ? 'grow' : 'unchanged') + ')</div>'
+    + '<div><b>Scaled content:</b> ' + Math.round(contentW) + '×' + Math.round(contentH) + ' inside ' + newW + '×' + newH + '</div>'
+    + (Math.abs(newW - contentW) + Math.abs(newH - contentH) > 0.5
+        ? '<div><b>Margin from anchor:</b> ' + Math.round(dx) + 'px left, ' + Math.round(dy) + 'px top</div>'
+        : '');
+}
+
+function applyResizeDesign(){
+  var newW = parseInt(document.getElementById('resizeNewW').value, 10);
+  var newH = parseInt(document.getElementById('resizeNewH').value, 10);
+  if(!newW || !newH || newW < 50 || newH < 50 || newW > 10000 || newH > 10000){
+    alert('Width and height must be between 50 and 10000.');
+    return;
+  }
+  resizeDesign(newW, newH, _resizeAnchorX, _resizeAnchorY);
+  closeResizeDesignModal();
+}
+
+// Core operation. snapshotState first so undo restores the pre-resize state.
+function resizeDesign(newW, newH, anchorX, anchorY){
+  if(!canvasW || !canvasH) return;
+  snapshotStateFull();
+  var s = Math.min(newW / canvasW, newH / canvasH);
+  var contentW = canvasW * s, contentH = canvasH * s;
+  var dx = (newW - contentW) * anchorX;
+  var dy = (newH - contentH) * anchorY;
+  layers.forEach(function(l){ _scaleLayerForResize(l, s, dx, dy); });
+  setCanvasSize(newW, newH);
+  renderLayerList(); renderProps(); redraw();
+}
+
+// Per-layer scaling — applies the uniform factor `s` to position+size and to type-specific
+// "visual size" knobs (text size, stroke width, sticker textScale, sprinkle piece scales).
+// Then translates by (dx, dy) so the scaled content lands at the user's chosen anchor in the
+// new canvas. Layers that escape the new canvas bounds are left as-is — they're still in
+// the design, just off-canvas (visible via overscan).
+function _scaleLayerForResize(l, s, dx, dy){
+  if(typeof l.x === 'number') l.x = l.x * s + dx;
+  if(typeof l.y === 'number') l.y = l.y * s + dy;
+  if(typeof l.w === 'number') l.w *= s;
+  if(typeof l.h === 'number') l.h *= s;
+  if(typeof l._baseW === 'number') l._baseW *= s;
+  if(typeof l._baseH === 'number') l._baseH *= s;
+
+  if(l.type === 'text'){
+    if(typeof l.size === 'number') l.size *= s;
+    if(typeof l.strokeWidth === 'number') l.strokeWidth *= s;
+    if(typeof l.shadowBlur === 'number') l.shadowBlur *= s;
+    if(typeof l.shadowOffsetX === 'number') l.shadowOffsetX *= s;
+    if(typeof l.shadowOffsetY === 'number') l.shadowOffsetY *= s;
+  } else if(l.type === 'sticker'){
+    // textScale is a percentage (100 = 100%); multiplying scales every line proportionally.
+    if(typeof l.textScale === 'number') l.textScale *= s;
+    if(typeof l.padTop === 'number') l.padTop *= s;
+    if(typeof l.padBottom === 'number') l.padBottom *= s;
+    if(typeof l.bleed === 'number') l.bleed *= s;
+    if(typeof l.shadowSpread === 'number') l.shadowSpread *= s;
+  } else if(l.type === 'shape'){
+    if(typeof l.strokeWidth === 'number') l.strokeWidth *= s;
+    if(typeof l.cornerRadius === 'number') l.cornerRadius *= s;
+  } else if(l.type === 'sprinkle'){
+    // Each piece has x,y in 0..1 (fractions of layer bounds) so they auto-scale with layer w/h;
+    // only the per-piece scale knob would need touching if it referenced pixels — it doesn't, so
+    // there's nothing extra to do for sprinkles beyond x/y/w/h.
+  } else if(l.type === 'image' || l.type === 'framedImage'){
+    if(typeof l.shadowBlur === 'number') l.shadowBlur *= s;
+    if(typeof l.shadowOffsetX === 'number') l.shadowOffsetX *= s;
+    if(typeof l.shadowOffsetY === 'number') l.shadowOffsetY *= s;
+  }
 }
 function setCanvasSize(w,h){
   canvasW=w;canvasH=h;
