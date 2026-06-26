@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v270</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v271</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8811,30 +8811,38 @@ function buildShapeProps(l){
     params = R('Sides','pshSides', (l.polygonSides||6), 3, 8, 1)
            + R('Rotation','pshPolyRot', (l.polygonRotation||0), 0, 360, 5);
   }
+  // v271: three-way Fill Type — None / Solid / Gradient. 'none' hides the color/gradient pickers
+  // and tells drawShapeLayer to skip the fill pass entirely. Stroke-only ("hollow") shapes are
+  // the primary use case. Gradient preset swatches stay visible so picking one switches back to
+  // gradient with that palette in one click.
+  var isNone = l.fillType==='none';
   var isSolid = l.fillType==='solid';
+  var isGradient = !isNone && !isSolid;
   return '<div class="prop-section">'
-    +SEL('Fill Type','pshFillType',[['gradient','Gradient'],['solid','Solid']],l.fillType)
-    +(isSolid
-      ? '<div style="margin-bottom:5px;">'+COL('Color','pshGradTop',l.fillColor||l.gradTop||'#8ab81d')+'</div>'
-        +brandSwatchesHtml('pshColor')
-      : '<div class="col2" style="margin-bottom:5px;">'
-        +COL('Top','pshGradTop',l.gradTop||'#8ab81d')
-        +COL('Bottom','pshGradBot',l.gradBottom||'#3c8e14')
-        +'</div>'
-        +brandSwatchesHtml('pshColor')
-        +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click = Top · Alt+Click = Bottom</div>'
+    +SEL('Fill Type','pshFillType',[['none','None (transparent)'],['solid','Solid'],['gradient','Gradient']],l.fillType||'gradient')
+    +(isNone
+      ? '<div style="font-size:11px;color:var(--muted);padding:6px 8px;background:#fafafa;border:1px dashed var(--border);border-radius:5px;margin-bottom:5px;">No fill — pick a Solid or Gradient (or click a preset below) to add one back. Stroke is independent.</div>'
+      : isSolid
+        ? '<div style="margin-bottom:5px;">'+COL('Color','pshGradTop',l.fillColor||l.gradTop||'#8ab81d')+'</div>'
+          +brandSwatchesHtml('pshColor')
+        : '<div class="col2" style="margin-bottom:5px;">'
+          +COL('Top','pshGradTop',l.gradTop||'#8ab81d')
+          +COL('Bottom','pshGradBot',l.gradBottom||'#3c8e14')
+          +'</div>'
+          +brandSwatchesHtml('pshColor')
+          +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click = Top · Alt+Click = Bottom</div>'
     )
     +'<div style="margin-top:8px;margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
     +'<div class="preset-grid" style="margin-top:3px;">'
     +gradientPresets.map(function(p){
       return '<div class="preset-swatch" style="background:'+presetSwatchCss(p)+'" title="'+p.label+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
     }).join('')+'</div></div>'
-    +(!isSolid ? SEL('Gradient Type','pshGradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']],l.gradType||'linear') : '')
-    +(!isSolid ? R('Gradient Angle','pshGradAngle',l.gradAngle,0,360,5) : '')
+    +(isGradient ? SEL('Gradient Type','pshGradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']],l.gradType||'linear') : '')
+    +(isGradient ? R('Gradient Angle','pshGradAngle',l.gradAngle,0,360,5) : '')
     +params
     +R('Corner Radius','pshCorner',l.cornerRadius||0,0,200,1)
     +COL('Stroke','pshStroke',l.strokeColor==='rgba(0,0,0,0)'?'#000000':l.strokeColor)
-    +R('Stroke Width','pshStrokeW',l.strokeWidth,0,40,1)
+    +R('Stroke Width (0 = no stroke)','pshStrokeW',l.strokeWidth,0,40,1)
     +NUMPAIR('X (px)','nshx',l.x,'Y (px)','nshy',l.y)
     +NUMPAIR('W (px)','nshw',l.w,'H (px)','nshh',l.h)
     +R('X','pshx',Math.round(l.x),-canvasW,canvasW*2,2)
@@ -12077,35 +12085,38 @@ function buildShapePath(ctx, layer){
 function drawShapeLayer(ctx,layer){
   withRotation(ctx,layer,function(){
     var x=layer.x,y=layer.y,w=layer.w,h=layer.h;
-    // Build fill (color or gradient)
+    // v271: fillType can now be 'none' (transparent / stroke-only). Skip the fill prep + shadow
+    // pass when there's no fill — shadow is a filled-silhouette technique that wouldn't match
+    // the visible stroke-only outline anyway.
+    var hasFill = layer.fillType !== 'none';
+    // Build fill (color or gradient) — only when we actually have one.
     var fill;
-    if(layer.fillType==='solid'){
-      fill=layer.fillColor||'#8ab81d';
-    } else {
-      var gradType = layer.gradType || 'linear';
-      var cx2=x+w/2, cy2=y+h/2;
-      var grad;
-      if(gradType === 'radial'){
-        var rad = Math.max(w,h)/2;
-        grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, rad);
-      } else if(gradType === 'conic' && ctx.createConicGradient){
-        var angRad = ((layer.gradAngle||0) - 90) * Math.PI/180;
-        grad = ctx.createConicGradient(angRad, cx2, cy2);
+    if(hasFill){
+      if(layer.fillType==='solid'){
+        fill=layer.fillColor||'#8ab81d';
       } else {
-        var ang=((layer.gradAngle==null?135:layer.gradAngle))*Math.PI/180;
-        var len=Math.sqrt(w*w+h*h)/2;
-        var gx1=cx2-Math.cos(ang)*len, gy1=cy2-Math.sin(ang)*len;
-        var gx2=cx2+Math.cos(ang)*len, gy2=cy2+Math.sin(ang)*len;
-        grad = ctx.createLinearGradient(gx1,gy1,gx2,gy2);
+        var gradType = layer.gradType || 'linear';
+        var cx2=x+w/2, cy2=y+h/2;
+        var grad;
+        if(gradType === 'radial'){
+          var rad = Math.max(w,h)/2;
+          grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, rad);
+        } else if(gradType === 'conic' && ctx.createConicGradient){
+          var angRad = ((layer.gradAngle||0) - 90) * Math.PI/180;
+          grad = ctx.createConicGradient(angRad, cx2, cy2);
+        } else {
+          var ang=((layer.gradAngle==null?135:layer.gradAngle))*Math.PI/180;
+          var len=Math.sqrt(w*w+h*h)/2;
+          var gx1=cx2-Math.cos(ang)*len, gy1=cy2-Math.sin(ang)*len;
+          var gx2=cx2+Math.cos(ang)*len, gy2=cy2+Math.sin(ang)*len;
+          grad = ctx.createLinearGradient(gx1,gy1,gx2,gy2);
+        }
+        addLayerGradientStops(grad, layer);
+        fill=grad;
       }
-      addLayerGradientStops(grad, layer);
-      fill=grad;
     }
-    // Drop shadow that follows the actual shape outline.
-    // Done as a separate pass: fill the shape path with shadow active and a black fill
-    // (the fill is hidden behind the real fill in the next pass), so what survives is the
-    // blurred/offset shadow.
-    if(layerHasShadow(layer)){
+    // Drop shadow that follows the actual shape outline. Skipped for fill='none' shapes (see above).
+    if(hasFill && layerHasShadow(layer)){
       ctx.save();
       applyLayerShadow(ctx, layer);
       ctx.fillStyle = '#000';
@@ -12114,7 +12125,7 @@ function drawShapeLayer(ctx,layer){
       ctx.restore();
     }
     ctx.save();
-    ctx.fillStyle=fill;
+    if(hasFill) ctx.fillStyle=fill;
     if(layer.strokeWidth>0){
       // v269: default strokeColor is 'rgba(0,0,0,0)' (transparent sentinel — see shape layer
       // creation). The `|| '#000'` fallback below only catches falsy values, and a transparent-
@@ -12127,7 +12138,7 @@ function drawShapeLayer(ctx,layer){
       ctx.lineWidth = layer.strokeWidth;
     }
     buildShapePath(ctx, layer);
-    ctx.fill();
+    if(hasFill) ctx.fill();
     if(layer.strokeWidth>0)ctx.stroke();
     ctx.restore();
   });
