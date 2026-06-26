@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v273</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v274</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8054,7 +8054,7 @@ function _renderLayerRow(list, layer, depth, parentGroup){
   var isSelected = layer.id === selectedId || (selectedIds && selectedIds.indexOf(layer.id) >= 0);
   item.className = 'layer-item' + (isSelected ? ' active' : '');
   if(layer.hidden) item.style.opacity = '0.5';
-  item.draggable = !layer.locked && depth === 0;   // v270: top-level only; cross-group drag = v271
+  item.draggable = !layer.locked;   // v274: any row can be dragged (including across group boundaries)
   item.dataset.layerId = layer.id;
   if(depth > 0){
     item.style.marginLeft = (depth * 14) + 'px';
@@ -8096,7 +8096,7 @@ function _renderLayerRow(list, layer, depth, parentGroup){
     canMoveDown = posInTop > 0;
   }
   item.innerHTML = chevron
-    + '<span class="ltype" style="cursor:' + (layer.locked ? 'not-allowed' : (depth === 0 ? 'grab' : 'default')) + ';" title="' + (depth === 0 ? 'Drag to reorder' : 'Drag in/out of groups: coming in v271') + '">⋮⋮</span>'
+    + '<span class="ltype" style="cursor:' + (layer.locked ? 'not-allowed' : 'grab') + ';" title="Drag to reorder; drag onto a group header (bottom half) or a group child to nest">⋮⋮</span>'
     + (depth === 0
         ? '<span class="layer-mv-col" style="display:inline-flex;flex-direction:column;line-height:0.85;font-size:8px;color:#666;user-select:none;">'
           + '<span class="layer-mv" data-dir="up" title="Move up" style="cursor:' + (canMoveUp ? 'pointer' : 'default') + ';padding:1px 2px;opacity:' + (canMoveUp ? '1' : '0.22') + ';">▲</span>'
@@ -8133,37 +8133,33 @@ function _renderLayerRow(list, layer, depth, parentGroup){
     }
     selectLayer(layer.id, {shift: e.shiftKey || e.ctrlKey || e.metaKey});
   };
-  // Drag-reorder among top-level layers (children are not draggable in v270).
-  if(depth === 0){
-    item.addEventListener('dragstart', function(e){
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(layer.id));
-      item.style.opacity = '0.4';
-    });
-    item.addEventListener('dragend', function(){ item.style.opacity = ''; document.querySelectorAll('.layer-item').forEach(function(x){ x.style.borderTop = ''; x.style.borderBottom = ''; }); });
-    item.addEventListener('dragover', function(e){
-      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
-      var bds = item.getBoundingClientRect(); var midY = bds.top + bds.height/2;
-      document.querySelectorAll('.layer-item').forEach(function(x){ x.style.borderTop = ''; x.style.borderBottom = ''; });
-      if(e.clientY < midY) item.style.borderTop = '2px solid var(--green)';
-      else item.style.borderBottom = '2px solid var(--green)';
-    });
-    item.addEventListener('drop', function(e){
-      e.preventDefault();
-      var draggedId = +e.dataTransfer.getData('text/plain');
-      if(draggedId === layer.id) return;
-      var fromIdx = layers.findIndex(function(l){ return l.id === draggedId; });
-      var toIdx = layers.findIndex(function(l){ return l.id === layer.id; });
-      if(fromIdx < 0 || toIdx < 0) return;
-      var bds = item.getBoundingClientRect(); var midY = bds.top + bds.height/2;
-      var dropAbove = e.clientY < midY;
-      var moved = layers.splice(fromIdx, 1)[0];
-      toIdx = layers.findIndex(function(l){ return l.id === layer.id; });
-      var insertAt = dropAbove ? toIdx + 1 : toIdx;
-      layers.splice(insertAt, 0, moved);
-      renderLayerList(); redraw();
-    });
-  }
+  // v274: drag-reorder works across group boundaries. dragstart/dragover/dragend are universal;
+  // drop logic lives in the shared _handleLayerDrop helper which figures out where the dragged
+  // layer lands (top-level reorder, into a group as a child, or out of a group to top-level).
+  item.addEventListener('dragstart', function(e){
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(layer.id));
+    item.style.opacity = '0.4';
+  });
+  item.addEventListener('dragend', function(){
+    item.style.opacity = '';
+    document.querySelectorAll('.layer-item').forEach(function(x){ x.style.borderTop = ''; x.style.borderBottom = ''; });
+  });
+  item.addEventListener('dragover', function(e){
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    var bds = item.getBoundingClientRect(); var midY = bds.top + bds.height/2;
+    document.querySelectorAll('.layer-item').forEach(function(x){ x.style.borderTop = ''; x.style.borderBottom = ''; });
+    if(e.clientY < midY) item.style.borderTop = '2px solid var(--green)';
+    else item.style.borderBottom = '2px solid var(--green)';
+  });
+  item.addEventListener('drop', function(e){
+    e.preventDefault();
+    var draggedId = +e.dataTransfer.getData('text/plain');
+    if(draggedId === layer.id) return;
+    var bds = item.getBoundingClientRect(); var midY = bds.top + bds.height/2;
+    var dropAbove = e.clientY < midY;
+    _handleLayerDrop(draggedId, layer, dropAbove);
+  });
   list.appendChild(item);
   // Recurse into expanded groups (render children top-to-bottom, matching the panel convention).
   if(layer.type === 'group' && layer.expanded !== false){
@@ -8172,6 +8168,66 @@ function _renderLayerRow(list, layer, depth, parentGroup){
       _renderLayerRow(list, children[ci], depth + 1, layer);
     }
   }
+}
+
+// v274: shared drop handler. Figures out from the (dragged, target, dropAbove) trio whether
+// the dragged layer should land at top-level, slot into the target's parent group, or drop INTO
+// a group as its top child. Reverse-panel convention: dropAbove (top half of target row) maps to
+// a HIGHER index in the destination's order array (panel top = last in array/childIds).
+// Nesting guard: a group can't be dropped INTO another group (no nested groups in v270 scope).
+function _handleLayerDrop(draggedId, targetLayer, dropAbove){
+  var dragged = layers.find(function(l){ return l.id === draggedId; });
+  if(!dragged || dragged.locked) return;
+  // Block dragging a group anywhere that would nest it inside another group.
+  if(dragged.type === 'group'){
+    if(targetLayer.parentId){
+      if(typeof showToast === 'function') showToast('Nested groups aren\'t supported');
+      return;
+    }
+    if(targetLayer.type === 'group' && !dropAbove){
+      if(typeof showToast === 'function') showToast('Nested groups aren\'t supported');
+      return;
+    }
+  }
+  snapshotState();
+  // Detach the dragged layer from whatever group it currently lives in. If it was the mask
+  // child of that group, clear that pointer too — it's leaving the group's scope.
+  if(dragged.parentId){
+    var oldParent = layers.find(function(g){ return g.id === dragged.parentId && g.type === 'group'; });
+    if(oldParent){
+      oldParent.childIds = (oldParent.childIds || []).filter(function(cid){ return cid !== draggedId; });
+      if(oldParent.maskChildId === draggedId) oldParent.maskChildId = null;
+    }
+    delete dragged.parentId;
+  }
+  // Three placement branches:
+  if(targetLayer.parentId){
+    // (a) Target is a group child → become a sibling within the same group at the target's slot.
+    var targetParent = layers.find(function(g){ return g.id === targetLayer.parentId && g.type === 'group'; });
+    if(!targetParent){ renderLayerList(); redraw(); return; }
+    var idxInParent = targetParent.childIds.indexOf(targetLayer.id);
+    if(idxInParent < 0){ renderLayerList(); redraw(); return; }
+    var insertAt = dropAbove ? idxInParent + 1 : idxInParent;
+    targetParent.childIds.splice(insertAt, 0, draggedId);
+    dragged.parentId = targetParent.id;
+  } else if(targetLayer.type === 'group' && !dropAbove){
+    // (b) Dropped on the bottom half of a group HEADER → drop INTO the group, as the top child
+    //     (panel-top = last in childIds). Auto-expand so the user sees the landing spot.
+    targetLayer.childIds = targetLayer.childIds || [];
+    targetLayer.childIds.push(draggedId);
+    dragged.parentId = targetLayer.id;
+    targetLayer.expanded = true;
+  } else {
+    // (c) Top-level reorder: target is a top-level row (non-group, or group with dropAbove).
+    //     Splice dragged out of the flat array first, re-find the target's index, then splice in.
+    var fromIdx = layers.findIndex(function(l){ return l.id === draggedId; });
+    if(fromIdx < 0){ renderLayerList(); redraw(); return; }
+    var moved = layers.splice(fromIdx, 1)[0];
+    var toIdx = layers.findIndex(function(l){ return l.id === targetLayer.id; });
+    var insertAtTop = (toIdx < 0) ? layers.length : (dropAbove ? toIdx + 1 : toIdx);
+    layers.splice(insertAtTop, 0, moved);
+  }
+  renderLayerList(); redraw();
 }
 
 // ── PROPS PANEL ──
