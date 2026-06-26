@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v269</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v270</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -315,6 +315,13 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
   <div class="panel-section">
     <h3>Layers</h3>
     <div id="layerList" style="display:flex;flex-direction:column;gap:4px;"></div>
+    <!-- v270: Group/Ungroup actions. Group bundles 2+ selected top-level layers into a new group;
+         Ungroup dissolves the currently-selected group back into its children. Mask functionality
+         now lives INSIDE groups — toggle the ⬚/◉ icon on a child to make it the group's mask. -->
+    <div class="col2" style="margin-top:3px;">
+      <button class="btn-add" id="groupLayersBtn" onclick="groupSelectedLayers()" title="Wrap the selected layers in a group. Inside a group, you can flag one child as the mask (⬚/◉) to clip the others.">▦ Group</button>
+      <button class="btn-add" id="ungroupLayerBtn" onclick="(function(){var l=layers.find(function(x){return x.id===selectedId;}); if(l&&l.type==='group') ungroupLayer(l.id); else if(typeof showToast==='function') showToast('Select a group to ungroup');})()" title="Dissolve the selected group; children become independent layers in the same z-order.">⊟ Ungroup</button>
+    </div>
     <div class="col2" style="margin-top:3px;">
       <div class="add-image-menu">
         <button class="btn-add" onclick="toggleAddImageMenu()" title="Add an image to the canvas">+ Image ▾</button>
@@ -7802,6 +7809,124 @@ function confirmDeleteLayer(id){
   deleteLayer(id);
 }
 
+// ── LAYER GROUPS (v270) ──
+// Groups are first-class layers with type:'group'. Children live in the same flat layers[] array
+// (so existing layers.find() / layers.findIndex() etc keep working everywhere) but carry a
+// `parentId` pointing back to the group. The group itself carries an ORDERED `childIds` list
+// that's the authoritative z-order of its children (the children's positions in the flat array
+// don't matter — only their existence and parentId).
+//
+// Group fields: {id, type:'group', name, childIds:[id...], expanded:bool, maskChildId:id|null,
+//                opacity, hidden, locked, blendMode}
+// Children gain: parentId:<groupId>
+//
+// Rendering: redraw() iterates _topLevelLayers() (filter !parentId). A 'group' top-level entry
+// triggers _drawGroupInto(), which renders children into an offscreen canvas. If maskChildId is
+// set, that child renders to a separate offscreen, gets binarized (v255 trick), and is composited
+// onto the rest via destination-in.
+
+// Top-level layers = those without a parentId. Used as the iteration source for canvas render +
+// for the top of the layer-list panel.
+function _topLevelLayers(){
+  return layers.filter(function(l){ return !l.parentId; });
+}
+
+// Children of a group, in z-order (last = top). Returns layer objects, skipping any IDs that
+// no longer resolve (defensive — shouldn't happen if invariants hold).
+function _childrenOf(group){
+  if(!group || !group.childIds) return [];
+  var out = [];
+  group.childIds.forEach(function(id){
+    var l = layers.find(function(x){ return x.id === id; });
+    if(l) out.push(l);
+  });
+  return out;
+}
+
+// Find the parent group object for a given child layer (null if top-level).
+function _parentGroupOf(layer){
+  if(!layer || !layer.parentId) return null;
+  return layers.find(function(g){ return g.id === layer.parentId && g.type === 'group'; }) || null;
+}
+
+// Wrap the currently-selected layers in a new group. Only works on top-level layers (no nested
+// groups in v270). The new group inherits the topmost member's flat-array position so z-order
+// against ungrouped siblings is preserved.
+function groupSelectedLayers(){
+  var ids = (selectedIds && selectedIds.length) ? selectedIds.slice() : (selectedId != null ? [selectedId] : []);
+  if(ids.length < 2){
+    if(typeof showToast === 'function') showToast('Select 2+ layers to group');
+    return;
+  }
+  // Filter out IDs that aren't top-level layers (existing groups, already-grouped children).
+  var topLevel = _topLevelLayers();
+  var selectedTopLevel = topLevel.filter(function(l){ return ids.indexOf(l.id) >= 0; });
+  if(selectedTopLevel.length < 2){
+    if(typeof showToast === 'function') showToast('Pick 2+ top-level layers — nested groups aren\'t supported yet.');
+    return;
+  }
+  snapshotState();
+  // Preserve canvas z-order: childIds list matches the order of the layers in the flat array
+  // (earlier in array = below in the stack), so the group renders identically to the ungrouped
+  // version.
+  var childIds = selectedTopLevel.map(function(l){ return l.id; });
+  // Insert the group at the flat-array position of the topmost member, so the group sits in the
+  // same z-slot.
+  var topmostId = childIds[childIds.length - 1];
+  var topmostIdx = layers.findIndex(function(l){ return l.id === topmostId; });
+  var group = {
+    id: nextId++,
+    type: 'group',
+    name: 'Group ' + (nextId - 1),
+    childIds: childIds,
+    expanded: true,
+    maskChildId: null,
+    opacity: 100,
+    hidden: false,
+    locked: false,
+    rotation: 0,
+    x: 0, y: 0, w: 0, h: 0   // bounds computed lazily for selection chrome
+  };
+  // Mark each child as belonging to this group.
+  childIds.forEach(function(cid){
+    var c = layers.find(function(l){ return l.id === cid; });
+    if(c) c.parentId = group.id;
+  });
+  layers.splice(topmostIdx + 1, 0, group);
+  selectedId = group.id;
+  selectedIds = [];
+  renderLayerList(); renderProps(); redraw();
+  if(typeof showToast === 'function') showToast('Grouped ' + childIds.length + ' layers');
+}
+
+// Inverse of groupSelectedLayers — dissolves a group. Children become top-level at the group's
+// z-slot in their original order. If the group has a maskChildId, that becomes a regular child.
+function ungroupLayer(groupId){
+  var group = layers.find(function(l){ return l.id === groupId && l.type === 'group'; });
+  if(!group) return;
+  snapshotState();
+  var gIdx = layers.findIndex(function(l){ return l.id === groupId; });
+  var ids = (group.childIds || []).slice();
+  ids.forEach(function(cid){
+    var c = layers.find(function(l){ return l.id === cid; });
+    if(c) delete c.parentId;
+  });
+  layers.splice(gIdx, 1);
+  // Children are still in the layers array — their flat-array order is whatever it was, which
+  // may differ from childIds order. Re-pin them into the group's old slot in the right order.
+  // Pull each child out, then splice them back in childIds order at the group's index.
+  var pulled = [];
+  ids.forEach(function(cid){
+    var i = layers.findIndex(function(l){ return l.id === cid; });
+    if(i >= 0) pulled.push(layers.splice(i, 1)[0]);
+  });
+  layers.splice.apply(layers, [gIdx, 0].concat(pulled));
+  selectedId = ids.length ? ids[ids.length - 1] : null;
+  selectedIds = [];
+  renderLayerList(); renderProps(); redraw();
+  if(typeof showToast === 'function') showToast('Ungrouped');
+}
+
 function deleteLayer(id){
   // Free any blob URL the layer owns (SVG blob, framed-image blob). Without revocation, blob
   // URLs accumulate over the session and contribute to memory pressure / browser crashes.
@@ -7809,9 +7934,27 @@ function deleteLayer(id){
   if(l && l.url && typeof URL.revokeObjectURL === 'function'){
     try { URL.revokeObjectURL(l.url); } catch(e){}
   }
-  layers=layers.filter(function(l){return l.id!==id;});
-  if(selectedId===id)selectedId=layers.length?layers[layers.length-1].id:null;
-  if(selectedIds) selectedIds = selectedIds.filter(function(x){return x!==id;});
+  // v270: deleting a group cascades to its children. We collect every layer ID to remove first
+  // (so we can do one filter at the end), and we recurse should nested groups ever appear.
+  var toRemove = { };
+  (function markForRemoval(layerId){
+    toRemove[layerId] = true;
+    var target = layers.find(function(x){return x.id === layerId;});
+    if(target && target.type === 'group' && target.childIds){
+      target.childIds.forEach(markForRemoval);
+    }
+  })(id);
+  // v270: if this layer is a CHILD of a group, also remove its id from the parent's childIds.
+  if(l && l.parentId){
+    var parent = layers.find(function(g){return g.id === l.parentId && g.type === 'group';});
+    if(parent){
+      parent.childIds = (parent.childIds || []).filter(function(cid){return cid !== id;});
+      if(parent.maskChildId === id) parent.maskChildId = null;
+    }
+  }
+  layers = layers.filter(function(l){ return !toRemove[l.id]; });
+  if(selectedId === id || toRemove[selectedId]) selectedId = layers.length ? layers[layers.length-1].id : null;
+  if(selectedIds) selectedIds = selectedIds.filter(function(x){return !toRemove[x];});
   renderLayerList();renderProps();redraw();
 }
 function moveLayer(id,dir){
@@ -7843,126 +7986,191 @@ function moveLayerById(layerId, dir){
   redraw();
 }
 
-// v254: toggle the isMask flag on a layer. When ON, the layer immediately ABOVE it in the
-// stack will only render where this layer is opaque (clipping mask, Photoshop / Affinity style).
-// Snapshot for undo so toggling can be reverted with Ctrl+Z.
+// v270 rewrite: mask now lives on the parent group, not on the layer itself. Clicking the ⬚/◉
+// icon on a child of a group sets/clears that group's maskChildId — the child renders as the
+// alpha cut for everyone else in the group. Clicking it on a top-level (ungrouped) layer is now
+// a no-op with a toast nudge to use Group first. The old layer.isMask path is still honored by
+// the redraw loop for legacy designs but new toggles don't set it.
 function toggleLayerMask(layerId){
   var layer = layers.find(function(l){ return l.id === layerId; });
   if(!layer) return;
-  var idx = layers.indexOf(layer);
-  if(idx === layers.length - 1 && !layer.isMask){
-    // Topmost layer — nothing above to mask. Don't toggle ON; let toggle OFF still work.
-    showToast('No layer above to mask — add a layer on top first, then enable mask here.');
+  var parent = _parentGroupOf(layer);
+  if(!parent){
+    if(typeof showToast === 'function'){
+      showToast('Masks live inside groups — select 2+ layers, press ▦ Group, then toggle this on a child.');
+    }
     return;
   }
   snapshotState();
-  layer.isMask = !layer.isMask;
+  if(parent.maskChildId === layer.id){
+    parent.maskChildId = null;
+  } else {
+    parent.maskChildId = layer.id;
+  }
   renderLayerList();
   redraw();
-  showToast(layer.isMask
-    ? '🪟 ' + layer.name + ' now masks the layer above it'
-    : 'Mask role removed from ' + layer.name);
+  if(typeof showToast === 'function'){
+    showToast(parent.maskChildId === layer.id
+      ? '🪟 ' + layer.name + ' is now the mask for ' + parent.name
+      : 'Mask role removed from ' + layer.name);
+  }
 }
 
+// v270: hierarchical layer list. Top-level layers iterate from _topLevelLayers(); groups render
+// a header row + indented children (when expanded). The mask icon (⬚/◉) is meaningful in two
+// contexts now: on a child of a group, it sets the parent group's maskChildId; on a top-level
+// non-group layer, it shows a "Group first" toast (legacy single-layer masking removed in v270
+// in favor of the cleaner group-as-mask model). Drag-reorder is preserved only between top-level
+// layers in this version — re-parenting via drag is deferred to v271.
 function renderLayerList(){
-  var list=document.getElementById('layerList');list.innerHTML='';
-  for(var i=layers.length-1;i>=0;i--){
-    (function(layer,layerIdx){
-      var item=document.createElement('div');
-      var isSelected = layer.id === selectedId || (selectedIds && selectedIds.indexOf(layer.id) >= 0);
-      item.className='layer-item'+(isSelected?' active':'');
-      if(layer.hidden) item.style.opacity='0.5';
-      item.draggable = !layer.locked;  // locked layers can't be dragged either
-      item.dataset.layerId=layer.id;
-      var icons={image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗'};
-      var eyeIcon = layer.hidden ? '⊘' : '●';   // filled circle = visible, crossed circle = hidden
-      var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
-      var lockIcon = layer.locked ? '🔒' : '🔓';
-      var lockOpacity = layer.locked ? '' : 'opacity:0.35;';
-      // v234: explicit up/down move buttons next to the drag handle, since drag-to-reorder can
-      // be finicky on small panels. Highest layer in array = topmost in UI; "up" in UI =
-      // increase array index. Disabled state shown as dimmed opacity (not clickable).
-      var canMoveUp   = layerIdx < layers.length - 1;
-      var canMoveDown = layerIdx > 0;
-      // v254: mask toggle. When isMask is set, this layer acts as a clipping shape for the
-      // layer directly above it in the stack. ⬚ icon = inactive, ◉ icon (colored) = active mask.
-      // Only meaningful if there IS a layer above (topmost layer can't be a mask).
-      var hasLayerAbove = layerIdx < layers.length - 1;
-      var maskIcon = layer.isMask ? '◉' : '⬚';
-      var maskColor = layer.isMask ? 'color:#4a8ec4;' : 'color:#999;opacity:'+(hasLayerAbove?'0.55':'0.2')+';';
-      var maskTitle = layer.isMask
-        ? 'This layer is a clipping mask — the layer above only renders where this one is opaque. Click to disable.'
-        : (hasLayerAbove
-            ? 'Use this layer as a clipping mask — the layer above will only show where this one is opaque.'
-            : 'No layer above to mask. Add a layer on top first.');
-      item.innerHTML='<span class="ltype" style="cursor:'+(layer.locked?'not-allowed':'grab')+';" title="Drag to reorder">⋮⋮</span>'
-        +'<span class="layer-mv-col" style="display:inline-flex;flex-direction:column;line-height:0.85;font-size:8px;color:#666;user-select:none;">'
-          +'<span class="layer-mv" data-dir="up" title="Move up" style="cursor:'+(canMoveUp?'pointer':'default')+';padding:1px 2px;opacity:'+(canMoveUp?'1':'0.22')+';">▲</span>'
-          +'<span class="layer-mv" data-dir="down" title="Move down" style="cursor:'+(canMoveDown?'pointer':'default')+';padding:1px 2px;opacity:'+(canMoveDown?'1':'0.22')+';">▼</span>'
-        +'</span>'
-        +'<span class="ltype">'+(icons[layer.type]||'▫')+'</span>'
-        +'<span class="lname">'+layer.name+'</span>'
-        +'<span class="layer-mask" title="'+escAttr(maskTitle)+'" '
-          +'style="cursor:pointer;font-size:13px;font-weight:bold;'+maskColor+'">'+maskIcon+'</span>'
-        +'<span class="layer-vis" title="'+(layer.hidden?'Show':'Hide')+' layer" '
-          +'style="cursor:pointer;font-size:13px;font-weight:bold;'+eyeColor+'">'+eyeIcon+'</span>'
-        +'<span class="layer-lock" title="'+(layer.locked?'Unlock':'Lock')+' layer" '
-          +'style="cursor:pointer;font-size:12px;'+lockOpacity+'">'+lockIcon+'</span>'
-        +'<span class="layer-del" title="Delete">✕</span>';
-      item.onclick=function(e){
-        if(e.target.classList.contains('layer-del')){ confirmDeleteLayer(layer.id); return; }
-        if(e.target.classList.contains('layer-vis')){ layer.hidden=!layer.hidden; renderLayerList(); redraw(); return; }
-        if(e.target.classList.contains('layer-lock')){ layer.locked=!layer.locked; renderLayerList(); renderProps(); return; }
-        if(e.target.classList.contains('layer-mask')){
-          e.stopPropagation();
-          toggleLayerMask(layer.id);
-          return;
-        }
-        if(e.target.classList.contains('layer-mv')){
-          // v234: explicit up/down reorder. Stop propagation so the click doesn't also fire
-          // the layer-select branch below.
-          e.stopPropagation();
-          moveLayerById(layer.id, e.target.dataset.dir);
-          return;
-        }
-        // Shift- or Ctrl/Cmd-click toggles selection (multi-select). Plain click replaces selection.
-        selectLayer(layer.id, {shift: e.shiftKey || e.ctrlKey || e.metaKey});
-      };
-      item.addEventListener('dragstart',function(e){
-        e.dataTransfer.effectAllowed='move';
-        e.dataTransfer.setData('text/plain',String(layer.id));
-        item.style.opacity='0.4';
-      });
-      item.addEventListener('dragend',function(){item.style.opacity='';document.querySelectorAll('.layer-item').forEach(function(x){x.style.borderTop='';x.style.borderBottom='';});});
-      item.addEventListener('dragover',function(e){
-        e.preventDefault();e.dataTransfer.dropEffect='move';
-        // Show indicator of whether we'd drop above or below
-        var bds=item.getBoundingClientRect();var midY=bds.top+bds.height/2;
-        document.querySelectorAll('.layer-item').forEach(function(x){x.style.borderTop='';x.style.borderBottom='';});
-        if(e.clientY<midY){item.style.borderTop='2px solid var(--green)';}
-        else{item.style.borderBottom='2px solid var(--green)';}
-      });
-      item.addEventListener('drop',function(e){
-        e.preventDefault();
-        var draggedId=+e.dataTransfer.getData('text/plain');
-        if(draggedId===layer.id)return;
-        var fromIdx=layers.findIndex(function(l){return l.id===draggedId;});
-        var toIdx=layers.findIndex(function(l){return l.id===layer.id;});
-        if(fromIdx<0||toIdx<0)return;
-        var bds=item.getBoundingClientRect();var midY=bds.top+bds.height/2;
-        // In the UI, items are rendered in reverse order (topmost first), so "drop above" means higher in array
-        var dropAbove=e.clientY<midY;
-        // Remove the dragged layer
-        var moved=layers.splice(fromIdx,1)[0];
-        // Re-find toIdx since splice may have shifted it
-        toIdx=layers.findIndex(function(l){return l.id===layer.id;});
-        // Insert: "above" in UI means later in array (higher z); "below" in UI means earlier in array
-        var insertAt=dropAbove?toIdx+1:toIdx;
-        layers.splice(insertAt,0,moved);
-        renderLayerList();redraw();
-      });
-      list.appendChild(item);
-    })(layers[i],i);
+  var list = document.getElementById('layerList');
+  list.innerHTML = '';
+  // Render top of stack first (reversed array order), recursing into expanded groups.
+  var topLevel = _topLevelLayers();
+  for(var i = topLevel.length - 1; i >= 0; i--){
+    _renderLayerRow(list, topLevel[i], 0, null);
+  }
+  // Reflect group/ungroup button enabled state based on current selection.
+  var grpBtn = document.getElementById('groupLayersBtn');
+  var ungBtn = document.getElementById('ungroupLayerBtn');
+  if(grpBtn){
+    var canGroup = (selectedIds && selectedIds.length >= 2);
+    grpBtn.style.opacity = canGroup ? '1' : '0.5';
+    grpBtn.disabled = !canGroup;
+  }
+  if(ungBtn){
+    var sel = layers.find(function(l){ return l.id === selectedId; });
+    var canUngroup = !!(sel && sel.type === 'group');
+    ungBtn.style.opacity = canUngroup ? '1' : '0.5';
+    ungBtn.disabled = !canUngroup;
+  }
+}
+
+// Render ONE row for a layer, plus (if it's an expanded group) its children indented underneath.
+// `depth` is the nesting level (0 = top-level), `parentGroup` is the enclosing group object (null
+// at top-level). Both inform how the mask icon and indentation behave.
+function _renderLayerRow(list, layer, depth, parentGroup){
+  var item = document.createElement('div');
+  var isSelected = layer.id === selectedId || (selectedIds && selectedIds.indexOf(layer.id) >= 0);
+  item.className = 'layer-item' + (isSelected ? ' active' : '');
+  if(layer.hidden) item.style.opacity = '0.5';
+  item.draggable = !layer.locked && depth === 0;   // v270: top-level only; cross-group drag = v271
+  item.dataset.layerId = layer.id;
+  if(depth > 0){
+    item.style.marginLeft = (depth * 14) + 'px';
+    item.style.borderLeft = '2px solid var(--border)';
+    item.style.paddingLeft = '4px';
+  }
+  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁'};
+  var eyeIcon = layer.hidden ? '⊘' : '●';
+  var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
+  var lockIcon = layer.locked ? '🔒' : '🔓';
+  var lockOpacity = layer.locked ? '' : 'opacity:0.35;';
+  // Mask icon semantics (v270):
+  //   - Inside a group: ◉ = this child is the group's mask, ⬚ = make this the mask
+  //   - Outside a group: dimmed ⬚ that explains via tooltip you need to Group first
+  var isGroupMask = !!(parentGroup && parentGroup.maskChildId === layer.id);
+  var maskIcon = isGroupMask ? '◉' : '⬚';
+  var maskColor = isGroupMask ? 'color:#4a8ec4;' : 'color:#999;opacity:' + (parentGroup ? '0.55' : '0.2') + ';';
+  var maskTitle = isGroupMask
+    ? 'This is the group\'s clipping mask — the other children only render where this layer is opaque. Click to disable.'
+    : (parentGroup
+        ? 'Make this layer the group\'s clipping mask.'
+        : 'Mask requires a group. Select 2+ layers and press ▦ Group first.');
+  // Top-level groups get a chevron for expand/collapse on the leftmost slot. Non-groups get a
+  // small spacer so the row alignment stays consistent.
+  var chevron = '';
+  if(layer.type === 'group'){
+    var chevIcon = layer.expanded === false ? '▸' : '▾';
+    chevron = '<span class="layer-chev" title="Expand/collapse" style="cursor:pointer;font-size:11px;padding:0 4px;color:#666;user-select:none;">' + chevIcon + '</span>';
+  } else if(depth > 0){
+    chevron = '<span style="width:14px;display:inline-block;"></span>';
+  }
+  // Up/down arrows only meaningful for top-level layers in v270 (children's z-order is
+  // controlled inside the group; surface that in v271).
+  var canMoveUp   = false, canMoveDown = false;
+  if(depth === 0){
+    var topLevel = _topLevelLayers();
+    var posInTop = topLevel.findIndex(function(l){ return l.id === layer.id; });
+    canMoveUp   = posInTop < topLevel.length - 1;
+    canMoveDown = posInTop > 0;
+  }
+  item.innerHTML = chevron
+    + '<span class="ltype" style="cursor:' + (layer.locked ? 'not-allowed' : (depth === 0 ? 'grab' : 'default')) + ';" title="' + (depth === 0 ? 'Drag to reorder' : 'Drag in/out of groups: coming in v271') + '">⋮⋮</span>'
+    + (depth === 0
+        ? '<span class="layer-mv-col" style="display:inline-flex;flex-direction:column;line-height:0.85;font-size:8px;color:#666;user-select:none;">'
+          + '<span class="layer-mv" data-dir="up" title="Move up" style="cursor:' + (canMoveUp ? 'pointer' : 'default') + ';padding:1px 2px;opacity:' + (canMoveUp ? '1' : '0.22') + ';">▲</span>'
+          + '<span class="layer-mv" data-dir="down" title="Move down" style="cursor:' + (canMoveDown ? 'pointer' : 'default') + ';padding:1px 2px;opacity:' + (canMoveDown ? '1' : '0.22') + ';">▼</span>'
+          + '</span>'
+        : '')
+    + '<span class="ltype">' + (icons[layer.type] || '▫') + '</span>'
+    + '<span class="lname">' + layer.name + (layer.type === 'group' ? ' (' + (layer.childIds||[]).length + ')' : '') + '</span>'
+    + '<span class="layer-mask" title="' + escAttr(maskTitle) + '" '
+      + 'style="cursor:pointer;font-size:13px;font-weight:bold;' + maskColor + '">' + maskIcon + '</span>'
+    + '<span class="layer-vis" title="' + (layer.hidden ? 'Show' : 'Hide') + ' layer" '
+      + 'style="cursor:pointer;font-size:13px;font-weight:bold;' + eyeColor + '">' + eyeIcon + '</span>'
+    + '<span class="layer-lock" title="' + (layer.locked ? 'Unlock' : 'Lock') + ' layer" '
+      + 'style="cursor:pointer;font-size:12px;' + lockOpacity + '">' + lockIcon + '</span>'
+    + '<span class="layer-del" title="Delete">✕</span>';
+  item.onclick = function(e){
+    if(e.target.classList.contains('layer-del')){ confirmDeleteLayer(layer.id); return; }
+    if(e.target.classList.contains('layer-vis')){ layer.hidden = !layer.hidden; renderLayerList(); redraw(); return; }
+    if(e.target.classList.contains('layer-lock')){ layer.locked = !layer.locked; renderLayerList(); renderProps(); return; }
+    if(e.target.classList.contains('layer-chev')){
+      e.stopPropagation();
+      if(layer.type === 'group'){ layer.expanded = (layer.expanded === false); renderLayerList(); }
+      return;
+    }
+    if(e.target.classList.contains('layer-mask')){
+      e.stopPropagation();
+      toggleLayerMask(layer.id);
+      return;
+    }
+    if(e.target.classList.contains('layer-mv')){
+      e.stopPropagation();
+      moveLayerById(layer.id, e.target.dataset.dir);
+      return;
+    }
+    selectLayer(layer.id, {shift: e.shiftKey || e.ctrlKey || e.metaKey});
+  };
+  // Drag-reorder among top-level layers (children are not draggable in v270).
+  if(depth === 0){
+    item.addEventListener('dragstart', function(e){
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(layer.id));
+      item.style.opacity = '0.4';
+    });
+    item.addEventListener('dragend', function(){ item.style.opacity = ''; document.querySelectorAll('.layer-item').forEach(function(x){ x.style.borderTop = ''; x.style.borderBottom = ''; }); });
+    item.addEventListener('dragover', function(e){
+      e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      var bds = item.getBoundingClientRect(); var midY = bds.top + bds.height/2;
+      document.querySelectorAll('.layer-item').forEach(function(x){ x.style.borderTop = ''; x.style.borderBottom = ''; });
+      if(e.clientY < midY) item.style.borderTop = '2px solid var(--green)';
+      else item.style.borderBottom = '2px solid var(--green)';
+    });
+    item.addEventListener('drop', function(e){
+      e.preventDefault();
+      var draggedId = +e.dataTransfer.getData('text/plain');
+      if(draggedId === layer.id) return;
+      var fromIdx = layers.findIndex(function(l){ return l.id === draggedId; });
+      var toIdx = layers.findIndex(function(l){ return l.id === layer.id; });
+      if(fromIdx < 0 || toIdx < 0) return;
+      var bds = item.getBoundingClientRect(); var midY = bds.top + bds.height/2;
+      var dropAbove = e.clientY < midY;
+      var moved = layers.splice(fromIdx, 1)[0];
+      toIdx = layers.findIndex(function(l){ return l.id === layer.id; });
+      var insertAt = dropAbove ? toIdx + 1 : toIdx;
+      layers.splice(insertAt, 0, moved);
+      renderLayerList(); redraw();
+    });
+  }
+  list.appendChild(item);
+  // Recurse into expanded groups (render children top-to-bottom, matching the panel convention).
+  if(layer.type === 'group' && layer.expanded !== false){
+    var children = _childrenOf(layer);
+    for(var ci = children.length - 1; ci >= 0; ci--){
+      _renderLayerRow(list, children[ci], depth + 1, layer);
+    }
   }
 }
 
@@ -10625,7 +10833,54 @@ function _drawSingleLayerInto(ctx, layer){
   else if(layer.type==='svg')drawSvgLayer(ctx,layer);
   else if(layer.type==='text')drawTextLayer(ctx,layer);
   else if(layer.type==='arrow')drawArrowLayer(ctx,layer);
+  else if(layer.type==='group')_drawGroupInto(ctx,layer);   // v270
   ctx.restore();
+}
+
+// v270: render a group. Strategy mirrors _drawMaskedPair but supports N children + an optional
+// mask child. Children render in childIds order into an offscreen at canvas-pixel dims (no
+// overscan — the caller's ctx already has the overscan translation applied). If maskChildId is
+// set, the mask child renders to a separate offscreen, gets alpha-binarized (v255 trick), and
+// is composited via destination-in. The result is drawn back to ctx, picking up group opacity
+// + blend mode through the standard _drawSingleLayerInto save/globalAlpha/composite wrapper.
+function _drawGroupInto(ctx, group){
+  if(!group || !group.childIds || !group.childIds.length) return;
+  var w = canvasW, h = canvasH;
+  if(w <= 0 || h <= 0) return;
+  var contentOff = document.createElement('canvas');
+  contentOff.width = w; contentOff.height = h;
+  var cctx = contentOff.getContext('2d');
+  // Render every non-mask child into the content offscreen, respecting their own opacity/blend.
+  group.childIds.forEach(function(cid){
+    if(cid === group.maskChildId) return;
+    var child = layers.find(function(l){ return l.id === cid; });
+    if(!child || child.hidden) return;
+    _drawSingleLayerInto(cctx, child);
+  });
+  // Apply the mask child as alpha cut, if set.
+  if(group.maskChildId != null){
+    var mask = layers.find(function(l){ return l.id === group.maskChildId; });
+    if(mask && !mask.hidden){
+      var maskOff = document.createElement('canvas');
+      maskOff.width = w; maskOff.height = h;
+      var mctx = maskOff.getContext('2d');
+      _drawSingleLayerInto(mctx, mask);
+      // Binarize alpha (v255) so masked content renders at full opacity within the cut.
+      var maskImg = mctx.getImageData(0, 0, w, h);
+      var d = maskImg.data;
+      for(var i = 3; i < d.length; i += 4){
+        var a = d[i];
+        if(a <= 100) d[i] = 0;
+        else if(a >= 150) d[i] = 255;
+        else d[i] = Math.round((a - 100) / 50 * 255);
+      }
+      mctx.putImageData(maskImg, 0, 0);
+      cctx.globalCompositeOperation = 'destination-in';
+      cctx.drawImage(maskOff, 0, 0);
+      cctx.globalCompositeOperation = 'source-over';
+    }
+  }
+  ctx.drawImage(contentOff, 0, 0);
 }
 
 // v254: composite a mask layer + the content layer above it. Strategy:
@@ -10719,23 +10974,22 @@ function redraw(){
   ctx.translate(ovs, ovs);
   // Checker the in-canvas region only — the user sees clearly what's "inside" the export bounds.
   drawCheckerboard(ctx);
-  // v254: switched from forEach to indexed loop so we can detect mask layers and consume the
-  // following layer as the masked content. A layer with isMask:true acts as a clipping shape
-  // for the layer immediately above it in the stack — the masked content only renders where
-  // the mask is opaque (alpha > 0). The mask layer itself doesn't render visibly; it just
-  // defines the alpha cut.
-  for(var li = 0; li < layers.length; li++){
-    var layer = layers[li];
+  // v270: iterate TOP-LEVEL layers only. Grouped children are skipped here — they render via
+  // _drawGroupInto when the loop hits their parent group. The legacy isMask path (v254) is
+  // kept for back-compat with any in-flight designs that pre-date groups; new masking should
+  // happen via groups (toggle the ⬚/◉ icon on a child to set its parent group's maskChildId).
+  var _topRender = _topLevelLayers();
+  for(var li = 0; li < _topRender.length; li++){
+    var layer = _topRender[li];
     if(layer.hidden) continue;
-    if(layer.isMask && li + 1 < layers.length){
-      var above = layers[li + 1];
-      if(!above.hidden){
+    // Legacy mask: a top-level layer with isMask:true clips the next top-level layer above it.
+    if(layer.isMask && li + 1 < _topRender.length){
+      var above = _topRender[li + 1];
+      if(above && !above.hidden){
         _drawMaskedPair(ctx, layer, above);
-        li++;   // skip the layer above since we just composited it
+        li++;
         continue;
       }
-      // If the layer above is hidden, fall through and render the mask layer normally so it's
-      // not invisible (otherwise the user sees nothing and is confused).
     }
     _drawSingleLayerInto(ctx, layer);
   }
