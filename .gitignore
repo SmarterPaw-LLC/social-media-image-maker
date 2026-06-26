@@ -5,3 +5,9 @@ Thumbs.db
 .idea/
 node_modules/
 *.spdesign.json
+
+# Google Drive sync staging folders (Windows). Appears whenever Drive is uploading or
+# downloading files in this directory tree — full of opaque numeric-named binaries that
+# should never be committed.
+.tmp.driveupload/
+.tmp.drivedownload/

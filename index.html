@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v266</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v267</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3529,6 +3529,19 @@ function bindKeyboardShortcuts(){
         nextIdx = curIdx >= panel.length - 1 ? 0 : curIdx + 1;
       }
       selectLayer(panel[nextIdx].id);
+      return;
+    }
+
+    // v267: Ctrl/Cmd + [ or ] — reorder the selected layer in z-stack (Photoshop convention).
+    //   Ctrl+]  = Bring Forward (toward top of panel / on-top visually)   → moveLayerById dir 'up'
+    //   Ctrl+[  = Send Backward (toward bottom of panel / behind others)  → moveLayerById dir 'down'
+    // Operates on the primary selected layer only; multi-layer z-order moves are ambiguous (shifting
+    // one mutates the others' indices), so for now we keep it simple. The bare [ and ] keys are
+    // claimed by erase-mode brush sizing — the Ctrl modifier disambiguates.
+    if((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === '[' || e.key === ']')){
+      if(selectedId == null) return;
+      e.preventDefault();
+      moveLayerById(selectedId, e.key === ']' ? 'up' : 'down');
       return;
     }
 
