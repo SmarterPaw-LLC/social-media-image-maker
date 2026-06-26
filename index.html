@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v274</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v275</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2225,7 +2225,19 @@ function copySelected(){
   // Multi-select support: copy all selectedIds, falling back to the single selectedId
   var ids = (selectedIds && selectedIds.length) ? selectedIds.slice() : (selectedId != null ? [selectedId] : []);
   if(!ids.length) return;
-  clipboard = ids.map(function(id){
+  // v275: expand the selection so any selected GROUP brings its children along. Without this,
+  // pasting a copied group produced an alias group still pointing at the originals' ids. Use a
+  // map to dedupe in case a child was both individually selected and pulled in via its parent.
+  var expanded = {};
+  ids.forEach(function(id){
+    expanded[id] = true;
+    var l = layers.find(function(x){return x.id===id;});
+    if(l && l.type === 'group' && l.childIds){
+      l.childIds.forEach(function(cid){ expanded[cid] = true; });
+    }
+  });
+  clipboard = Object.keys(expanded).map(function(idStr){
+    var id = +idStr;
     var l = layers.find(function(x){return x.id===id;});
     if(!l) return null;
     var out = {};
@@ -2247,13 +2259,30 @@ function copySelected(){
 function pasteClipboard(){
   if(!clipboard.length) return;
   snapshotState();
+  // v275: pre-assign fresh ids for every clipboard entry so we can REMAP internal references
+  // (parentId, group.childIds, group.maskChildId) in a single pass. Any reference that points to
+  // a layer NOT in the clipboard gets stripped — that's how a child copied alone ends up top-level
+  // instead of orphaned inside the original group (which doesn't know about the copy).
+  var idMap = {};
+  clipboard.forEach(function(entry){ idMap[entry.id] = nextId++; });
   var newIds = [];
   clipboard.forEach(function(entry){
     var copy = JSON.parse(JSON.stringify(entry));
-    copy.id = nextId++;
+    copy.id = idMap[entry.id];
     copy.name = (copy.name || 'Layer') + ' copy';
     if(typeof copy.x === 'number') copy.x += 20;
     if(typeof copy.y === 'number') copy.y += 20;
+    // v275: rewire group-related id references via idMap.
+    if(copy.parentId != null){
+      if(idMap[copy.parentId] != null) copy.parentId = idMap[copy.parentId];
+      else delete copy.parentId;   // parent wasn't copied → land at top-level
+    }
+    if(copy.type === 'group' && copy.childIds){
+      copy.childIds = copy.childIds.map(function(cid){ return idMap[cid]; }).filter(function(cid){ return cid != null; });
+    }
+    if(copy.type === 'group' && copy.maskChildId != null){
+      copy.maskChildId = (idMap[copy.maskChildId] != null) ? idMap[copy.maskChildId] : null;
+    }
     // SVG rehydration from svgText (rebuild blob URL — the original is gone)
     if(copy.type === 'svg' && copy.svgText){
       var pnorm = normalizeSvgDimensions(copy.svgText);
