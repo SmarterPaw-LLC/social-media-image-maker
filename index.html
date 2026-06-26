@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v271</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v272</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10197,7 +10197,19 @@ function bindCanvasEvents(){
     }
     snapshotState();
     // Build the drag state FIRST so the very next mousemove sees the drag in flight.
-    var groupIds = inSelection ? selectedIds.slice() : [layer.id];
+    // v271 follow-up: expand any group ids in the selection into their children's ids so dragging
+    // a group translates every child by the same delta (the group itself has no x/y to move).
+    var rawIds = inSelection ? selectedIds.slice() : [layer.id];
+    var groupIds = [];
+    rawIds.forEach(function(id){
+      var l = layers.find(function(x){return x.id===id;});
+      if(!l) return;
+      if(l.type === 'group'){
+        (l.childIds || []).forEach(function(cid){ groupIds.push(cid); });
+      } else {
+        groupIds.push(id);
+      }
+    });
     var origPositions = {};
     groupIds.forEach(function(id){
       var l = layers.find(function(x){return x.id===id;});
@@ -10742,6 +10754,10 @@ function getLayerAt(cx,cy){
   for(var i=layers.length-1;i>=0;i--){
     if(layers[i].hidden) continue;  // can't click hidden layers
     if(layers[i].locked) continue;  // locked layers are "pass-through" for clicks → marquee drags work over them
+    // v271 follow-up: group layers themselves never hit-test directly (their stored x/y/w/h are
+    // 0/0/0/0). We test against children and bubble up to the group at the end. Skip groups in
+    // this pass.
+    if(layers[i].type === 'group') continue;
     var bds=getLayerBounds(layers[i]);
     var rot=(layers[i].rotation||0)*Math.PI/180;
     var hx=cx, hy=cy;
@@ -10752,10 +10768,38 @@ function getLayerAt(cx,cy){
       hx=ccx+ddx*cs-ddy*sn;
       hy=ccy+ddx*sn+ddy*cs;
     }
-    if(hx>=bds.x&&hx<=bds.x+bds.w&&hy>=bds.y&&hy<=bds.y+bds.h)return layers[i];
+    if(hx>=bds.x&&hx<=bds.x+bds.w&&hy>=bds.y&&hy<=bds.y+bds.h){
+      // v271 follow-up: if the hit layer is inside a group, return the group so the user picks up
+      // the whole composition. To drill into a specific child, click it in the layer list. (Drill-
+      // via-Alt-click is a candidate for a later pass; keeping it simple for now.)
+      var hit = layers[i];
+      if(hit.parentId){
+        var parent = layers.find(function(g){ return g.id === hit.parentId && g.type === 'group'; });
+        if(parent && !parent.hidden && !parent.locked) return parent;
+      }
+      return hit;
+    }
   }return null;
 }
 function getLayerBounds(layer){
+  // v271 follow-up: a group's bounds are the union of its children's bounds. Without this, the
+  // selection chrome rendered at the group's stored x/y/w/h (all zero from groupSelectedLayers)
+  // so it floated in the top-left at 0×0 — visible behavior that prompted Jason's bug report.
+  if(layer.type==='group'){
+    var children = _childrenOf(layer);
+    if(!children.length) return {x:0, y:0, w:0, h:0};
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    children.forEach(function(c){
+      if(c.hidden) return;
+      var cb = getLayerBounds(c);
+      if(cb.x < minX) minX = cb.x;
+      if(cb.y < minY) minY = cb.y;
+      if(cb.x + cb.w > maxX) maxX = cb.x + cb.w;
+      if(cb.y + cb.h > maxY) maxY = cb.y + cb.h;
+    });
+    if(!isFinite(minX)) return {x:0, y:0, w:0, h:0};
+    return {x:minX, y:minY, w:maxX - minX, h:maxY - minY};
+  }
   if(layer.type==='sticker'){
     var sc=layer.scale||1;
     var w=canvasW*sc;
@@ -11027,26 +11071,32 @@ function redraw(){
       ctx.setLineDash([7, 4]);
       ctx.strokeRect(bds.x, bds.y, bds.w, bds.h);
       ctx.setLineDash([]);
-      // Resize handle at bottom-right corner — slightly larger and with a thicker border so it
-      // reads clearly even on busy backgrounds.
-      var hs = HANDLE_SIZE + 2;
-      ctx.fillStyle = '#fff';
-      ctx.strokeStyle = '#6a9c12';
-      ctx.lineWidth = 2.5;
-      ctx.fillRect(bds.x + bds.w - hs/2, bds.y + bds.h - hs/2, hs, hs);
-      ctx.strokeRect(bds.x + bds.w - hs/2, bds.y + bds.h - hs/2, hs, hs);
-      // Rotation handle: circle above the top-center, connected by a short line
-      var rhX = bds.x + bds.w/2, rhY = bds.y - ROTATE_HANDLE_DIST;
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-      ctx.beginPath(); ctx.moveTo(bds.x + bds.w/2, bds.y); ctx.lineTo(rhX, rhY); ctx.stroke();
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = '#6a9c12';
-      ctx.beginPath(); ctx.moveTo(bds.x + bds.w/2, bds.y); ctx.lineTo(rhX, rhY); ctx.stroke();
-      ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(rhX, rhY, hs/2 + 1, 0, Math.PI*2);
-      ctx.fillStyle = '#fff'; ctx.fill();
-      ctx.strokeStyle = '#6a9c12'; ctx.stroke();
+      // v271 follow-up: skip resize + rotate handles for groups. The existing resize/rotate code
+      // mutates layer.w/h/rotation, which the group has but doesn't actually use (children own
+      // their own transforms). Surfacing the handles would invite a broken interaction. Group
+      // transform (scale-all-children-proportionally) is a candidate for a follow-up.
+      if(sel.type !== 'group'){
+        // Resize handle at bottom-right corner — slightly larger and with a thicker border so it
+        // reads clearly even on busy backgrounds.
+        var hs = HANDLE_SIZE + 2;
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#6a9c12';
+        ctx.lineWidth = 2.5;
+        ctx.fillRect(bds.x + bds.w - hs/2, bds.y + bds.h - hs/2, hs, hs);
+        ctx.strokeRect(bds.x + bds.w - hs/2, bds.y + bds.h - hs/2, hs, hs);
+        // Rotation handle: circle above the top-center, connected by a short line
+        var rhX = bds.x + bds.w/2, rhY = bds.y - ROTATE_HANDLE_DIST;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.beginPath(); ctx.moveTo(bds.x + bds.w/2, bds.y); ctx.lineTo(rhX, rhY); ctx.stroke();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#6a9c12';
+        ctx.beginPath(); ctx.moveTo(bds.x + bds.w/2, bds.y); ctx.lineTo(rhX, rhY); ctx.stroke();
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(rhX, rhY, hs/2 + 1, 0, Math.PI*2);
+        ctx.fillStyle = '#fff'; ctx.fill();
+        ctx.strokeStyle = '#6a9c12'; ctx.stroke();
+      }
     }
     ctx.restore();
   }
