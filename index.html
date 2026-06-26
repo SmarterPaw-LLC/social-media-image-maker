@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v272</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v273</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -12165,13 +12165,24 @@ function drawShapeLayer(ctx,layer){
         fill=grad;
       }
     }
-    // Drop shadow that follows the actual shape outline. Skipped for fill='none' shapes (see above).
-    if(hasFill && layerHasShadow(layer)){
+    // Drop shadow follows the actual visible geometry. v271 made fill='none' skip shadow entirely
+    // (filled-silhouette technique mismatched a hollow shape). v272 follow-up: when there's no
+    // fill but there IS a stroke, stroke the path under the shadow so the cast matches the visible
+    // ring. With neither fill nor stroke there's nothing to shadow, so skip.
+    if(layerHasShadow(layer) && (hasFill || layer.strokeWidth > 0)){
       ctx.save();
       applyLayerShadow(ctx, layer);
-      ctx.fillStyle = '#000';
-      buildShapePath(ctx, layer);
-      ctx.fill();
+      if(hasFill){
+        ctx.fillStyle = '#000';
+        buildShapePath(ctx, layer);
+        ctx.fill();
+      } else {
+        // Stroke-only shadow — match the visible stroke width so the shadow lines up with the ring.
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = layer.strokeWidth;
+        buildShapePath(ctx, layer);
+        ctx.stroke();
+      }
       ctx.restore();
     }
     ctx.save();
