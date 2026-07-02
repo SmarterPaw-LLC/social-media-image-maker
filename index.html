@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v275</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v276</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -15978,6 +15978,21 @@ function _eraseStampAt(cx, cy){
   if(eraseState.mode === 'restore') return _restoreStampAt(cx, cy);
   var coords = _eraseScreenToSource(eraseState.layer, cx, cy);
   var srcRadius = (eraseState.brushSize / 2) * coords.scale;
+  // v276: log the very first stamp of an erase session so we can see what coords + srcRadius
+  // came out. If srcRadius < 0.5 the stroke silently returns (no visible erase) — the log will
+  // show whether that's the reason nothing appears to happen after crop + bg-remove.
+  if(!eraseState._diagLogged){
+    eraseState._diagLogged = true;
+    console.log('[erase-stamp] first', {
+      screenXY: [cx, cy],
+      srcXY: [coords.sx, coords.sy],
+      scale: coords.scale,
+      brushSize: eraseState.brushSize,
+      srcRadius: srcRadius,
+      willBail: srcRadius < 0.5,
+      workingDims: [eraseState.workingCanvas.width, eraseState.workingCanvas.height]
+    });
+  }
   if(srcRadius < 0.5) return;
   var c = eraseState.workingCtx;
   c.save();
@@ -16062,10 +16077,29 @@ function enterEraseMode(layerId){
   snapshotStateFull();
   var natW = layer.img.naturalWidth || layer.img.width;
   var natH = layer.img.naturalHeight || layer.img.height;
+  // v276: diagnostic for the "erase broken after crop + bg-remove on Pixabay" bug. If Jason (or
+  // anyone) can't paint after those operations, the console log will show which dim/coord is off.
+  console.log('[erase-enter]', {
+    layerId: layer.id, name: layer.name,
+    imgNaturalW: layer.img.naturalWidth, imgNaturalH: layer.img.naturalHeight,
+    imgWidth: layer.img.width, imgHeight: layer.img.height,
+    imgComplete: layer.img.complete,
+    natW: natW, natH: natH,
+    layerXYWH: [layer.x, layer.y, layer.w, layer.h],
+    cropXYWH: [layer.cropX, layer.cropY, layer.cropW, layer.cropH],
+    hasOriginalImg: !!layer._originalImg,
+    originalImgDims: layer._originalImg ? [layer._originalImg.naturalWidth, layer._originalImg.naturalHeight] : null
+  });
   // Working canvas = current image (mutated by erase / restore strokes)
   var wc = document.createElement('canvas');
   wc.width = natW; wc.height = natH;
-  wc.getContext('2d').drawImage(layer.img, 0, 0);
+  try {
+    wc.getContext('2d').drawImage(layer.img, 0, 0);
+  } catch(e){
+    console.error('[erase-enter] drawImage of layer.img failed:', e);
+    alert('Could not enter erase mode — the image failed to draw into the working canvas. See console for details.');
+    return;
+  }
   // v248: ORIGINAL canvas for the Restore brush. If a prior bg-removal or erase saved the
   // pre-destruction image as layer._originalImg, use THAT — so restore can bring back pixels
   // erased in previous Apply commits. Otherwise fall back to a copy of the current image,
@@ -16074,10 +16108,23 @@ function enterEraseMode(layerId){
   var oc = document.createElement('canvas');
   oc.width = natW; oc.height = natH;
   var origImg = layer._originalImg || layer.img;
-  // Use natural dims that match the new canvas — older _originalImg may have different dims
-  oc.width = origImg.naturalWidth || origImg.width || natW;
-  oc.height = origImg.naturalHeight || origImg.height || natH;
-  oc.getContext('2d').drawImage(origImg, 0, 0);
+  // v276: guard against stale _originalImg with different (or zero) natural dims — falls back to
+  // wc dims if the original image is unusable, so we still show *something* for Restore instead
+  // of throwing on drawImage.
+  var ocW = origImg.naturalWidth || origImg.width || natW;
+  var ocH = origImg.naturalHeight || origImg.height || natH;
+  if(ocW <= 0 || ocH <= 0){
+    console.warn('[erase-enter] originalImg has zero dims — restore brush will source from current img instead.');
+    ocW = natW; ocH = natH; origImg = layer.img;
+  }
+  oc.width = ocW; oc.height = ocH;
+  try {
+    oc.getContext('2d').drawImage(origImg, 0, 0);
+  } catch(e){
+    console.error('[erase-enter] drawImage of originalImg failed:', e);
+    // Non-fatal — restore brush just won't work, erase still can. Copy from working instead.
+    oc.getContext('2d').drawImage(wc, 0, 0);
+  }
   eraseState = {
     layerId: layer.id,
     layer: layer,
