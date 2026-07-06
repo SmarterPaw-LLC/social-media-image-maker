@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v276b</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v277</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -14905,14 +14905,24 @@ function cloudGetLibraryItemPublicUrl(path){
 
 function cloudFetchLibraryItemAsDataUri(path){
   if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
-  return sb.storage.from('image-library').download(path).then(function(res){
-    if(res.error) throw new Error(res.error.message || 'Image fetch failed');
-    if(!res.data) throw new Error('Empty image response');
+  // v277: swapped from sb.storage.download() to a direct fetch of the public CDN URL. The old
+  // path routed through Supabase's Storage API, which auth-checks against Postgres on every
+  // download — burning a DB connection per fetch. Multiple concurrent picks (or a fresh
+  // library-modal open on a slower connection) could saturate the compute-size connection pool
+  // and surface as "Too many connections issued to the database" popups. The image-library
+  // bucket is already public (see cloudGetLibraryItemPublicUrl usage on thumbnails), so hitting
+  // the CDN directly gives identical bytes at zero DB cost.
+  var url = cloudGetLibraryItemPublicUrl(path);
+  if(!url) return Promise.reject(new Error('Could not resolve public URL for ' + path));
+  return fetch(url, {cache: 'default'}).then(function(resp){
+    if(!resp.ok) throw new Error('Image fetch HTTP ' + resp.status);
+    return resp.blob();
+  }).then(function(blob){
     return new Promise(function(resolve, reject){
       var reader = new FileReader();
       reader.onload = function(){ resolve(reader.result); };
       reader.onerror = function(){ reject(new Error('FileReader failed')); };
-      reader.readAsDataURL(res.data);
+      reader.readAsDataURL(blob);
     });
   });
 }
