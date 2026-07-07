@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v279</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v280</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2246,6 +2246,7 @@ function copySelected(){
       if(k==='_img') continue;       // framed image's image element
       if(k==='_video') continue;
       if(k==='_playing') continue;
+      if(k==='_originalImg') continue;   // v280: erase/bg-remove keeps a live pre-op HTMLImageElement for the Restore brush; session-only, don't serialize
       if(k==='_editingInline') continue;  // transient editing UI flag
       if(l.type==='svg' && k==='url') continue;  // blob URL — regenerated from svgText on paste
       out[k] = l[k];
@@ -2400,6 +2401,7 @@ function serializeLayers(){
       if(k==='_img') continue;       // framed image's image element (kept separate to avoid name clash)
       if(k==='_video') continue;
       if(k==='_playing') continue;
+      if(k==='_originalImg') continue;   // v280: erase/bg-remove keeps a live pre-op HTMLImageElement for the Restore brush; session-only, don't serialize
       if(k==='_editingInline') continue;  // transient editing UI flag
       if(l.type==='svg' && k==='url') continue;  // blob URL — regenerated from svgText on load
       out[k] = l[k];
@@ -2426,6 +2428,7 @@ function serializeForUndo(){
       if(k==='_img') continue;
       if(k==='_video') continue;
       if(k==='_playing') continue;
+      if(k==='_originalImg') continue;   // v280: erase/bg-remove keeps a live pre-op HTMLImageElement for the Restore brush; session-only, don't serialize
       if(k==='_editingInline') continue;
       if(k==='_imgSrc') continue;       // omit — restored from live cache by id
       if(k==='videoSrc') continue;      // omit — restored from live cache by id
@@ -15996,6 +15999,9 @@ function bgRefineApply(){
     // never overwrite this so the very original always remains accessible.
     if(!layer._originalImg) layer._originalImg = layer.img;
     layer.img = newImg;
+    // v280: same fix as applyErase — clear layer.src so the persisted _imgSrc reads from
+    // layer.img.src (the bg-removed data URI) rather than the pre-removal src field.
+    if(layer.src) delete layer.src;
     _bgRefineState = null;
     document.getElementById('bgRefineModal').classList.add('hidden');
     _bgSaveSettings({ bias: bias, softness: softness });
@@ -16273,6 +16279,12 @@ function applyErase(){
     // first untouched original as the source of truth for restore).
     if(!layer._originalImg) layer._originalImg = layer.img;
     layer.img = newImg;
+    // v280: clear the layer.src field so serialize/reload persists the ERASED bytes, not the
+    // pre-erase src. For layers created with an explicit src (brand logos, some library flows),
+    // that field stayed as the original URL after erase — and serializeLayers uses
+    // `l.src || l.img.src` which meant the CDN URL won and reload restored the pre-erase image.
+    // With src cleared, the fallback consults l.img.src (the freshly-erased data URI).
+    if(layer.src) delete layer.src;
     exitEraseMode();
     redraw();
     showToast('🧽 Erase applied');
