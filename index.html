@@ -242,7 +242,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v278</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v279</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8397,9 +8397,40 @@ function moveBtns(id){
 // Reusable drop-shadow controls. `prefix` is per-layer-type so ids stay unique
 // (e.g. 'pimg_shadowBlur', 'psh_shadowBlur', etc). bindShadowEvents() handles wiring.
 // Mirrors the framed-image controls (blur, offset X/Y, opacity, color w/ hex input).
+// v279: named shadow presets, applied via the button row inside shadowUI. Adding entries here
+// automatically surfaces them across every layer type that uses the shared shadowUI helper
+// (video, arrow, image, shape, sprinkle, svg, text). Values chosen by Jason as the "default"
+// text-shadow look — a slightly-below-and-right cast that reads well on light backgrounds.
+window._SHADOW_PRESETS = {
+  'text': {label:'Text Shadow', shadowBlur:4, shadowOffsetX:3, shadowOffsetY:1, shadowOpacity:78, shadowColor:'#000000'},
+  'none': {label:'None',        shadowBlur:0, shadowOffsetX:0, shadowOffsetY:0, shadowOpacity:0}
+};
+function applyShadowPreset(layerId, presetKey){
+  var layer = layers.find(function(l){ return l.id === layerId; });
+  if(!layer) return;
+  var preset = window._SHADOW_PRESETS[presetKey];
+  if(!preset) return;
+  snapshotState();
+  Object.keys(preset).forEach(function(k){
+    if(k === 'label') return;
+    layer[k] = preset[k];
+  });
+  renderProps();   // rebuild so all sliders + color picker reflect the new values
+  redraw();
+}
+
 function shadowUI(prefix, l){
   var col = rgbaToHex(l.shadowColor || '#000000');
+  // v279: preset button row — clicking sets all shadow fields at once. Uses layer.id so the same
+  // helper renders correctly for any layer selection.
+  var presetsHtml = '<div style="display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap;">'
+    + Object.keys(window._SHADOW_PRESETS || {}).map(function(key){
+        var p = window._SHADOW_PRESETS[key];
+        return '<button class="btn-sm" style="flex:1;font-size:11px;" onclick="applyShadowPreset(' + l.id + ', \'' + key + '\')" title="Apply the ' + escAttr(p.label) + ' preset">' + escAttr(p.label) + '</button>';
+      }).join('')
+    + '</div>';
   return '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;font-size:11px;font-weight:700;color:var(--muted);">DROP SHADOW</div>'
+    + presetsHtml
     +R('Blur',     prefix+'shadowBlur',    l.shadowBlur||0,    0,   100, 1)
     +R('Offset X', prefix+'shadowOffsetX', l.shadowOffsetX||0, -100, 100, 1)
     +R('Offset Y', prefix+'shadowOffsetY', l.shadowOffsetY||0, -100, 100, 1)
@@ -10102,6 +10133,53 @@ function bindCanvasEvents(){
       y: (clientY - rect.top) / zoomLevel - ovs
     };
   }
+
+  // v279: Space+drag = pan the canvas area. Standard photoshop/figma shortcut. Uses the
+  // area's native scrollLeft/scrollTop (the outer .canvas-area already has overflow:auto) so
+  // this composes with existing zoom without extra math. Attached via capture:true so it wins
+  // over the wrap/area mousedown handlers that would otherwise start a layer drag or marquee.
+  var _spacePanActive = false;
+  var _panDragging = false;
+  var _panStartX = 0, _panStartY = 0, _panStartScrollX = 0, _panStartScrollY = 0;
+  document.addEventListener('keydown', function(e){
+    if(e.code !== 'Space') return;
+    var t = e.target;
+    var inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    if(inField) return;             // don't hijack space in text inputs
+    if(_spacePanActive) { e.preventDefault(); return; }   // absorb OS auto-repeat
+    _spacePanActive = true;
+    area.style.cursor = 'grab';
+    e.preventDefault();             // block default page-scroll on space
+  });
+  document.addEventListener('keyup', function(e){
+    if(e.code !== 'Space') return;
+    if(!_spacePanActive) return;
+    _spacePanActive = false;
+    _panDragging = false;
+    area.style.cursor = '';
+  });
+  // Capture-phase mousedown so space+drag pre-empts layer selection / marquee starts.
+  area.addEventListener('mousedown', function(e){
+    if(!_spacePanActive) return;
+    _panDragging = true;
+    _panStartX = e.clientX;
+    _panStartY = e.clientY;
+    _panStartScrollX = area.scrollLeft;
+    _panStartScrollY = area.scrollTop;
+    area.style.cursor = 'grabbing';
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  window.addEventListener('mousemove', function(e){
+    if(!_panDragging) return;
+    area.scrollLeft = _panStartScrollX - (e.clientX - _panStartX);
+    area.scrollTop  = _panStartScrollY - (e.clientY - _panStartY);
+  });
+  window.addEventListener('mouseup', function(){
+    if(!_panDragging) return;
+    _panDragging = false;
+    area.style.cursor = _spacePanActive ? 'grab' : '';
+  });
 
   // Second mousedown listener on the outer canvas area. Fires ONLY when the click lands outside
   // the canvas card itself — i.e. on the surrounding gray area. Starts a marquee whose coordinates
