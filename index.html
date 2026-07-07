@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v283</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v284</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10495,6 +10495,12 @@ function bindCanvasEvents(){
     if(window._panDiag) console.log('[pan] space UP — pan mode off');
   });
   // Capture-phase mousedown so space+drag pre-empts layer selection / marquee starts.
+  // v284: switched from stopPropagation → stopImmediatePropagation. When the click lands on the
+  // darker gray outside the canvas card (target = .canvas-area itself), the marquee handler
+  // ALSO lives on .canvas-area and would fire on the same node regardless of capture-phase
+  // stopPropagation. That started a marquee selection concurrently with pan, and the user saw
+  // "pan works on the canvas but not the dark gray" as a result. stopImmediatePropagation blocks
+  // other handlers on the same node too, so the marquee handler is skipped when space is held.
   area.addEventListener('mousedown', function(e){
     if(!_spacePanActive) return;
     _panDragging = true;
@@ -10509,7 +10515,7 @@ function bindCanvasEvents(){
       console.log('[pan] drag START — scroll now', _panStartScrollX, _panStartScrollY, '/ max', maxX, maxY, (maxX <= 0 && maxY <= 0) ? '— WARNING: no scrollable area (zoom in further or shrink window?)' : '');
     }
     e.preventDefault();
-    e.stopPropagation();
+    e.stopImmediatePropagation();
   }, true);
   window.addEventListener('mousemove', function(e){
     if(!_panDragging) return;
