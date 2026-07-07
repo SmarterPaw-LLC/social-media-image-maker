@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v285</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v286</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -7990,33 +7990,32 @@ function selectLayer(id, opts){
     selectedIds = id != null ? [id] : [];
   }
   ensureChromeVisible();
-  // v278: mirror the v91 canvas-mousedown perf fix on the sidebar layer-list path. Previously
-  // this ran renderLayerList() + renderProps() + redraw() synchronously — three heavy DOM/canvas
-  // rebuilds in a row. For a design with many layers or a text/sticker (property panel builds
-  // 150+ controls including color pickers and effect sections), that easily added 100–300ms of
-  // main-thread work between click and paint. Now: redraw fires immediately so the selection
-  // chrome moves on canvas the next frame (visual feedback), while renderLayerList + renderProps
-  // are deferred to the next animation frame and coalesced so rapid re-selections don't stack.
+  // v278/v286: split the panel rebuild. renderLayerList() stays SYNCHRONOUS because HTML5 drag
+  // requires the drag source element to remain in the DOM throughout the drag session — deferring
+  // the list rebuild across a rAF meant clicking a layer then mousedowning to drag within one
+  // frame would replace the DOM out from under the drag and drag would silently never start.
+  // renderProps() (the heavy one — 150+ controls for text/sticker) stays deferred; that's where
+  // the actual click-latency was. The list rebuild is O(N) DOM churn, cheap by comparison.
   redraw();
-  _schedulePanelRebuild();
+  renderLayerList();
+  _scheduleRenderProps();
 }
 
-// v278: rAF-coalesced panel rebuild. Multiple triggers within one frame (e.g. quick layer-list
-// clicks) share a single rebuild instead of stacking 2+ full DOM regenerations. Anything that
-// used to call renderLayerList() + renderProps() together at click time can call this instead
-// to keep the click responsive.
+// v278/v286: rAF-coalesced renderProps rebuild. Multiple triggers within one frame (e.g. quick
+// layer-list clicks) share a single rebuild instead of stacking 2+ property-panel regenerations.
+// Renamed from _schedulePanelRebuild — the list rebuild moved back to synchronous in v286 (see
+// selectLayer for why). Only the heavy renderProps stays deferred.
 var _panelRebuildScheduled = false;
-function _schedulePanelRebuild(){
+function _scheduleRenderProps(){
   if(_panelRebuildScheduled) return;
   _panelRebuildScheduled = true;
   requestAnimationFrame(function(){
     _panelRebuildScheduled = false;
     var t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
-    renderLayerList();
     renderProps();
     if(_perfDiag && t0){
       var dt = performance.now() - t0;
-      if(dt > 30) console.warn('[perf] panel rebuild ' + dt.toFixed(1) + 'ms — layers=' + layers.length);
+      if(dt > 30) console.warn('[perf] renderProps ' + dt.toFixed(1) + 'ms — layers=' + layers.length);
     }
   });
 }
