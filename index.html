@@ -59,7 +59,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .btn-sm{padding:5px 10px;border:1.5px solid var(--border);border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;background:#fafafa;transition:all 0.15s;}
 .btn-sm:hover{border-color:var(--green);color:var(--green);}
 .btn-sm.danger:hover{border-color:#e53;color:#e53;}
-.canvas-area{flex:1;display:flex;align-items:center;justify-content:flex-start;overflow:auto;background:#e8e8e0;position:relative;padding:32px;flex-direction:column;}
+/* v281: `align-items: safe center` centers the canvas wrap when it fits, but falls back to
+   start when it overflows the cross axis. Plain `center` traps the overflowing wrap so
+   scrollLeft has no effect — space+drag pan (v279) silently did nothing when zoomed in far
+   enough to overflow horizontally. `safe center` is supported in modern Chrome/FF/Safari
+   (2020+) and is the standard fix for this flex overflow-scroll problem. */
+.canvas-area{flex:1;display:flex;align-items:safe center;justify-content:flex-start;overflow:auto;background:#e8e8e0;position:relative;padding:32px;flex-direction:column;}
 /* Board tabs strip: sits above the canvas card */
 .board-tabs{display:flex;gap:4px;margin-bottom:0;flex-wrap:wrap;max-width:100%;align-self:flex-start;padding-left:4px;}
 .board-tab{display:flex;align-items:center;gap:6px;padding:6px 12px;background:#d5d5cd;color:#5a5a50;border:1.5px solid transparent;border-bottom:none;border-radius:7px 7px 0 0;font-size:12px;font-weight:600;cursor:pointer;transition:background 0.15s;user-select:none;max-width:200px;}
@@ -242,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v280</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v282</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -339,7 +344,12 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button class="btn-add" onclick="openShapeMenu()">+ Shape</button>
     </div>
     <div class="col2">
+      <!-- v282: pill-style button layer. Filled with a gradient from the brand palette, uppercase
+           text using the brand font, optional outline. Primary use is CTAs in social ads. -->
+      <button class="btn-add" onclick="addButtonLayer()" title="Add a call-to-action pill button">+ Button 🔘</button>
       <button class="btn-add" onclick="addSprinkleLayer()" title="Scatter catnip or an uploaded image inside a resizable box">+ Sprinkle 🌿</button>
+    </div>
+    <div class="col2">
       <button class="btn-add" onclick="addSvgLayer()">+ SVG</button>
     </div>
     <!-- v253: + Framed Image moved to a setting on the existing image layer. Now use + Image
@@ -6816,6 +6826,161 @@ function addTextLayer(){
   selectLayer(id);renderLayerList();redraw();
 }
 
+// ── BUTTON LAYER (v282) ──
+// A pill-shaped CTA. Rounded-rect fill (gradient by default, using the current brand's first
+// preset), optional stroke, uppercase text inside, drop-shadow support via the shared shadow
+// helpers. Text drives the rendered width when autoFit is on; user can turn autoFit off by
+// setting an explicit W or dragging the resize handle.
+function addButtonLayer(){
+  snapshotState();
+  var id = nextId++;
+  var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+  var defaultFont = fontList[0];
+  // Default gradient: pick the current brand's first preset if present, else fall back to
+  // brand-appropriate hardcoded colors so a new button always looks intentional.
+  var preset = (gradientPresets && gradientPresets.length) ? gradientPresets[0] : null;
+  var gTop = preset ? preset.top    : (currentBrand === 'kkz' ? '#F79C0B' : '#f07830');
+  var gBot = preset ? preset.bottom : (currentBrand === 'kkz' ? '#F26C1F' : '#a63e14');
+  layers.push({
+    id:id, type:'button', name:'Button '+id,
+    text:'CTA TEXT',
+    // Text
+    fontFamily: defaultFont.family,
+    fontWeight: (defaultFont.weights.indexOf(700) >= 0 ? 700 : defaultFont.weights[0]),
+    fontSize: 56,
+    textColor: '#FFFFFF',
+    uppercase: true,
+    letterSpacing: 2,
+    // Fill (mirrors shape layer: solid / gradient / none)
+    fillType: 'gradient',
+    fillColor: gTop,
+    gradTop: gTop, gradBottom: gBot,
+    gradType: 'linear', gradAngle: 135,
+    // Shape
+    cornerRadius: 999,   // pill — capped to min(w,h)/2 in the path helper
+    padX: 44, padY: 18,
+    strokeColor: 'rgba(0,0,0,0)',   // sentinel = no outline; picker still displays white so
+    strokeWidth: 0,                 // Jason's example (white outline) is toggleable via the width
+    autoFit: true,   // when true, recompute w/h from text metrics + padding on every draw
+    // Placement — dead center of canvas as a sane default
+    x: Math.round(canvasW*0.5 - 180), y: Math.round(canvasH*0.5 - 45),
+    w: 360, h: 90,
+    opacity:100, rotation:0,
+    // Drop shadow starts at zero; user can hit the "Button" preset (added to _SHADOW_PRESETS)
+    // for the soft-lift look Jason's example uses.
+    shadowBlur:0, shadowOffsetX:0, shadowOffsetY:0, shadowOpacity:0, shadowColor:'#000000'
+  });
+  selectLayer(id);renderLayerList();redraw();
+}
+
+// Draw one button layer. Order: shadow (silhouette of the pill), body fill, optional outline,
+// centered text. Uses the shared _pathRoundRect helper so the cornerRadius=999 pill mode is a
+// simple width-capped rounded rect — no special-case ellipse math.
+function drawButtonLayer(ctx, layer){
+  withRotation(ctx, layer, function(){
+    // Auto-fit width/height to the text + padding, if the user hasn't overridden.
+    if(layer.autoFit !== false){
+      var textSize = _measureButtonText(ctx, layer);
+      layer.w = Math.max(60, Math.round(textSize.w + (layer.padX||0) * 2));
+      layer.h = Math.max(40, Math.round(textSize.h + (layer.padY||0) * 2));
+    }
+    var x=layer.x, y=layer.y, w=layer.w, h=layer.h;
+    var cr = Math.min(layer.cornerRadius || 0, w/2, h/2);
+    var hasFill = layer.fillType !== 'none';
+    // Shadow first — filled silhouette so drop-shadow follows the pill outline.
+    if(layerHasShadow(layer) && (hasFill || (layer.strokeWidth||0) > 0)){
+      ctx.save();
+      applyLayerShadow(ctx, layer);
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      _pathRoundRect(ctx, x, y, w, h, cr);
+      ctx.fill();
+      ctx.restore();
+    }
+    // Body fill (solid / gradient)
+    if(hasFill){
+      var fill;
+      if(layer.fillType === 'solid'){
+        fill = layer.fillColor || '#f07830';
+      } else {
+        var gradType = layer.gradType || 'linear';
+        var cx = x + w/2, cy = y + h/2;
+        var grad;
+        if(gradType === 'radial'){
+          grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w,h)/2);
+        } else if(gradType === 'conic' && ctx.createConicGradient){
+          var angRad = ((layer.gradAngle||0) - 90) * Math.PI/180;
+          grad = ctx.createConicGradient(angRad, cx, cy);
+        } else {
+          var ang = ((layer.gradAngle == null ? 135 : layer.gradAngle)) * Math.PI/180;
+          var len = Math.sqrt(w*w + h*h)/2;
+          var gx1 = cx - Math.cos(ang)*len, gy1 = cy - Math.sin(ang)*len;
+          var gx2 = cx + Math.cos(ang)*len, gy2 = cy + Math.sin(ang)*len;
+          grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
+        }
+        addLayerGradientStops(grad, layer);
+        fill = grad;
+      }
+      ctx.save();
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      _pathRoundRect(ctx, x, y, w, h, cr);
+      ctx.fill();
+      ctx.restore();
+    }
+    // Outline (optional). Same transparent-sentinel handling as shape layers so bumping the
+    // slider above 0 without picking a color surfaces a visible white — sensible for buttons
+    // on colored backgrounds.
+    if((layer.strokeWidth||0) > 0){
+      var sc = layer.strokeColor;
+      if(!sc || sc === 'rgba(0,0,0,0)' || sc === 'transparent') sc = '#FFFFFF';
+      ctx.save();
+      ctx.strokeStyle = sc;
+      ctx.lineWidth = layer.strokeWidth;
+      ctx.beginPath();
+      _pathRoundRect(ctx, x, y, w, h, cr);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // Text
+    ctx.save();
+    var display = layer.uppercase ? (layer.text || '').toUpperCase() : (layer.text || '');
+    ctx.font = (layer.fontWeight || 700) + ' ' + (layer.fontSize || 56) + 'px ' + (layer.fontFamily || 'sans-serif');
+    ctx.fillStyle = layer.textColor || '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // Manual letter-spacing draw so the tracking is honored across all browsers.
+    var ls = layer.letterSpacing || 0;
+    if(ls){
+      var totalW = _measureButtonText(ctx, layer).w;
+      var cursor = x + w/2 - totalW/2;
+      for(var i = 0; i < display.length; i++){
+        var ch = display[i];
+        var chW = ctx.measureText(ch).width;
+        ctx.textAlign = 'left';
+        ctx.fillText(ch, cursor, y + h/2);
+        cursor += chW + ls;
+      }
+    } else {
+      ctx.fillText(display, x + w/2, y + h/2);
+    }
+    ctx.restore();
+  });
+}
+
+// Text width/height measurement used by both auto-fit sizing and letter-spacing centering.
+// Cached ctx save/restore to keep font state clean — measurement can't leak into subsequent draws.
+function _measureButtonText(ctx, layer){
+  ctx.save();
+  ctx.font = (layer.fontWeight || 700) + ' ' + (layer.fontSize || 56) + 'px ' + (layer.fontFamily || 'sans-serif');
+  var display = layer.uppercase ? (layer.text || '').toUpperCase() : (layer.text || '');
+  var w = ctx.measureText(display).width;
+  var ls = layer.letterSpacing || 0;
+  if(ls) w += Math.max(0, display.length - 1) * ls;
+  ctx.restore();
+  return { w: w, h: layer.fontSize || 56 };
+}
+
 // ── ARROW LAYER (v156) ──
 // Hand-drawn marker-style arrow. Bbox holds a horizontal arrow going from (0, h/2) to (w, h/2)
 // in local space; user rotates the bbox to point in any direction and resizes for length. Wobble
@@ -8117,7 +8282,7 @@ function _renderLayerRow(list, layer, depth, parentGroup){
     item.style.borderLeft = '2px solid var(--border)';
     item.style.paddingLeft = '4px';
   }
-  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁'};
+  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘'};
   var eyeIcon = layer.hidden ? '⊘' : '●';
   var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
   var lockIcon = layer.locked ? '🔒' : '🔓';
@@ -8309,6 +8474,7 @@ function renderProps(){
   else if(layer.type==='svg')     innerHtml=buildSvgProps(layer);
   else if(layer.type==='text')    innerHtml=buildTextProps(layer);
   else if(layer.type==='arrow')   innerHtml=buildArrowProps(layer);
+  else if(layer.type==='button')  innerHtml=buildButtonProps(layer);   // v282
   // v257: append a shared blend-mode dropdown to every layer panel. Applied in
   // _drawSingleLayerInto via globalCompositeOperation so it composes with whatever
   // pixels the layer below has already rendered. Works for any layer type.
@@ -8405,8 +8571,9 @@ function moveBtns(id){
 // (video, arrow, image, shape, sprinkle, svg, text). Values chosen by Jason as the "default"
 // text-shadow look — a slightly-below-and-right cast that reads well on light backgrounds.
 window._SHADOW_PRESETS = {
-  'text': {label:'Text Shadow', shadowBlur:4, shadowOffsetX:3, shadowOffsetY:1, shadowOpacity:78, shadowColor:'#000000'},
-  'none': {label:'None',        shadowBlur:0, shadowOffsetX:0, shadowOffsetY:0, shadowOpacity:0}
+  'text':   {label:'Text Shadow', shadowBlur:4,  shadowOffsetX:3, shadowOffsetY:1, shadowOpacity:78, shadowColor:'#000000'},
+  'button': {label:'Button',      shadowBlur:12, shadowOffsetX:0, shadowOffsetY:6, shadowOpacity:30, shadowColor:'#000000'},   // v282: soft lift for CTA pills
+  'none':   {label:'None',        shadowBlur:0,  shadowOffsetX:0, shadowOffsetY:0, shadowOpacity:0}
 };
 function applyShadowPreset(layerId, presetKey){
   var layer = layers.find(function(l){ return l.id === layerId; });
@@ -8996,6 +9163,84 @@ function buildShapeProps(l){
     +R('Opacity','pshopacity',l.opacity,0,100,1)
     +shadowUI('psh_', l)
     +moveBtns(l.id)+'</div>';
+}
+
+// ── BUTTON LAYER PROPS (v282) ──
+// Mirrors buildShapeProps for the fill/gradient section (same brand-preset swatch row + fill type
+// switch) and buildTextProps for the font family/weight/size/color section. New: padding sliders
+// drive text-based auto-sizing, uppercase toggle, letter-spacing. Corner radius defaults to 999
+// (pill) which the path helper caps to min(w,h)/2, so wide/short buttons stay perfectly rounded.
+function buildButtonProps(l){
+  var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+  var isBrandFont = fontList.some(function(f){ return f.family === l.fontFamily; });
+  var fontOpts = '<optgroup label="Brand">'
+    + fontList.map(function(f){
+        return '<option value="'+escAttr(f.family)+'"'+(l.fontFamily===f.family?' selected':'')+'>'+escAttr(f.label)+'</option>';
+      }).join('')
+    + '</optgroup>';
+  if(!isBrandFont && l.fontFamily){
+    fontOpts += '<optgroup label="Current"><option value="'+escAttr(l.fontFamily)+'" selected>'+escAttr(l.fontFamily)+'</option></optgroup>';
+  }
+  var selectedFont = fontList.find(function(f){ return f.family === l.fontFamily; });
+  var weightsList = selectedFont ? (selectedFont.weights || [400]) : [100,200,300,400,500,600,700,800,900];
+  var weightOpts = weightsList.map(function(w){
+    var nameMap = {100:'Thin',200:'Extralight',300:'Light',400:'Regular',500:'Medium',600:'Semibold',700:'Bold',800:'Extrabold',900:'Black'};
+    return '<option value="'+w+'"'+(l.fontWeight==w?' selected':'')+'>'+(nameMap[w]||w)+'</option>';
+  }).join('');
+  var isNone = l.fillType === 'none';
+  var isSolid = l.fillType === 'solid';
+  var isGradient = !isNone && !isSolid;
+  return '<div class="prop-section">'
+    + '<label style="font-size:10px;color:var(--muted);">Text</label>'
+    + '<input type="text" id="pbtn_text" value="'+escAttr(l.text||'')+'" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">'
+    + '<label style="font-size:11px;display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="pbtn_uppercase"'+(l.uppercase?' checked':'')+'>Uppercase</label>'
+    + '<label style="font-size:11px;display:flex;align-items:center;gap:6px;margin-top:3px;"><input type="checkbox" id="pbtn_autoFit"'+(l.autoFit!==false?' checked':'')+'>Auto-fit width to text</label>'
+    + '<div class="col2" style="margin-top:8px;">'
+      + '<div><label style="font-size:10px;color:var(--muted);">Font</label><select id="pbtn_fontFamily">'+fontOpts+'</select></div>'
+      + '<div><label style="font-size:10px;color:var(--muted);">Weight</label><select id="pbtn_fontWeight">'+weightOpts+'</select></div>'
+    + '</div>'
+    + R('Font Size', 'pbtn_fontSize', l.fontSize||56, 12, 200, 1)
+    + R('Letter Spacing', 'pbtn_letterSpacing', l.letterSpacing||0, -10, 30, 1)
+    + '<div style="margin-bottom:5px;">'
+      + COL('Text color','pbtn_textColor', l.textColor || '#FFFFFF')
+    + '</div>'
+    // Fill section — brand-preset swatches + solid/gradient/none selector
+    + SEL('Fill Type', 'pbtn_fillType', [['none','None (transparent)'],['solid','Solid'],['gradient','Gradient']], l.fillType || 'gradient')
+    + (isNone
+        ? '<div style="font-size:11px;color:var(--muted);padding:6px 8px;background:#fafafa;border:1px dashed var(--border);border-radius:5px;margin-bottom:5px;">No fill — pick Solid or Gradient (or click a preset below) to add one. Stroke is independent.</div>'
+        : isSolid
+          ? '<div style="margin-bottom:5px;">'+COL('Color','pbtn_gradTop', l.fillColor || l.gradTop || '#f07830')+'</div>'
+          : '<div class="col2" style="margin-bottom:5px;">'
+              + COL('Top','pbtn_gradTop', l.gradTop || '#f07830')
+              + COL('Bottom','pbtn_gradBot', l.gradBottom || '#a63e14')
+            + '</div>'
+      )
+    // Brand preset swatches — click applies the preset (uses shape layer's applyPresetToLayer,
+    // which forces fillType to 'gradient' if not 'solid', so preset picks always work).
+    + '<div style="margin-top:4px;margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
+      + '<div class="preset-grid" style="margin-top:3px;">'
+      + gradientPresets.map(function(p){
+          return '<div class="preset-swatch" style="background:'+presetSwatchCss(p)+'" title="'+p.label+'" onclick="applyPresetToLayer(\''+l.id+'\',\''+p.id+'\')"></div>';
+        }).join('')
+      + '</div></div>'
+    + (isGradient ? SEL('Gradient Type','pbtn_gradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']], l.gradType||'linear') : '')
+    + (isGradient ? R('Gradient Angle','pbtn_gradAngle', l.gradAngle==null?135:l.gradAngle, 0, 360, 5) : '')
+    // Shape
+    + R('Corner Radius', 'pbtn_cornerRadius', l.cornerRadius||0, 0, 999, 1)
+    + '<div class="col2">'
+      + '<div>' + R('Pad X','pbtn_padX', l.padX||0, 0, 200, 1) + '</div>'
+      + '<div>' + R('Pad Y','pbtn_padY', l.padY||0, 0, 100, 1) + '</div>'
+    + '</div>'
+    // Outline — default 0 = no outline (per Jason's spec)
+    + COL('Outline color','pbtn_strokeColor', l.strokeColor==='rgba(0,0,0,0)' ? '#FFFFFF' : l.strokeColor)
+    + R('Outline Width (0 = no outline)','pbtn_strokeWidth', l.strokeWidth||0, 0, 20, 1)
+    // Placement
+    + NUMPAIR('X (px)','nbtnx',l.x,'Y (px)','nbtny',l.y)
+    + NUMPAIR('W (px)','nbtnw',l.w,'H (px)','nbtnh',l.h)
+    + R('Rotation','pbtn_rotation', l.rotation, -180, 180, 1)
+    + R('Opacity','pbtn_opacity', l.opacity, 0, 100, 1)
+    + shadowUI('pbtn_', l)
+    + moveBtns(l.id) + '</div>';
 }
 
 // ── SPRINKLE LAYER PROPS ──
@@ -9650,6 +9895,50 @@ function bindPropEvents(layer){
     rng('parrh', function(v){ layer.h = v; redraw(); });
     rng('parrrotation', function(v){ layer.rotation = v; redraw(); });
     rng('parropacity', function(v){ layer.opacity = v; redraw(); });
+  } else if(layer.type==='button'){
+    // v282: button layer bindings. Text/appearance changes trigger auto-fit width via redraw()
+    // (drawButtonLayer recomputes w/h from text+padding when layer.autoFit !== false). Manual
+    // W/H edits turn autoFit off so the user's dimensions stick.
+    on('pbtn_text', 'input', function(e){ layer.text = e.target.value; redraw(); });
+    on('pbtn_uppercase', 'change', function(e){ layer.uppercase = !!e.target.checked; redraw(); });
+    on('pbtn_autoFit', 'change', function(e){ layer.autoFit = !!e.target.checked; redraw(); });
+    on('pbtn_fontFamily', 'change', function(e){
+      layer.fontFamily = e.target.value;
+      // Reset weight if the new font doesn't support the current one — mirrors text-layer behavior
+      var newFontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+      var newFont = newFontList.find(function(f){ return f.family === layer.fontFamily; });
+      if(newFont && newFont.weights.indexOf(+layer.fontWeight) < 0){
+        layer.fontWeight = newFont.weights.indexOf(700) >= 0 ? 700 : newFont.weights[0];
+      }
+      renderProps(); redraw();
+    });
+    on('pbtn_fontWeight', 'change', function(e){ layer.fontWeight = +e.target.value; redraw(); });
+    rng('pbtn_fontSize', function(v){ layer.fontSize = +v; redraw(); });
+    rng('pbtn_letterSpacing', function(v){ layer.letterSpacing = +v; redraw(); });
+    on('pbtn_textColor', 'input', function(e){ layer.textColor = e.target.value; redraw(); });
+    on('pbtn_fillType', 'change', function(e){ layer.fillType = e.target.value; renderProps(); redraw(); });
+    on('pbtn_gradTop', 'input', function(e){
+      // In solid mode this input drives fillColor; in gradient mode it's the top stop.
+      if(layer.fillType === 'solid') layer.fillColor = e.target.value;
+      layer.gradTop = e.target.value;
+      redraw();
+    });
+    on('pbtn_gradBot', 'input', function(e){ layer.gradBottom = e.target.value; redraw(); });
+    on('pbtn_gradType', 'change', function(e){ layer.gradType = e.target.value; redraw(); });
+    rng('pbtn_gradAngle', function(v){ layer.gradAngle = +v; redraw(); });
+    rng('pbtn_cornerRadius', function(v){ layer.cornerRadius = +v; redraw(); });
+    rng('pbtn_padX', function(v){ layer.padX = +v; redraw(); });
+    rng('pbtn_padY', function(v){ layer.padY = +v; redraw(); });
+    on('pbtn_strokeColor', 'input', function(e){ layer.strokeColor = e.target.value; redraw(); });
+    rng('pbtn_strokeWidth', function(v){ layer.strokeWidth = +v; redraw(); });
+    // Position + manual size — turn off autoFit when W/H are typed so the user's numbers stick.
+    num('nbtnx', function(v){ layer.x = v; redraw(); });
+    num('nbtny', function(v){ layer.y = v; redraw(); });
+    num('nbtnw', function(v){ layer.w = v; layer.autoFit = false; var ck=document.getElementById('pbtn_autoFit'); if(ck) ck.checked = false; redraw(); });
+    num('nbtnh', function(v){ layer.h = v; layer.autoFit = false; var ck=document.getElementById('pbtn_autoFit'); if(ck) ck.checked = false; redraw(); });
+    rng('pbtn_rotation', function(v){ layer.rotation = +v; redraw(); });
+    rng('pbtn_opacity', function(v){ layer.opacity = +v; redraw(); });
+    bindShadowEvents('pbtn_', layer);
   } else if(layer.type==='sprinkle'){
     // Position / size — number inputs only (no sliders). Users drag on-canvas for visual positioning.
     num('nsprx', function(v){ layer.x = v; redraw(); });
@@ -10144,22 +10433,29 @@ function bindCanvasEvents(){
   var _spacePanActive = false;
   var _panDragging = false;
   var _panStartX = 0, _panStartY = 0, _panStartScrollX = 0, _panStartScrollY = 0;
+  // v281: match on both e.code AND e.key so browsers/keyboard layouts that populate only one
+  // still activate the pan. Also toggle window._panDiag = true in DevTools console to log the
+  // handler firings — helpful when space+drag "doesn't do anything" and we need to see whether
+  // the keydown or mousedown never fired vs. fired but scrollLeft did nothing.
+  function _isSpaceKey(e){ return e.code === 'Space' || e.key === ' ' || e.key === 'Spacebar'; }
   document.addEventListener('keydown', function(e){
-    if(e.code !== 'Space') return;
+    if(!_isSpaceKey(e)) return;
     var t = e.target;
     var inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
     if(inField) return;             // don't hijack space in text inputs
     if(_spacePanActive) { e.preventDefault(); return; }   // absorb OS auto-repeat
     _spacePanActive = true;
     area.style.cursor = 'grab';
+    if(window._panDiag) console.log('[pan] space DOWN — pan mode armed');
     e.preventDefault();             // block default page-scroll on space
   });
   document.addEventListener('keyup', function(e){
-    if(e.code !== 'Space') return;
+    if(!_isSpaceKey(e)) return;
     if(!_spacePanActive) return;
     _spacePanActive = false;
     _panDragging = false;
     area.style.cursor = '';
+    if(window._panDiag) console.log('[pan] space UP — pan mode off');
   });
   // Capture-phase mousedown so space+drag pre-empts layer selection / marquee starts.
   area.addEventListener('mousedown', function(e){
@@ -10170,6 +10466,11 @@ function bindCanvasEvents(){
     _panStartScrollX = area.scrollLeft;
     _panStartScrollY = area.scrollTop;
     area.style.cursor = 'grabbing';
+    if(window._panDiag){
+      var maxX = area.scrollWidth - area.clientWidth;
+      var maxY = area.scrollHeight - area.clientHeight;
+      console.log('[pan] drag START — scroll now', _panStartScrollX, _panStartScrollY, '/ max', maxX, maxY, (maxX <= 0 && maxY <= 0) ? '— WARNING: no scrollable area (zoom in further or shrink window?)' : '');
+    }
     e.preventDefault();
     e.stopPropagation();
   }, true);
@@ -11076,6 +11377,7 @@ function _drawSingleLayerInto(ctx, layer){
   else if(layer.type==='text')drawTextLayer(ctx,layer);
   else if(layer.type==='arrow')drawArrowLayer(ctx,layer);
   else if(layer.type==='group')_drawGroupInto(ctx,layer);   // v270
+  else if(layer.type==='button')drawButtonLayer(ctx,layer);  // v282
   ctx.restore();
 }
 
