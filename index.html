@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v282</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v283</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2039,7 +2039,12 @@ var SHAPES=[
   {id:'hexagon',label:'Hex',icon:'⬡'},
   {id:'parallelogram',label:'Parallelogram',icon:'▰'},
   {id:'trapezoid',label:'Trapezoid',icon:'⏢'},
-  {id:'polygon',label:'Polygon',icon:'⬢'}
+  {id:'polygon',label:'Polygon',icon:'⬢'},
+  // v283: polaroid frame — appears as a shape option in the framedImage picker. The outer
+  // rectangle is the paper; the image clips to an inset "photo window" with a thin border on
+  // top/left/right and a thick bottom (the classic caption area). Rendered via a compound
+  // draw path in drawFramedImageLayer, not through buildShapeVertices.
+  {id:'polaroid',label:'Polaroid',icon:'📷'}
 ];
 
 // Gradient presets — populated by setBrand() based on currentBrand
@@ -6424,6 +6429,18 @@ function drawFramedImageLayer(ctx, layer){
       ctx.restore();
     }
 
+    // v283: polaroid — fill the outer paper rectangle with the frame color BEFORE the clip is set,
+    // so the caption band (and any letterboxing around the photo) reads as solid paper. The clip
+    // below then uses the inset photo window instead of the full outer rect.
+    if(layer.shape === 'polaroid'){
+      ctx.save();
+      applyFrameRot();
+      ctx.fillStyle = layer.frameFillColor || '#FFFFFF';
+      buildShapePath(ctx, layer);
+      ctx.fill();
+      ctx.restore();
+    }
+
     // ── 2. CLIP TO SHAPE PATH (with frame rotation applied to the path itself) ──
     // Then immediately restore the un-rotated transform so the image inside doesn't inherit
     // the frame rotation. The clip region persists across the restore (clip is per-state).
@@ -6435,28 +6452,36 @@ function drawFramedImageLayer(ctx, layer){
     ctx.save();
     var preFrameTransform = ctx.getTransform();
     applyFrameRot();
-    buildShapePath(ctx, layer);
+    // v283: polaroid uses the inset photo window as its clip. Other shapes use their normal path.
+    if(layer.shape === 'polaroid'){
+      var _pr = _getPolaroidPhotoRect(layer);
+      ctx.beginPath();
+      ctx.rect(_pr.x, _pr.y, _pr.w, _pr.h);
+    } else {
+      buildShapePath(ctx, layer);
+    }
     ctx.clip();
     // Reset the transform back to what it was before the frame rotation. The clip path was
     // recorded in the rotated coordinate system but is preserved across this transform reset.
     ctx.setTransform(preFrameTransform);
 
-    // Compute image placement
-    var iw = layer.natW || layer._img.naturalWidth || fw;
-    var ih = layer.natH || layer._img.naturalHeight || fh;
+    // Compute image placement — for polaroid, fit to the photo window (not the full outer rect).
+    var _fitRect = (layer.shape === 'polaroid') ? _getPolaroidPhotoRect(layer) : {x:layer.x, y:layer.y, w:fw, h:fh};
+    var iw = layer.natW || layer._img.naturalWidth || _fitRect.w;
+    var ih = layer.natH || layer._img.naturalHeight || _fitRect.h;
     var baseScale;
     if(layer.fitMode === 'contain'){
-      baseScale = Math.min(fw / iw, fh / ih);
+      baseScale = Math.min(_fitRect.w / iw, _fitRect.h / ih);
     } else if(layer.fitMode === 'manual'){
       baseScale = 1;
     } else {
-      baseScale = Math.max(fw / iw, fh / ih);
+      baseScale = Math.max(_fitRect.w / iw, _fitRect.h / ih);
     }
     var totalScale = baseScale * (layer.imgScale || 1);
     var drawW = iw * totalScale;
     var drawH = ih * totalScale;
-    var cx = layer.x + fw/2 + (layer.imgOffsetX || 0);
-    var cy = layer.y + fh/2 + (layer.imgOffsetY || 0);
+    var cx = _fitRect.x + _fitRect.w/2 + (layer.imgOffsetX || 0);
+    var cy = _fitRect.y + _fitRect.h/2 + (layer.imgOffsetY || 0);
     if(layer.imgRotation){
       ctx.translate(cx, cy); ctx.rotate((layer.imgRotation || 0) * Math.PI / 180); ctx.translate(-cx, -cy);
     }
@@ -6498,6 +6523,14 @@ function buildFramedImageProps(l){
     shapeParams = R('Skew angle','pfimg_skew', (l.skewAngle==null?15:l.skewAngle), -60, 60, 1);
   } else if(l.shape === 'trapezoid'){
     shapeParams = R('Top width (%)','pfimg_topW', (l.topWidthPct==null?60:l.topWidthPct), 5, 100, 1);
+  } else if(l.shape === 'polaroid'){
+    // v283: polaroid-specific controls. Border = thin frame on top/left/right; Caption = the
+    // thick bottom band (traditional handwriting area). Both are % of outer bounds so resize
+    // preserves proportions. Frame color defaults to white but can be swapped for aged-paper
+    // looks (#F5EEDA) or brand colors.
+    shapeParams = R('Border (%)',  'pfimg_polaroidBorder',  l.polaroidBorder  == null ?  6 : l.polaroidBorder,  0, 20, 0.5)
+                + R('Caption (%)', 'pfimg_polaroidCaption', l.polaroidCaption == null ? 22 : l.polaroidCaption, 0, 50, 0.5)
+                + '<div style="margin-bottom:5px;">' + COL('Frame color', 'pfimg_frameFillColor', l.frameFillColor || '#FFFFFF') + '</div>';
   }
   return '<div class="prop-section">'
     +'<div style="margin-bottom:8px;">'
@@ -10111,6 +10144,10 @@ function bindPropEvents(layer){
     rng('pfimg_polyRot',      function(v){layer.polygonRotation=+v;redraw();});
     rng('pfimg_skew',         function(v){layer.skewAngle=+v;redraw();});
     rng('pfimg_topW',         function(v){layer.topWidthPct=+v;redraw();});
+    // v283: polaroid controls
+    rng('pfimg_polaroidBorder',  function(v){layer.polaroidBorder  = +v; redraw();});
+    rng('pfimg_polaroidCaption', function(v){layer.polaroidCaption = +v; redraw();});
+    on('pfimg_frameFillColor', 'input', function(e){ layer.frameFillColor = e.target.value; redraw(); });
     rng('pfimg_cornerRadius', function(v){layer.cornerRadius=+v;redraw();});
     rng('pfimg_frameRot',     function(v){layer.frameRotation=+v;redraw();});
     // Image-within-frame transform — these set fitMode to 'manual' so user edits aren't overridden
@@ -12614,6 +12651,11 @@ function buildShapePath(ctx, layer){
     ctx.roundRect(x,y,w,h,r);
   } else if(layer.shape==='circle'){
     ctx.ellipse(x+w/2,y+h/2,w/2,h/2,0,0,Math.PI*2);
+  } else if(layer.shape==='polaroid'){
+    // v283: outer paper rectangle. Photo window is drawn separately in drawFramedImageLayer via
+    // _getPolaroidPhotoRect. Corner radius applies to the outer paper edge (real polaroids have
+    // ever-so-slightly rounded corners; 0 gives a sharp cut, ~4–8 looks natural).
+    if(cr>0) ctx.roundRect(x,y,w,h,Math.min(cr,w/2,h/2)); else ctx.rect(x,y,w,h);
   } else {
     var v = buildShapeVertices(layer);
     if(v.pts && v.pts.length){
@@ -12622,6 +12664,22 @@ function buildShapePath(ctx, layer){
       ctx.rect(x,y,w,h);
     }
   }
+}
+
+// v283: photo-window rect inside a polaroid layer. Equal thin borders on left/right/top; thicker
+// caption band at the bottom. Both are % of the outer layer bounds so the geometry scales with
+// resize. Defaults tuned to match the classic instant-camera proportions.
+function _getPolaroidPhotoRect(layer){
+  var borderPct  = layer.polaroidBorder  != null ? layer.polaroidBorder  : 6;
+  var captionPct = layer.polaroidCaption != null ? layer.polaroidCaption : 22;
+  var border  = layer.w * borderPct  / 100;
+  var caption = layer.h * captionPct / 100;
+  return {
+    x: layer.x + border,
+    y: layer.y + border,
+    w: Math.max(1, layer.w - border * 2),
+    h: Math.max(1, layer.h - border - caption)
+  };
 }
 
 function drawShapeLayer(ctx,layer){
