@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v286</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v287</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -13828,22 +13828,29 @@ function doStaticExport(){
   var scaleY = eh / canvasH;
   bctx.scale(scaleX, scaleY);
 
-  layers.forEach(function(layer,i){
-    if(layer.hidden) return;
-    bctx.save();bctx.globalAlpha=(layer.opacity||100)/100;
-    try{
-      if(layer.type==='image')drawImageLayer(bctx,layer);
-      else if(layer.type==='framedImage')drawFramedImageLayer(bctx,layer);
-      else if(layer.type==='video')drawVideoLayer(bctx,layer);
-      else if(layer.type==='sticker')drawStickerLayer(bctx,layer);
-      else if(layer.type==='shape')drawShapeLayer(bctx,layer);
-      else if(layer.type==='arrow')drawArrowLayer(bctx,layer);
-      else if(layer.type==='sprinkle')drawSprinkleLayer(bctx,layer);
-      else if(layer.type==='svg')drawSvgLayer(bctx,layer);
-      else if(layer.type==='text')drawTextLayer(bctx,layer);
-    }catch(e){console.error('[export] layer',i,'type',layer.type,'error:',e);}
-    bctx.restore();
-  });
+  // v287: mirror the redraw() top-level iteration so export handles groups, buttons, blend
+  // modes, and legacy isMask exactly the same way the on-screen preview does. Previously this
+  // loop iterated the flat layers[] array and dispatched by type directly — which had no case
+  // for 'group' (v270) or 'button' (v282), silently skipped the group layer, rendered group
+  // children as if they were top-level (bypassing the group's mask + blend mode), and ignored
+  // the per-layer blendMode field (v257). That's why preview and export diverged.
+  var _exportTop = _topLevelLayers();
+  for(var xi = 0; xi < _exportTop.length; xi++){
+    var xlayer = _exportTop[xi];
+    if(xlayer.hidden) continue;
+    // Legacy top-level mask: a layer with isMask:true clips the next top-level layer above it.
+    if(xlayer.isMask && xi + 1 < _exportTop.length){
+      var above = _exportTop[xi + 1];
+      if(above && !above.hidden){
+        try { _drawMaskedPair(bctx, xlayer, above); }
+        catch(e){ console.error('[export] masked pair layer', xi, 'error:', e); }
+        xi++;
+        continue;
+      }
+    }
+    try { _drawSingleLayerInto(bctx, xlayer); }
+    catch(e){ console.error('[export] layer', xi, 'type', xlayer.type, 'error:', e); }
+  }
 
   var mime={'png':'image/png','jpeg':'image/jpeg','webp':'image/webp'}[format]||'image/png';
   var dataUrl=format==='png'?outCanvas.toDataURL('image/png'):outCanvas.toDataURL(mime,quality);
