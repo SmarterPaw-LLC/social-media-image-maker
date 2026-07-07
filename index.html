@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v284</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v285</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8508,6 +8508,7 @@ function renderProps(){
   else if(layer.type==='text')    innerHtml=buildTextProps(layer);
   else if(layer.type==='arrow')   innerHtml=buildArrowProps(layer);
   else if(layer.type==='button')  innerHtml=buildButtonProps(layer);   // v282
+  else if(layer.type==='group')   innerHtml=buildGroupProps(layer);    // v285
   // v257: append a shared blend-mode dropdown to every layer panel. Applied in
   // _drawSingleLayerInto via globalCompositeOperation so it composes with whatever
   // pixels the layer below has already rendered. Works for any layer type.
@@ -9203,6 +9204,34 @@ function buildShapeProps(l){
 // switch) and buildTextProps for the font family/weight/size/color section. New: padding sliders
 // drive text-based auto-sizing, uppercase toggle, letter-spacing. Corner radius defaults to 999
 // (pill) which the path helper caps to min(w,h)/2, so wide/short buttons stay perfectly rounded.
+// ── GROUP PROPS (v285) ──
+// Groups previously had no property panel — selecting one showed an empty panel. Now they get a
+// small panel with rename + the "Keep mask fill visible" toggle (only visible when the group has
+// a mask child). The shared commonLayerEffectsHtml appended in renderProps still adds the blend-
+// mode dropdown, so opacity/blend work here too.
+function buildGroupProps(l){
+  var hasMask = l.maskChildId != null;
+  var maskLayer = hasMask ? layers.find(function(x){ return x.id === l.maskChildId; }) : null;
+  var maskName = maskLayer ? maskLayer.name : '';
+  return '<div class="prop-section">'
+    + '<label style="font-size:10px;color:var(--muted);">Group name</label>'
+    + '<input type="text" id="pgrp_name" value="'+escAttr(l.name||'Group')+'" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">'
+    + '<div style="margin-top:10px;font-size:11px;color:var(--muted);">'
+      + (hasMask ? '🪟 Mask: <b style="color:var(--text);">' + escAttr(maskName) + '</b>' : 'No mask set. Toggle ⬚ on a child to make it the mask.')
+    + '</div>'
+    + (hasMask
+        ? '<label style="font-size:12px;display:flex;align-items:flex-start;gap:8px;margin-top:8px;padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;cursor:pointer;">'
+            + '<input type="checkbox" id="pgrp_keepMaskFill"'+(l.keepMaskFill?' checked':'')+' style="margin-top:2px;">'
+            + '<span><b>Keep mask fill visible</b>'
+              + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">Renders the mask layer\'s fill, stroke, and shadow as a frame behind the clipped children. Off = classic clipping-mask (mask shape is invisible).</div>'
+            + '</span>'
+          + '</label>'
+        : '')
+    + R('Opacity','pgrp_opacity',l.opacity==null?100:l.opacity,0,100,1)
+    + '<div style="font-size:10px;color:var(--muted);margin-top:4px;">Group opacity multiplies with each child\'s opacity when compositing.</div>'
+    + moveBtns(l.id) + '</div>';
+}
+
 function buildButtonProps(l){
   var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
   var isBrandFont = fontList.some(function(f){ return f.family === l.fontFamily; });
@@ -9972,6 +10001,11 @@ function bindPropEvents(layer){
     rng('pbtn_rotation', function(v){ layer.rotation = +v; redraw(); });
     rng('pbtn_opacity', function(v){ layer.opacity = +v; redraw(); });
     bindShadowEvents('pbtn_', layer);
+  } else if(layer.type==='group'){
+    // v285: group panel bindings. Rename, keepMaskFill toggle, opacity.
+    on('pgrp_name', 'input', function(e){ layer.name = e.target.value; renderLayerList(); });
+    on('pgrp_keepMaskFill', 'change', function(e){ layer.keepMaskFill = !!e.target.checked; redraw(); });
+    rng('pgrp_opacity', function(v){ layer.opacity = +v; redraw(); });
   } else if(layer.type==='sprinkle'){
     // Position / size — number inputs only (no sliders). Users drag on-canvas for visual positioning.
     num('nsprx', function(v){ layer.x = v; redraw(); });
@@ -11437,6 +11471,17 @@ function _drawGroupInto(ctx, group){
   var contentOff = document.createElement('canvas');
   contentOff.width = w; contentOff.height = h;
   var cctx = contentOff.getContext('2d');
+  // v285: keepMaskFill — draw the mask VISIBLY first (bottom of the group's z-stack), so its fill,
+  // stroke, and shadow act as a frame behind the clipped children. The destination-in composite
+  // below still trims everything (including the visible mask) to the mask's own alpha, so the
+  // mask stays visible exactly where it's opaque. Default is off — matches classic clipping-mask
+  // behavior where the mask shape is invisible and only defines the alpha cut.
+  if(group.keepMaskFill && group.maskChildId != null){
+    var maskLayer = layers.find(function(l){ return l.id === group.maskChildId; });
+    if(maskLayer && !maskLayer.hidden){
+      _drawSingleLayerInto(cctx, maskLayer);
+    }
+  }
   // Render every non-mask child into the content offscreen, respecting their own opacity/blend.
   group.childIds.forEach(function(cid){
     if(cid === group.maskChildId) return;
