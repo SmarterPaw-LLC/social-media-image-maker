@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v290</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v291</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9034,6 +9034,13 @@ function buildImageProps(l){
       // The `starry` field name is preserved for backward compat with saved designs; the label
       // was renamed to "Cosmic" in v289 when the effect changed from dots to bloom+stars.
       + R('Cosmic',       'pmeshStarry',       e.starry       || 0, 0, 100, 1)
+      // v291: Cosmic render order — early = warped/blurred by later passes (integrated feel);
+      // late (default) = drawn on top of the fully-processed mesh (crisp stars).
+      + '<label style="font-size:10px;color:var(--muted);">Cosmic Render Order</label>'
+      + '<select id="pmeshStarryOrder" style="width:100%;margin-bottom:8px;">'
+        + '<option value="late"'  + ((e.starryOrder || 'late') === 'late'  ? ' selected' : '') + '>After distortions (crisp stars)</option>'
+        + '<option value="early"' + (e.starryOrder === 'early' ? ' selected' : '') + '>Before distortions (integrated)</option>'
+      + '</select>'
       + R('Tile',         'pmeshTile',         e.tile         || 0, 0, 100, 1)
       + R('Fractal',      'pmeshFractal',      e.fractal      || 0, 0, 100, 1)
       // v290: fractal style picker. Set below the slider so the interaction is: pick style, then
@@ -9044,6 +9051,14 @@ function buildImageProps(l){
             var label = {droste:'Droste (nested infinity)', kaleido:'Kaleidoscopic mandala', cornerNest:'Corner nest / quadtree', spiral:'Log spiral / galaxy arm'}[k];
             return '<option value="' + k + '"' + ((e.fractalStyle || 'droste') === k ? ' selected' : '') + '>' + label + '</option>';
           }).join('')
+      + '</select>'
+      // v291: Fractal render order — same options as Cosmic. Late (default) sits the fractal on
+      // top of the finished image (nested copies stay recognizable). Early feeds the fractal into
+      // the warp/blur/chromatic pipeline so the recursion melts into the mesh.
+      + '<label style="font-size:10px;color:var(--muted);">Fractal Render Order</label>'
+      + '<select id="pmeshFractalOrder" style="width:100%;margin-bottom:8px;">'
+        + '<option value="late"'  + ((e.fractalOrder || 'late') === 'late'  ? ' selected' : '') + '>After distortions (recursive echoes stay crisp)</option>'
+        + '<option value="early"' + (e.fractalOrder === 'early' ? ' selected' : '') + '>Before distortions (recursion melts into mesh)</option>'
       + '</select>'
       + '<div style="display:flex;gap:6px;margin-top:5px;">'
         + '<button class="btn-sm" style="flex:1;" onclick="randomizeMeshLayer('+l.id+')" title="Roll all ten effect sliders to random values for a surprise mix">🎲 Randomize</button>'
@@ -9827,6 +9842,9 @@ function bindPropEvents(layer){
       rng('pmeshFractal',      function(v){ layer._meshEffects.fractal      = +v; _scheduleMeshRegen(layer.id); });
       // v290: fractal style dropdown — regen immediately (no debounce needed; discrete change)
       on('pmeshFractalStyle', 'change', function(e){ layer._meshEffects.fractalStyle = e.target.value; regenerateMeshLayer(layer.id); });
+      // v291: render-order dropdowns for Fractal + Cosmic
+      on('pmeshFractalOrder', 'change', function(e){ layer._meshEffects.fractalOrder = e.target.value; regenerateMeshLayer(layer.id); });
+      on('pmeshStarryOrder',  'change', function(e){ layer._meshEffects.starryOrder  = e.target.value; regenerateMeshLayer(layer.id); });
       on('pmeshPreset', 'change', function(ev){ changeMeshLayerPreset(layer.id, ev.target.value); });
     }
   } else if(layer.type==='sticker'){
@@ -17253,6 +17271,17 @@ function generateMeshGradient(w, h, palette, seed, effects){
   if(effects.tile && effects.tile > 0){
     _applyTile(canvas, effects.tile);
   }
+  // v291: opt-in EARLY runs of Fractal and Cosmic. Both effects also have late-slot calls
+  // near the end of this function; the user picks which slot via the Render Order dropdowns
+  // in the mesh effects panel. Early = the effect gets warped/zoom-blurred/chromatic-fringed
+  // by the downstream passes (feels integrated with the mesh). Late = the effect gets the
+  // fully-processed image as input (feels layered on top). Default is late for both.
+  if(effects.fractal && effects.fractal > 0 && effects.fractalOrder === 'early'){
+    _applyFractal(canvas, effects.fractal, effects.fractalStyle || 'droste');
+  }
+  if(effects.starry && effects.starry > 0 && effects.starryOrder === 'early'){
+    _applyStarry(canvas, effects.starry, s);
+  }
   // v214: wave + swirl distortions — applied LAST so they warp the complete composition.
   // v216: Ripple inserted between Wave and Swirl — radial sine displacement with much higher
   // amplitude than Wave (15% of minSide vs 7%), so it produces the visibly-pronounced look
@@ -17290,15 +17319,15 @@ function generateMeshGradient(w, h, palette, seed, effects){
   if(effects.chromatic && effects.chromatic > 0){
     _applyChromaticAberration(canvas, effects.chromatic);
   }
-  // v288/v289/v290: Fractal takes an explicit style name (droste / kaleido / cornerNest / spiral)
-  // from the user's dropdown pick rather than seed-derived selection. The four styles fold the
-  // composition back into itself in visibly different ways.
-  if(effects.fractal && effects.fractal > 0){
+  // v290/v291: Late-slot Fractal. Runs here (after all warps/blurs/chromatic) when the user's
+  // Render Order is 'late' (default). If they picked 'early', the earlier call site already
+  // ran it and this one skips to avoid double-drawing.
+  if(effects.fractal && effects.fractal > 0 && effects.fractalOrder !== 'early'){
     _applyFractal(canvas, effects.fractal, effects.fractalStyle || 'droste');
   }
-  // v288: Starry runs LAST so specks stay crisp (no wave/swirl/zoomBlur smearing them). Seeded
-  // from meshSeed so slider changes only add/remove points; layout is stable across regens.
-  if(effects.starry && effects.starry > 0){
+  // v290/v291: Late-slot Cosmic (bloom + stars). Late keeps stars crisp since nothing warps
+  // them; early makes them integrated with the mesh warp/blur.
+  if(effects.starry && effects.starry > 0 && effects.starryOrder !== 'early'){
     _applyStarry(canvas, effects.starry, s);
   }
 
@@ -17861,7 +17890,10 @@ function _readMeshEffects(){
     tile:         +(document.getElementById('meshTile')         || {value:0}).value,
     fractal:      +(document.getElementById('meshFractal')      || {value:0}).value,
     // v290: user-picked fractal style
-    fractalStyle: (document.getElementById('meshFractalStyle')  || {value:'droste'}).value
+    fractalStyle: (document.getElementById('meshFractalStyle')  || {value:'droste'}).value,
+    // v291: render order for Fractal + Cosmic ('early' before warps, 'late' after — default late)
+    fractalOrder: (document.getElementById('meshFractalOrder')  || {value:'late'}).value,
+    starryOrder:  (document.getElementById('meshStarryOrder')   || {value:'late'}).value
   };
 }
 
@@ -18038,7 +18070,7 @@ function resetMeshLayerEffects(layerId){
   var layer = layers.find(function(l){ return l.id === layerId; });
   if(!layer || !layer._meshEffects) return;
   snapshotState();
-  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0, liquify: 0, zoomBlur: 0, starry: 0, tile: 0, fractal: 0, fractalStyle: 'droste'};
+  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0, liquify: 0, zoomBlur: 0, starry: 0, tile: 0, fractal: 0, fractalStyle: 'droste', fractalOrder: 'late', starryOrder: 'late'};
   regenerateMeshLayer(layerId);
   renderProps();
   showToast('↺ Mesh effects reset');
@@ -18089,7 +18121,10 @@ function randomizeMeshLayer(layerId){
     tile:         Math.floor(Math.random() * 61),
     fractal:      Math.floor(Math.random() * 61),
     // v290: also roll the fractal style so a random mix picks a new pattern, not just intensity.
-    fractalStyle: ['droste','kaleido','cornerNest','spiral'][Math.floor(Math.random() * 4)]
+    fractalStyle: ['droste','kaleido','cornerNest','spiral'][Math.floor(Math.random() * 4)],
+    // v291: 50/50 early vs late render order for each effect — expands the space of possible mixes
+    fractalOrder: Math.random() < 0.5 ? 'early' : 'late',
+    starryOrder:  Math.random() < 0.5 ? 'early' : 'late'
   };
   regenerateMeshLayer(layerId);
   renderProps();
