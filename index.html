@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v288</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v289</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9030,8 +9030,10 @@ function buildImageProps(l){
       + R('Chromatic',    'pmeshChromatic',    e.chromatic    || 0, 0, 100, 1)
       + R('Liquify',      'pmeshLiquify',      e.liquify      || 0, 0, 100, 1)
       + R('Zoom Blur',    'pmeshZoomBlur',     e.zoomBlur     || 0, 0, 100, 1)
-      // v288: cosmic sparkle, tiled pattern, and Droste-style fractal recursion
-      + R('Starry',       'pmeshStarry',       e.starry       || 0, 0, 100, 1)
+      // v288/v289: cosmic-bloom, tiled pattern, and Droste-style fractal recursion. The `starry`
+      // field name is preserved for backward compat with saved designs; the visible label was
+      // renamed to "Cosmic" after v289 changed the effect from painted dots to a nebula bloom.
+      + R('Cosmic',       'pmeshStarry',       e.starry       || 0, 0, 100, 1)
       + R('Tile',         'pmeshTile',         e.tile         || 0, 0, 100, 1)
       + R('Fractal',      'pmeshFractal',      e.fractal      || 0, 0, 100, 1)
       + '<div style="display:flex;gap:6px;margin-top:5px;">'
@@ -17277,11 +17279,11 @@ function generateMeshGradient(w, h, palette, seed, effects){
   if(effects.chromatic && effects.chromatic > 0){
     _applyChromaticAberration(canvas, effects.chromatic);
   }
-  // v288: Fractal folds the composition back into itself with rotation + scale-down. Placed
-  // near the end so it recurses over the already-processed image and the nested copies inherit
-  // all the color/warp treatments.
+  // v288/v289: Fractal picks one of four recursion styles based on the seed and folds the
+  // composition back into itself. Passing the seed here is what makes reroll give a NEW fractal
+  // style (Droste / kaleidoscopic / corner-nest / spiral) instead of the same one every time.
   if(effects.fractal && effects.fractal > 0){
-    _applyFractal(canvas, effects.fractal);
+    _applyFractal(canvas, effects.fractal, s);
   }
   // v288: Starry runs LAST so specks stay crisp (no wave/swirl/zoomBlur smearing them). Seeded
   // from meshSeed so slider changes only add/remove points; layout is stable across regens.
@@ -17601,47 +17603,43 @@ function _applyZoomBlur(canvas, amount){
   ctx.globalAlpha = 1;
 }
 
-// v288: Starry / cosmic overlay. Scatters small bright specks over the mesh — 90% tiny points
-// with occasional larger "focal" stars. Seeded so slider changes don't reshuffle positions
-// (star LAYOUT is stable per meshSeed; only the DENSITY changes with the amount).
+// v288/v289: Cosmic — nebula-style bloom on the existing brightness. v288 painted discrete
+// point-stars which read wrong ("dots on top of the mesh") — v289 rewrites it as a two-pass
+// bloom: extract the bright areas of the mesh, blur them heavily, screen-composite back on.
+// The result is that lighter hues in the palette bloom out into diffuse cosmic haze without
+// any hard specks. Amount controls both the extract threshold and how intense the bloom is.
 function _applyStarry(canvas, amount, seed){
   if(!amount || amount <= 0) return;
   var w = canvas.width, h = canvas.height;
   var ctx = canvas.getContext('2d');
-  // Local LCG seeded from the passed seed so star positions are deterministic per (seed, canvas).
-  var s = (seed != null ? seed : 12345) ^ 0xC05910; if(s < 0) s = -s;
-  function rnd(){ s = (s * 9301 + 49297) % 233280; return s / 233280; }
-  var minSide = Math.min(w, h);
-  // Count scales with amount and canvas area — a 1080² canvas at amount=100 gets ~500 stars.
-  var count = Math.round((amount / 100) * (minSide * 0.45));
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';   // stars add brightness rather than replacing pixels
-  for(var i = 0; i < count; i++){
-    var cx = rnd() * w;
-    var cy = rnd() * h;
-    // 90% tiny stars, 10% larger "focal" stars with a soft halo
-    var isFocal = rnd() < 0.10;
-    var r = isFocal ? (1 + rnd() * 3.5) : (0.4 + rnd() * 1.4);
-    r *= (0.6 + minSide / 1080 * 0.4);   // slight upscale on large canvases
-    // Slight bluish/purple tint per star for a "cosmos" feel, alpha jitters for depth
-    var tint = rnd();
-    var brightness = 200 + Math.floor(rnd() * 55);
-    var alpha = 0.6 + rnd() * 0.4;
-    var rC = brightness;
-    var gC = brightness;
-    var bC = brightness;
-    if(tint < 0.3){ bC = 255; rC = 200; }              // blue-ish
-    else if(tint > 0.75){ rC = 245; bC = 235; }        // warm white
-    // A soft radial gradient reads as glowy rather than a hard pixel
-    var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * (isFocal ? 5 : 2.5));
-    grad.addColorStop(0,   'rgba(' + rC + ',' + gC + ',' + bC + ',' + alpha + ')');
-    grad.addColorStop(0.4, 'rgba(' + rC + ',' + gC + ',' + bC + ',' + (alpha * 0.4) + ')');
-    grad.addColorStop(1,   'rgba(' + rC + ',' + gC + ',' + bC + ',0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * (isFocal ? 5 : 2.5), 0, Math.PI * 2);
-    ctx.fill();
+  var t = amount / 100;
+  // Bloom buffer starts as a copy of the mesh, then gets a heavy brightness+contrast pass to
+  // isolate the bright regions, then blurred so the halo reads as gaseous rather than sharp.
+  var bloom = document.createElement('canvas');
+  bloom.width = w; bloom.height = h;
+  var bctx = bloom.getContext('2d');
+  if('filter' in bctx){
+    // Contrast crush pushes anything below mid-brightness toward black, so only the palette's
+    // lighter stops survive; the following blur turns those survivors into gas clouds.
+    var contrastAmt = 1.4 + t * 0.9;             // 1.4 → 2.3
+    var brightAmt   = 1.1 + t * 0.5;             // 1.1 → 1.6
+    var saturateAmt = 1.3 + t * 0.7;             // 1.3 → 2.0 — deeper nebula hues
+    var blurPx      = Math.round(Math.min(w, h) * (0.02 + t * 0.06));   // 2%–8% of min side
+    bctx.filter = 'contrast(' + contrastAmt + ') brightness(' + brightAmt + ') saturate(' + saturateAmt + ')';
+    bctx.drawImage(canvas, 0, 0);
+    bctx.filter = 'blur(' + blurPx + 'px)';
+    bctx.drawImage(bloom, 0, 0);
+    bctx.filter = 'none';
+  } else {
+    // Fallback: no filter API. Just copy for a very subtle screen-composite pass below.
+    bctx.drawImage(canvas, 0, 0);
   }
+  // Composite the bloom back with 'lighter' — pure additive blending, so only brightens the
+  // existing image; dark regions stay dark. Alpha ramps with amount.
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.35 + t * 0.55;   // 0.35 → 0.9
+  ctx.drawImage(bloom, 0, 0);
   ctx.restore();
 }
 
@@ -17677,33 +17675,114 @@ function _applyTile(canvas, amount){
   }
 }
 
-// v288: Fractal / recursive Droste-adjacent effect. Repeatedly draws the current canvas back onto
-// itself at decreasing scale + slight rotation, with fading opacity. amount controls iterations
-// (0 → none, 100 → 6 recursions). Each pass compounds so at high amounts the center of the image
-// becomes a hypnotic infinity-well.
-function _applyFractal(canvas, amount){
+// v288/v289: Fractal — picks one of four recursion styles based on the mesh seed so rerolls give
+// visibly different fractal patterns. amount controls iteration count / intensity within the
+// chosen style. All four styles use drawImage compositing (no per-pixel loops) so perf stays
+// under ~30ms per regen at 1080².
+function _applyFractal(canvas, amount, seed){
   if(!amount || amount <= 0) return;
-  var w = canvas.width, h = canvas.height;
-  var ctx = canvas.getContext('2d');
   var iterations = Math.round((amount / 100) * 6);
   if(iterations <= 0) return;
-  var snapshot = document.createElement('canvas');
-  snapshot.width = w; snapshot.height = h;
-  snapshot.getContext('2d').drawImage(canvas, 0, 0);
+  // Seed picks a style. Undefined seed → default to Droste for stability.
+  var style = seed != null ? Math.abs(seed | 0) % 4 : 0;
+  if(style === 0) return _fractalDroste(canvas, iterations);
+  if(style === 1) return _fractalKaleidoRecurse(canvas, iterations);
+  if(style === 2) return _fractalCornerNest(canvas, iterations);
+  return _fractalSpiral(canvas, iterations);
+}
+
+// Style 0: classic Droste — center recursion with scale + rotation. Feels like an infinity mirror.
+function _fractalDroste(canvas, iterations){
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var snap = document.createElement('canvas');
+  snap.width = w; snap.height = h;
+  snap.getContext('2d').drawImage(canvas, 0, 0);
   var cx = w / 2, cy = h / 2;
-  var scale = 0.62;                // each iteration shrinks to 62%
-  var rotStep = 12 * Math.PI / 180;   // 12° rotation per pass — enough to see twist, not chaos
-  var s = 1.0;
-  var r = 0;
+  var s = 1, r = 0;
   for(var i = 0; i < iterations; i++){
-    s *= scale;
-    r += rotStep;
+    s *= 0.62; r += 12 * Math.PI / 180;
     ctx.save();
     ctx.globalAlpha = Math.max(0.15, 1 - i * 0.15);
-    ctx.translate(cx, cy);
-    ctx.rotate(r);
-    ctx.scale(s, s);
-    ctx.drawImage(snapshot, -w / 2, -h / 2);
+    ctx.translate(cx, cy); ctx.rotate(r); ctx.scale(s, s);
+    ctx.drawImage(snap, -w / 2, -h / 2);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Style 1: kaleidoscopic recursion — 5 rotated copies fanned around the center at each level,
+// each level shrinking. Looks like a mandala unfolding.
+function _fractalKaleidoRecurse(canvas, iterations){
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var snap = document.createElement('canvas');
+  snap.width = w; snap.height = h;
+  snap.getContext('2d').drawImage(canvas, 0, 0);
+  var cx = w / 2, cy = h / 2;
+  var petals = 5;
+  var s = 0.55;
+  for(var i = 0; i < iterations; i++){
+    var scale = Math.pow(s, i + 1);
+    for(var p = 0; p < petals; p++){
+      var ang = (p / petals) * Math.PI * 2 + i * 0.4;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0.12, 0.7 - i * 0.1);
+      ctx.translate(cx, cy); ctx.rotate(ang); ctx.scale(scale, scale);
+      ctx.drawImage(snap, -w / 2, -h / 2);
+      ctx.restore();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Style 2: corner nesting — draws four shrinking copies toward each corner. Gives a "H-tree"
+// / quadtree feel where the image echoes into every quadrant.
+function _fractalCornerNest(canvas, iterations){
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var snap = document.createElement('canvas');
+  snap.width = w; snap.height = h;
+  snap.getContext('2d').drawImage(canvas, 0, 0);
+  var corners = [[0, 0], [w, 0], [0, h], [w, h]];
+  var s = 1;
+  for(var i = 0; i < iterations; i++){
+    s *= 0.55;
+    var dw = w * s, dh = h * s;
+    for(var c = 0; c < corners.length; c++){
+      var cx = corners[c][0], cy = corners[c][1];
+      var dx = cx === 0 ? 0 : w - dw;
+      var dy = cy === 0 ? 0 : h - dh;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0.14, 0.7 - i * 0.11);
+      ctx.drawImage(snap, dx, dy, dw, dh);
+      ctx.restore();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Style 3: log-spiral — copies along a shrinking spiral path. Gives a "galaxy arm" reading.
+function _fractalSpiral(canvas, iterations){
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var snap = document.createElement('canvas');
+  snap.width = w; snap.height = h;
+  snap.getContext('2d').drawImage(canvas, 0, 0);
+  var cx = w / 2, cy = h / 2;
+  // More samples on the spiral than "iterations" so at higher amounts the arm is dense.
+  var samples = iterations * 4;
+  for(var i = 0; i < samples; i++){
+    var t = i / Math.max(1, samples - 1);
+    var scale = Math.pow(0.85, i * 0.5) * 0.9;
+    var ang = t * Math.PI * 4;   // 2 full turns
+    var radius = Math.min(w, h) * 0.28 * (1 - t);
+    var ox = Math.cos(ang) * radius;
+    var oy = Math.sin(ang) * radius;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.08, 0.5 - t * 0.35);
+    ctx.translate(cx + ox, cy + oy); ctx.rotate(ang * 0.6); ctx.scale(scale, scale);
+    ctx.drawImage(snap, -w / 2, -h / 2);
     ctx.restore();
   }
   ctx.globalAlpha = 1;
