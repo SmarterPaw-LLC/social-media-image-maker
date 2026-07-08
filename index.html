@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v289</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v290</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9030,12 +9030,21 @@ function buildImageProps(l){
       + R('Chromatic',    'pmeshChromatic',    e.chromatic    || 0, 0, 100, 1)
       + R('Liquify',      'pmeshLiquify',      e.liquify      || 0, 0, 100, 1)
       + R('Zoom Blur',    'pmeshZoomBlur',     e.zoomBlur     || 0, 0, 100, 1)
-      // v288/v289: cosmic-bloom, tiled pattern, and Droste-style fractal recursion. The `starry`
-      // field name is preserved for backward compat with saved designs; the visible label was
-      // renamed to "Cosmic" after v289 changed the effect from painted dots to a nebula bloom.
+      // v288/v289/v290: cosmic-bloom+stars, tiled pattern, and multi-style fractal recursion.
+      // The `starry` field name is preserved for backward compat with saved designs; the label
+      // was renamed to "Cosmic" in v289 when the effect changed from dots to bloom+stars.
       + R('Cosmic',       'pmeshStarry',       e.starry       || 0, 0, 100, 1)
       + R('Tile',         'pmeshTile',         e.tile         || 0, 0, 100, 1)
       + R('Fractal',      'pmeshFractal',      e.fractal      || 0, 0, 100, 1)
+      // v290: fractal style picker. Set below the slider so the interaction is: pick style, then
+      // dial in intensity.
+      + '<label style="font-size:10px;color:var(--muted);">Fractal Style</label>'
+      + '<select id="pmeshFractalStyle" style="width:100%;margin-bottom:8px;">'
+        + ['droste','kaleido','cornerNest','spiral'].map(function(k){
+            var label = {droste:'Droste (nested infinity)', kaleido:'Kaleidoscopic mandala', cornerNest:'Corner nest / quadtree', spiral:'Log spiral / galaxy arm'}[k];
+            return '<option value="' + k + '"' + ((e.fractalStyle || 'droste') === k ? ' selected' : '') + '>' + label + '</option>';
+          }).join('')
+      + '</select>'
       + '<div style="display:flex;gap:6px;margin-top:5px;">'
         + '<button class="btn-sm" style="flex:1;" onclick="randomizeMeshLayer('+l.id+')" title="Roll all ten effect sliders to random values for a surprise mix">🎲 Randomize</button>'
         + '<button class="btn-sm" style="flex:1;" onclick="rerollMeshLayer('+l.id+')" title="Generate a new random blob layout from the same palette, keeping your current effect settings">🔀 Reroll Layout</button>'
@@ -9816,6 +9825,8 @@ function bindPropEvents(layer){
       rng('pmeshStarry',       function(v){ layer._meshEffects.starry       = +v; _scheduleMeshRegen(layer.id); });
       rng('pmeshTile',         function(v){ layer._meshEffects.tile         = +v; _scheduleMeshRegen(layer.id); });
       rng('pmeshFractal',      function(v){ layer._meshEffects.fractal      = +v; _scheduleMeshRegen(layer.id); });
+      // v290: fractal style dropdown — regen immediately (no debounce needed; discrete change)
+      on('pmeshFractalStyle', 'change', function(e){ layer._meshEffects.fractalStyle = e.target.value; regenerateMeshLayer(layer.id); });
       on('pmeshPreset', 'change', function(ev){ changeMeshLayerPreset(layer.id, ev.target.value); });
     }
   } else if(layer.type==='sticker'){
@@ -17279,11 +17290,11 @@ function generateMeshGradient(w, h, palette, seed, effects){
   if(effects.chromatic && effects.chromatic > 0){
     _applyChromaticAberration(canvas, effects.chromatic);
   }
-  // v288/v289: Fractal picks one of four recursion styles based on the seed and folds the
-  // composition back into itself. Passing the seed here is what makes reroll give a NEW fractal
-  // style (Droste / kaleidoscopic / corner-nest / spiral) instead of the same one every time.
+  // v288/v289/v290: Fractal takes an explicit style name (droste / kaleido / cornerNest / spiral)
+  // from the user's dropdown pick rather than seed-derived selection. The four styles fold the
+  // composition back into itself in visibly different ways.
   if(effects.fractal && effects.fractal > 0){
-    _applyFractal(canvas, effects.fractal, s);
+    _applyFractal(canvas, effects.fractal, effects.fractalStyle || 'droste');
   }
   // v288: Starry runs LAST so specks stay crisp (no wave/swirl/zoomBlur smearing them). Seeded
   // from meshSeed so slider changes only add/remove points; layout is stable across regens.
@@ -17603,43 +17614,85 @@ function _applyZoomBlur(canvas, amount){
   ctx.globalAlpha = 1;
 }
 
-// v288/v289: Cosmic — nebula-style bloom on the existing brightness. v288 painted discrete
-// point-stars which read wrong ("dots on top of the mesh") — v289 rewrites it as a two-pass
-// bloom: extract the bright areas of the mesh, blur them heavily, screen-composite back on.
-// The result is that lighter hues in the palette bloom out into diffuse cosmic haze without
-// any hard specks. Amount controls both the extract threshold and how intense the bloom is.
+// v288/v289/v290: Cosmic. Combines a nebula bloom pass with scattered stars on top so the
+// mesh's lighter hues bloom into gaseous halos AND actual bright specks read as stars in the
+// composition. v288 was stars-only (read like plain dots). v289 was bloom-only (didn't feel
+// starry enough). v290 combines both — bloom first so the halation ramps continuously with the
+// slider, then stars painted at the end so they punch through the bloom crisply.
 function _applyStarry(canvas, amount, seed){
   if(!amount || amount <= 0) return;
   var w = canvas.width, h = canvas.height;
   var ctx = canvas.getContext('2d');
   var t = amount / 100;
-  // Bloom buffer starts as a copy of the mesh, then gets a heavy brightness+contrast pass to
-  // isolate the bright regions, then blurred so the halo reads as gaseous rather than sharp.
+
+  // ── PASS 1: bloom on the mesh's own bright regions ──
   var bloom = document.createElement('canvas');
   bloom.width = w; bloom.height = h;
   var bctx = bloom.getContext('2d');
   if('filter' in bctx){
-    // Contrast crush pushes anything below mid-brightness toward black, so only the palette's
-    // lighter stops survive; the following blur turns those survivors into gas clouds.
-    var contrastAmt = 1.4 + t * 0.9;             // 1.4 → 2.3
-    var brightAmt   = 1.1 + t * 0.5;             // 1.1 → 1.6
-    var saturateAmt = 1.3 + t * 0.7;             // 1.3 → 2.0 — deeper nebula hues
-    var blurPx      = Math.round(Math.min(w, h) * (0.02 + t * 0.06));   // 2%–8% of min side
+    var contrastAmt = 1.4 + t * 0.9;
+    var brightAmt   = 1.1 + t * 0.5;
+    var saturateAmt = 1.3 + t * 0.7;
+    var blurPx      = Math.round(Math.min(w, h) * (0.02 + t * 0.06));
     bctx.filter = 'contrast(' + contrastAmt + ') brightness(' + brightAmt + ') saturate(' + saturateAmt + ')';
     bctx.drawImage(canvas, 0, 0);
     bctx.filter = 'blur(' + blurPx + 'px)';
     bctx.drawImage(bloom, 0, 0);
     bctx.filter = 'none';
   } else {
-    // Fallback: no filter API. Just copy for a very subtle screen-composite pass below.
     bctx.drawImage(canvas, 0, 0);
   }
-  // Composite the bloom back with 'lighter' — pure additive blending, so only brightens the
-  // existing image; dark regions stay dark. Alpha ramps with amount.
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.35 + t * 0.55;   // 0.35 → 0.9
+  ctx.globalAlpha = 0.35 + t * 0.55;
   ctx.drawImage(bloom, 0, 0);
+  ctx.restore();
+
+  // ── PASS 2: crisp seeded stars over the bloomed mesh ──
+  // Local LCG so positions are deterministic per meshSeed; slider changes only add/remove
+  // stars from the sequence rather than reshuffling everyone.
+  var s = (seed != null ? seed : 12345) ^ 0xC05910; if(s < 0) s = -s;
+  function rnd(){ s = (s * 9301 + 49297) % 233280; return s / 233280; }
+  var minSide = Math.min(w, h);
+  // ~350 stars max at amount=100 on 1080² (v288 was ~500; scaled back so bloom reads more).
+  var count = Math.round(t * (minSide * 0.32));
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for(var i = 0; i < count; i++){
+    var cx = rnd() * w;
+    var cy = rnd() * h;
+    // Mostly small pinpoints, with occasional focal stars that also draw diffraction cross rays
+    var isFocal = rnd() < 0.08;
+    var baseR = isFocal ? (2 + rnd() * 3.5) : (0.3 + rnd() * 1.3);
+    baseR *= (0.6 + minSide / 1080 * 0.4);
+    var haloR = baseR * (isFocal ? 6 : 3);
+    // Tint jitter for that "different-age-of-star" cosmic feel
+    var tint = rnd();
+    var alpha = 0.65 + rnd() * 0.35;
+    var rC = 235 + Math.floor(rnd() * 20);
+    var gC = 235 + Math.floor(rnd() * 20);
+    var bC = 235 + Math.floor(rnd() * 20);
+    if(tint < 0.3){ rC = 200; bC = 255; }
+    else if(tint > 0.75){ rC = 255; bC = 220; }
+    var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
+    grad.addColorStop(0,   'rgba(' + rC + ',' + gC + ',' + bC + ',' + alpha + ')');
+    grad.addColorStop(0.4, 'rgba(' + rC + ',' + gC + ',' + bC + ',' + (alpha * 0.4) + ')');
+    grad.addColorStop(1,   'rgba(' + rC + ',' + gC + ',' + bC + ',0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+    ctx.fill();
+    // Diffraction rays on focal stars — thin cross of horizontal + vertical highlights
+    if(isFocal){
+      var rayLen = haloR * 2.2;
+      ctx.strokeStyle = 'rgba(' + rC + ',' + gC + ',' + bC + ',' + (alpha * 0.6) + ')';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx - rayLen, cy); ctx.lineTo(cx + rayLen, cy);
+      ctx.moveTo(cx, cy - rayLen); ctx.lineTo(cx, cy + rayLen);
+      ctx.stroke();
+    }
+  }
   ctx.restore();
 }
 
@@ -17675,20 +17728,20 @@ function _applyTile(canvas, amount){
   }
 }
 
-// v288/v289: Fractal — picks one of four recursion styles based on the mesh seed so rerolls give
-// visibly different fractal patterns. amount controls iteration count / intensity within the
-// chosen style. All four styles use drawImage compositing (no per-pixel loops) so perf stays
-// under ~30ms per regen at 1080².
-function _applyFractal(canvas, amount, seed){
+// v288/v289/v290: Fractal — user picks the style explicitly via the "Fractal Style" dropdown in
+// the mesh effects panel. v289 tried seed-based auto-selection but the s value at the fractal
+// step happened to land in the same residue class for many common seeds, so rerolls felt like
+// they never changed the style. Explicit selection gives Jason predictable variety on demand.
+// amount controls iteration count / intensity within the chosen style. All four styles use
+// drawImage compositing (no per-pixel loops) so perf stays under ~30ms per regen at 1080².
+function _applyFractal(canvas, amount, styleName){
   if(!amount || amount <= 0) return;
   var iterations = Math.round((amount / 100) * 6);
   if(iterations <= 0) return;
-  // Seed picks a style. Undefined seed → default to Droste for stability.
-  var style = seed != null ? Math.abs(seed | 0) % 4 : 0;
-  if(style === 0) return _fractalDroste(canvas, iterations);
-  if(style === 1) return _fractalKaleidoRecurse(canvas, iterations);
-  if(style === 2) return _fractalCornerNest(canvas, iterations);
-  return _fractalSpiral(canvas, iterations);
+  if(styleName === 'kaleido')     return _fractalKaleidoRecurse(canvas, iterations);
+  if(styleName === 'cornerNest')  return _fractalCornerNest(canvas, iterations);
+  if(styleName === 'spiral')      return _fractalSpiral(canvas, iterations);
+  return _fractalDroste(canvas, iterations);   // default
 }
 
 // Style 0: classic Droste — center recursion with scale + rotation. Feels like an infinity mirror.
@@ -17806,7 +17859,9 @@ function _readMeshEffects(){
     // v288: starry / tile / fractal
     starry:       +(document.getElementById('meshStarry')       || {value:0}).value,
     tile:         +(document.getElementById('meshTile')         || {value:0}).value,
-    fractal:      +(document.getElementById('meshFractal')      || {value:0}).value
+    fractal:      +(document.getElementById('meshFractal')      || {value:0}).value,
+    // v290: user-picked fractal style
+    fractalStyle: (document.getElementById('meshFractalStyle')  || {value:'droste'}).value
   };
 }
 
@@ -17983,7 +18038,7 @@ function resetMeshLayerEffects(layerId){
   var layer = layers.find(function(l){ return l.id === layerId; });
   if(!layer || !layer._meshEffects) return;
   snapshotState();
-  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0, liquify: 0, zoomBlur: 0, starry: 0, tile: 0, fractal: 0};
+  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0, liquify: 0, zoomBlur: 0, starry: 0, tile: 0, fractal: 0, fractalStyle: 'droste'};
   regenerateMeshLayer(layerId);
   renderProps();
   showToast('↺ Mesh effects reset');
@@ -18032,7 +18087,9 @@ function randomizeMeshLayer(layerId){
     // don't dominate every random mix. Starry rolls the full 0–100 since it's an additive overlay.
     starry:       r100(),
     tile:         Math.floor(Math.random() * 61),
-    fractal:      Math.floor(Math.random() * 61)
+    fractal:      Math.floor(Math.random() * 61),
+    // v290: also roll the fractal style so a random mix picks a new pattern, not just intensity.
+    fractalStyle: ['droste','kaleido','cornerNest','spiral'][Math.floor(Math.random() * 4)]
   };
   regenerateMeshLayer(layerId);
   renderProps();
