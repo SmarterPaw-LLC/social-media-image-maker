@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v287</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v288</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9030,6 +9030,10 @@ function buildImageProps(l){
       + R('Chromatic',    'pmeshChromatic',    e.chromatic    || 0, 0, 100, 1)
       + R('Liquify',      'pmeshLiquify',      e.liquify      || 0, 0, 100, 1)
       + R('Zoom Blur',    'pmeshZoomBlur',     e.zoomBlur     || 0, 0, 100, 1)
+      // v288: cosmic sparkle, tiled pattern, and Droste-style fractal recursion
+      + R('Starry',       'pmeshStarry',       e.starry       || 0, 0, 100, 1)
+      + R('Tile',         'pmeshTile',         e.tile         || 0, 0, 100, 1)
+      + R('Fractal',      'pmeshFractal',      e.fractal      || 0, 0, 100, 1)
       + '<div style="display:flex;gap:6px;margin-top:5px;">'
         + '<button class="btn-sm" style="flex:1;" onclick="randomizeMeshLayer('+l.id+')" title="Roll all ten effect sliders to random values for a surprise mix">🎲 Randomize</button>'
         + '<button class="btn-sm" style="flex:1;" onclick="rerollMeshLayer('+l.id+')" title="Generate a new random blob layout from the same palette, keeping your current effect settings">🔀 Reroll Layout</button>'
@@ -9806,6 +9810,10 @@ function bindPropEvents(layer){
       rng('pmeshChromatic',    function(v){ layer._meshEffects.chromatic    = +v; _scheduleMeshRegen(layer.id); });
       rng('pmeshLiquify',      function(v){ layer._meshEffects.liquify      = +v; _scheduleMeshRegen(layer.id); });
       rng('pmeshZoomBlur',     function(v){ layer._meshEffects.zoomBlur     = +v; _scheduleMeshRegen(layer.id); });
+      // v288: starry / tile / fractal
+      rng('pmeshStarry',       function(v){ layer._meshEffects.starry       = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshTile',         function(v){ layer._meshEffects.tile         = +v; _scheduleMeshRegen(layer.id); });
+      rng('pmeshFractal',      function(v){ layer._meshEffects.fractal      = +v; _scheduleMeshRegen(layer.id); });
       on('pmeshPreset', 'change', function(ev){ changeMeshLayerPreset(layer.id, ev.target.value); });
     }
   } else if(layer.type==='sticker'){
@@ -17227,6 +17235,11 @@ function generateMeshGradient(w, h, palette, seed, effects){
     ctx.putImageData(imageData, 0, 0);
   }
 
+  // v288: Tile — apply BEFORE the warp effects so wave/swirl/liquify smear across the tile
+  // seams and give the pattern an organic melt rather than hard grid edges.
+  if(effects.tile && effects.tile > 0){
+    _applyTile(canvas, effects.tile);
+  }
   // v214: wave + swirl distortions — applied LAST so they warp the complete composition.
   // v216: Ripple inserted between Wave and Swirl — radial sine displacement with much higher
   // amplitude than Wave (15% of minSide vs 7%), so it produces the visibly-pronounced look
@@ -17263,6 +17276,17 @@ function generateMeshGradient(w, h, palette, seed, effects){
   }
   if(effects.chromatic && effects.chromatic > 0){
     _applyChromaticAberration(canvas, effects.chromatic);
+  }
+  // v288: Fractal folds the composition back into itself with rotation + scale-down. Placed
+  // near the end so it recurses over the already-processed image and the nested copies inherit
+  // all the color/warp treatments.
+  if(effects.fractal && effects.fractal > 0){
+    _applyFractal(canvas, effects.fractal);
+  }
+  // v288: Starry runs LAST so specks stay crisp (no wave/swirl/zoomBlur smearing them). Seeded
+  // from meshSeed so slider changes only add/remove points; layout is stable across regens.
+  if(effects.starry && effects.starry > 0){
+    _applyStarry(canvas, effects.starry, s);
   }
 
   return canvas;
@@ -17577,6 +17601,114 @@ function _applyZoomBlur(canvas, amount){
   ctx.globalAlpha = 1;
 }
 
+// v288: Starry / cosmic overlay. Scatters small bright specks over the mesh — 90% tiny points
+// with occasional larger "focal" stars. Seeded so slider changes don't reshuffle positions
+// (star LAYOUT is stable per meshSeed; only the DENSITY changes with the amount).
+function _applyStarry(canvas, amount, seed){
+  if(!amount || amount <= 0) return;
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  // Local LCG seeded from the passed seed so star positions are deterministic per (seed, canvas).
+  var s = (seed != null ? seed : 12345) ^ 0xC05910; if(s < 0) s = -s;
+  function rnd(){ s = (s * 9301 + 49297) % 233280; return s / 233280; }
+  var minSide = Math.min(w, h);
+  // Count scales with amount and canvas area — a 1080² canvas at amount=100 gets ~500 stars.
+  var count = Math.round((amount / 100) * (minSide * 0.45));
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';   // stars add brightness rather than replacing pixels
+  for(var i = 0; i < count; i++){
+    var cx = rnd() * w;
+    var cy = rnd() * h;
+    // 90% tiny stars, 10% larger "focal" stars with a soft halo
+    var isFocal = rnd() < 0.10;
+    var r = isFocal ? (1 + rnd() * 3.5) : (0.4 + rnd() * 1.4);
+    r *= (0.6 + minSide / 1080 * 0.4);   // slight upscale on large canvases
+    // Slight bluish/purple tint per star for a "cosmos" feel, alpha jitters for depth
+    var tint = rnd();
+    var brightness = 200 + Math.floor(rnd() * 55);
+    var alpha = 0.6 + rnd() * 0.4;
+    var rC = brightness;
+    var gC = brightness;
+    var bC = brightness;
+    if(tint < 0.3){ bC = 255; rC = 200; }              // blue-ish
+    else if(tint > 0.75){ rC = 245; bC = 235; }        // warm white
+    // A soft radial gradient reads as glowy rather than a hard pixel
+    var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * (isFocal ? 5 : 2.5));
+    grad.addColorStop(0,   'rgba(' + rC + ',' + gC + ',' + bC + ',' + alpha + ')');
+    grad.addColorStop(0.4, 'rgba(' + rC + ',' + gC + ',' + bC + ',' + (alpha * 0.4) + ')');
+    grad.addColorStop(1,   'rgba(' + rC + ',' + gC + ',' + bC + ',0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * (isFocal ? 5 : 2.5), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// v288: Tiled / repeated pattern. Downscales the current canvas and re-lays it in an NxN grid.
+// N ramps from 2 to 8 with amount. Fast (uses drawImage — GPU-accelerated in modern browsers).
+function _applyTile(canvas, amount){
+  if(!amount || amount <= 0) return;
+  var w = canvas.width, h = canvas.height;
+  var N = 2 + Math.round((amount / 100) * 6);   // 2 → 8
+  var ctx = canvas.getContext('2d');
+  var src = document.createElement('canvas');
+  src.width = w; src.height = h;
+  src.getContext('2d').drawImage(canvas, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  var tileW = w / N;
+  var tileH = h / N;
+  for(var ty = 0; ty < N; ty++){
+    for(var tx = 0; tx < N; tx++){
+      // Alternate flips checker-style to make edges kiss rather than seam sharply. The
+      // (tx+ty) parity governs whether we flip in this cell.
+      var flipParity = (tx + ty) % 2 === 1;
+      ctx.save();
+      var dx = tx * tileW, dy = ty * tileH;
+      if(flipParity){
+        ctx.translate(dx + tileW, dy);
+        ctx.scale(-1, 1);
+        ctx.drawImage(src, 0, 0, tileW, tileH);
+      } else {
+        ctx.drawImage(src, dx, dy, tileW, tileH);
+      }
+      ctx.restore();
+    }
+  }
+}
+
+// v288: Fractal / recursive Droste-adjacent effect. Repeatedly draws the current canvas back onto
+// itself at decreasing scale + slight rotation, with fading opacity. amount controls iterations
+// (0 → none, 100 → 6 recursions). Each pass compounds so at high amounts the center of the image
+// becomes a hypnotic infinity-well.
+function _applyFractal(canvas, amount){
+  if(!amount || amount <= 0) return;
+  var w = canvas.width, h = canvas.height;
+  var ctx = canvas.getContext('2d');
+  var iterations = Math.round((amount / 100) * 6);
+  if(iterations <= 0) return;
+  var snapshot = document.createElement('canvas');
+  snapshot.width = w; snapshot.height = h;
+  snapshot.getContext('2d').drawImage(canvas, 0, 0);
+  var cx = w / 2, cy = h / 2;
+  var scale = 0.62;                // each iteration shrinks to 62%
+  var rotStep = 12 * Math.PI / 180;   // 12° rotation per pass — enough to see twist, not chaos
+  var s = 1.0;
+  var r = 0;
+  for(var i = 0; i < iterations; i++){
+    s *= scale;
+    r += rotStep;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.15, 1 - i * 0.15);
+    ctx.translate(cx, cy);
+    ctx.rotate(r);
+    ctx.scale(s, s);
+    ctx.drawImage(snapshot, -w / 2, -h / 2);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
 // Read current slider state into the effects object every mesh function expects
 function _readMeshEffects(){
   return {
@@ -17591,7 +17723,11 @@ function _readMeshEffects(){
     pinchBulge:   +(document.getElementById('meshPinchBulge')   || {value:0}).value,
     chromatic:    +(document.getElementById('meshChromatic')    || {value:0}).value,
     liquify:      +(document.getElementById('meshLiquify')      || {value:0}).value,
-    zoomBlur:     +(document.getElementById('meshZoomBlur')     || {value:0}).value
+    zoomBlur:     +(document.getElementById('meshZoomBlur')     || {value:0}).value,
+    // v288: starry / tile / fractal
+    starry:       +(document.getElementById('meshStarry')       || {value:0}).value,
+    tile:         +(document.getElementById('meshTile')         || {value:0}).value,
+    fractal:      +(document.getElementById('meshFractal')      || {value:0}).value
   };
 }
 
@@ -17768,7 +17904,7 @@ function resetMeshLayerEffects(layerId){
   var layer = layers.find(function(l){ return l.id === layerId; });
   if(!layer || !layer._meshEffects) return;
   snapshotState();
-  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0, liquify: 0, zoomBlur: 0};
+  layer._meshEffects = {intensity: 30, hueShift: 0, glow: 0, posterize: 0, wave: 0, ripple: 0, swirl: 0, kaleidoscope: 0, pinchBulge: 0, chromatic: 0, liquify: 0, zoomBlur: 0, starry: 0, tile: 0, fractal: 0};
   regenerateMeshLayer(layerId);
   renderProps();
   showToast('↺ Mesh effects reset');
@@ -17812,7 +17948,12 @@ function randomizeMeshLayer(layerId){
     pinchBulge:   rSigned(),
     chromatic:    r100(),
     liquify:      r100(),
-    zoomBlur:     r100()
+    zoomBlur:     r100(),
+    // v288: rare-ish tile and fractal (they radically restructure the image) — cap at 60 so they
+    // don't dominate every random mix. Starry rolls the full 0–100 since it's an additive overlay.
+    starry:       r100(),
+    tile:         Math.floor(Math.random() * 61),
+    fractal:      Math.floor(Math.random() * 61)
   };
   regenerateMeshLayer(layerId);
   renderProps();
