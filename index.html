@@ -280,7 +280,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v299</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v300</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1016,6 +1016,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         Designs are synced to your account. To reset a password or invite users, use the Supabase dashboard.
       </div>
       <div class="modal-btns">
+        <!-- v300: escape hatch. Cloud is optional — the editor, Save to Computer, IDB My Designs,
+             and autosave all work without signing in. This button lets a network hiccup or a
+             Supabase outage never lock the user out. -->
+        <button type="button" class="btn-cancel" onclick="continueOffline()" title="Skip sign-in and use the editor offline. Save to Computer and local My Designs still work. Cloud sync unavailable until sign-in.">Continue offline</button>
         <button type="submit" class="btn-primary">Sign In</button>
       </div>
     </form>
@@ -20264,30 +20268,101 @@ var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 var sb = null;
 var currentUser = null;
 
-(function initSupabase(){
-  if(typeof supabase === 'undefined' || !supabase.createClient){
-    // Library failed to load (e.g. blocked CDN, offline). Surface to the user
-    // rather than silently breaking sign-in.
-    console.error('[auth] supabase-js failed to load. Sign-in unavailable.');
-    showSignInError('Supabase library failed to load. Refresh the page or check your network.');
-    return;
-  }
+// v300: robust Supabase init with CDN fallback + retry. Previously a single script tag in <head>
+// was the only load path — if it failed (network hiccup, CDN blocked, ad-blocker), `sb` stayed
+// null forever and the sign-in modal was a permanent lockout with only "Refresh the page" advice.
+// Now the init tries the primary CDN, then a fallback, and any further sign-in click auto-retries.
+// The "Continue offline" button in the modal is the ultimate escape hatch and always works.
+var _supabaseCdnFallbacks = [
+  'https://unpkg.com/@supabase/supabase-js@2',
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js'
+];
+var _supabaseCdnAttempts = 0;
+var _supabaseInitInFlight = false;
+
+function _finalizeSupabase(){
+  if(sb) return;
+  if(typeof supabase === 'undefined' || !supabase.createClient) return;
   sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  // Returning visit: pick up the existing session from localStorage (default
-  // storage for supabase-js). If none, the sign-in modal stays as-is (visible).
+  // Session pickup (localStorage-backed by default)
   sb.auth.getSession().then(function(res){
     var session = res && res.data && res.data.session;
     if(session && session.user){ onSignedIn(session.user); }
   }).catch(function(e){
     console.error('[auth] getSession failed:', e);
   });
-  // React to auth events so we don't have to thread state-update calls through
-  // sign-in / sign-out paths individually.
   sb.auth.onAuthStateChange(function(event, session){
     if(event === 'SIGNED_IN' && session && session.user){ onSignedIn(session.user); }
     else if(event === 'SIGNED_OUT'){ onSignedOut(); }
   });
+  hideSignInError();
+  console.log('[auth] supabase-js ready');
+}
+
+function tryLoadSupabaseCdn(){
+  return new Promise(function(resolve, reject){
+    if(typeof supabase !== 'undefined' && supabase.createClient){ resolve(); return; }
+    if(_supabaseCdnAttempts >= _supabaseCdnFallbacks.length){
+      reject(new Error('all fallback CDNs exhausted'));
+      return;
+    }
+    var url = _supabaseCdnFallbacks[_supabaseCdnAttempts++];
+    console.warn('[auth] retrying supabase-js from fallback CDN:', url);
+    var s = document.createElement('script');
+    s.src = url;
+    s.async = false;
+    s.onload = function(){
+      if(typeof supabase !== 'undefined' && supabase.createClient) resolve();
+      else tryLoadSupabaseCdn().then(resolve, reject);
+    };
+    s.onerror = function(){
+      tryLoadSupabaseCdn().then(resolve, reject);
+    };
+    document.head.appendChild(s);
+  });
+}
+
+// Kick off retry chain if the head-tag load failed. Called at init time AND from doSignIn as a
+// best-effort recovery when the user clicks Sign In on a stuck modal.
+function retrySupabaseInit(){
+  if(sb) return Promise.resolve();
+  if(_supabaseInitInFlight) return _supabaseInitInFlight;
+  _supabaseInitInFlight = tryLoadSupabaseCdn().then(function(){
+    _finalizeSupabase();
+    _supabaseInitInFlight = false;
+  }).catch(function(e){
+    console.error('[auth] all CDN attempts failed:', e);
+    _supabaseInitInFlight = false;
+    throw e;
+  });
+  return _supabaseInitInFlight;
+}
+
+(function initSupabase(){
+  if(typeof supabase !== 'undefined' && supabase.createClient){
+    _finalizeSupabase();
+    return;
+  }
+  // Primary CDN didn't load — surface a helpful, non-blocking message pointing to the offline
+  // escape hatch, then kick off the background retry.
+  console.error('[auth] supabase-js primary load failed. Retrying from fallback CDN…');
+  showSignInError('Cloud sign-in is loading… If it doesn\'t finish, click "Continue offline" — Save to Computer and local My Designs still work.');
+  retrySupabaseInit().catch(function(){
+    showSignInError('Cloud sign-in unavailable (CDN blocked or network offline). Click "Continue offline" to keep working — everything except cloud sync still works.');
+  });
 })();
+
+// v300: escape hatch. Hide the sign-in modal and let the user work locally. Cloud-gated features
+// (My Designs cloud tab, Save to Cloud, Share) already check `currentUser` — they'll show the
+// modal again if the user chooses to sign in later via the Account menu.
+function continueOffline(){
+  document.getElementById('signInModal').classList.add('hidden');
+  // Show a small toast so the user knows what state they're in
+  if(typeof showToast === 'function'){
+    showToast('Working offline — Save to Computer and local My Designs still work. Cloud sync disabled.', 4500);
+  }
+  console.log('[auth] user chose to continue offline');
+}
 
 function onSignedIn(user){
   currentUser = user;
@@ -20371,7 +20446,18 @@ function hideSignInError(){
 }
 
 function doSignIn(){
-  if(!sb){ showSignInError('Auth not initialized. Refresh the page.'); return; }
+  // v300: if sb isn't ready yet, don't dead-end — try to load it now, then retry the sign-in.
+  // Keeps a slow CDN load from becoming a "Refresh the page" wall.
+  if(!sb){
+    showSignInError('Cloud sign-in loading… retrying now.');
+    retrySupabaseInit().then(function(){
+      hideSignInError();
+      doSignIn();   // re-enter now that sb is ready
+    }).catch(function(){
+      showSignInError('Still can\'t reach cloud sign-in. Click "Continue offline" to keep working — Save to Computer and local My Designs still work.');
+    });
+    return;
+  }
   var email = (document.getElementById('signInEmail').value || '').trim();
   var password = document.getElementById('signInPassword').value || '';
   if(!email || !password){ showSignInError('Email and password are both required.'); return; }
@@ -20402,7 +20488,17 @@ function doSignOut(){
 // Requires Google OAuth to be enabled in Supabase → Authentication → Providers → Google with a
 // configured Google Cloud Console OAuth 2.0 Client ID + Secret (see README / setup notes).
 function doGoogleSignIn(){
-  if(!sb){ showSignInError('Auth not initialized. Refresh the page.'); return; }
+  // v300: same retry pattern as doSignIn — don't dead-end if sb is null; try to load it now.
+  if(!sb){
+    showSignInError('Cloud sign-in loading… retrying now.');
+    retrySupabaseInit().then(function(){
+      hideSignInError();
+      doGoogleSignIn();
+    }).catch(function(){
+      showSignInError('Still can\'t reach cloud sign-in. Click "Continue offline" to keep working — Save to Computer and local My Designs still work.');
+    });
+    return;
+  }
   hideSignInError();
   // redirectTo pins the return URL to this Pages path; without it the browser ends up at the
   // domain root which serves a 404 on github.io project-pages sites.
