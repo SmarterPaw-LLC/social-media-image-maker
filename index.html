@@ -107,6 +107,22 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .carousel-slide canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);border-radius:4px;border:1px solid rgba(0,0,0,0.06);display:block;}
 .carousel-slide .label{font-size:12px;font-weight:600;color:#333;max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
 .carousel-slide .sublabel{font-size:10px;color:var(--muted);}
+/* v298: align mode — collapses the gap and hides the per-slide chrome so slides sit edge-to-edge
+   like a real Instagram carousel scroll. Makes it obvious whether treats/logos/anchors line up
+   across adjacent slides. A hairline between slides keeps the boundary visible without any
+   whitespace to throw off the eye. */
+.carousel-track.align-mode{gap:0;padding-top:8px;padding-bottom:8px;}
+.carousel-track.align-mode .carousel-slide{padding:0;gap:0;transition:none;}
+.carousel-track.align-mode .carousel-slide:hover{transform:none;}
+.carousel-track.align-mode .carousel-slide canvas{border-radius:0;box-shadow:none;border:none;border-left:1px solid rgba(0,0,0,0.25);}
+.carousel-track.align-mode .carousel-slide:first-child canvas{border-left:none;box-shadow:-4px 0 16px rgba(0,0,0,0.12);}
+.carousel-track.align-mode .carousel-slide:last-child canvas{box-shadow:4px 0 16px rgba(0,0,0,0.12);}
+.carousel-track.align-mode .carousel-slide .idx,
+.carousel-track.align-mode .carousel-slide .label,
+.carousel-track.align-mode .carousel-slide .sublabel{display:none;}
+.carousel-header .align-toggle{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;user-select:none;padding:4px 8px;border-radius:5px;border:1px solid var(--border);background:var(--panel);}
+.carousel-header .align-toggle:hover{border-color:var(--green);}
+.carousel-header .align-toggle input{margin:0;cursor:pointer;}
 .zoom-label{background:var(--panel);border:1.5px solid var(--border);border-radius:7px;padding:0 9px;font-size:11px;font-weight:700;color:var(--muted);display:flex;align-items:center;box-shadow:var(--shadow);}
 .hidden{display:none!important;}
 .divider{height:1px;background:var(--border);margin:1px 0;}
@@ -264,7 +280,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v297</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v298</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -427,6 +443,10 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     <div class="carousel-header">
       <div class="carousel-title">👁 All boards <span class="count-pill" id="carouselCountPill">0</span></div>
       <div class="carousel-hint">Click a slide to jump to that board · Export all boards from the ⬇ menu (Export all boards checkbox)</div>
+      <label class="align-toggle" title="Snap slides edge-to-edge like a real Instagram carousel — makes cross-slide alignment obvious">
+        <input type="checkbox" id="carouselAlignChk" onchange="toggleCarouselAlignMode(this.checked)">
+        Align mode
+      </label>
       <button class="btn-cancel" onclick="toggleCarouselView()" style="padding:6px 14px;font-size:12px;">✕ Close</button>
     </div>
     <div class="carousel-track" id="carouselTrack"></div>
@@ -2204,6 +2224,7 @@ function createNewBoard(){
 // draw stack "just works" against whichever board we point at. currentBoardId is restored at the
 // end of the loop — nothing else runs on the main thread during the loop so the swap is invisible.
 var _carouselViewOn = false;
+var _carouselAlignMode = false;
 
 function toggleCarouselView(){
   var overlay = document.getElementById('carouselView');
@@ -2213,6 +2234,9 @@ function toggleCarouselView(){
   if(_carouselViewOn){
     overlay.classList.remove('hidden');
     if(btn) btn.classList.add('active');
+    // Sync the align-mode checkbox to the persisted state so it opens where the user left it
+    var chk = document.getElementById('carouselAlignChk');
+    if(chk) chk.checked = _carouselAlignMode;
     renderCarouselView();
   } else {
     overlay.classList.add('hidden');
@@ -2222,11 +2246,23 @@ function toggleCarouselView(){
   }
 }
 
+// v298: align-mode toggle — snaps slides edge-to-edge and unifies displayed width so cross-slide
+// alignment (are the treats at the same X? is the logo in the same corner?) is obvious. Full
+// re-render because align mode also changes the display-scale math (unified across all slides
+// so a 1080² and a 1080×1350 slide render at the same displayed width).
+function toggleCarouselAlignMode(on){
+  _carouselAlignMode = !!on;
+  if(_carouselViewOn) renderCarouselView();
+}
+
 function renderCarouselView(){
   var track = document.getElementById('carouselTrack');
   var pill  = document.getElementById('carouselCountPill');
   if(!track) return;
   track.innerHTML = '';
+  // v298: reflect align-mode on the track so the CSS overrides (gap:0, hidden chrome, hairline
+  // dividers, no-shadow canvases) all apply as one atomic style flip.
+  track.classList.toggle('align-mode', _carouselAlignMode);
   if(pill) pill.textContent = boards.length + (boards.length === 1 ? ' board' : ' boards');
 
   // Cap each thumbnail at ~65% of the canvas-area's inner height so multiple slides fit vertically
@@ -2235,6 +2271,21 @@ function renderCarouselView(){
   var areaH = area ? area.clientHeight : window.innerHeight;
   var maxSlideH = Math.max(240, areaH - 140);
   var maxSlideW = 900;
+
+  // v298: in align mode, compute ONE display scale that works for every board. This way canvas
+  // pixel (500, 400) in board A and canvas pixel (500, 400) in board B render at the same displayed
+  // (x, y) inside their respective slides — so if the treats are at x=500 in both, they visually
+  // land at the same displayed column. Without this, a 1080² and a 1080×1350 board would compute
+  // different per-board scales and Jason's eye couldn't compare positions across slides.
+  var unifiedScale = null;
+  if(_carouselAlignMode && boards.length){
+    var minScale = 1;
+    boards.forEach(function(b){
+      var s = Math.min(maxSlideH / b.canvasH, maxSlideW / b.canvasW, 1);
+      if(s < minScale) minScale = s;
+    });
+    unifiedScale = minScale;
+  }
 
   var origBoardId = currentBoardId;
   boards.forEach(function(board, i){
@@ -2253,7 +2304,9 @@ function renderCarouselView(){
       canvas = document.createElement('canvas');
       canvas.width = board.canvasW;
       canvas.height = board.canvasH;
-      var displayScale = Math.min(maxSlideH / board.canvasH, maxSlideW / board.canvasW, 1);
+      var displayScale = unifiedScale != null
+        ? unifiedScale
+        : Math.min(maxSlideH / board.canvasH, maxSlideW / board.canvasW, 1);
       canvas.style.width  = Math.round(board.canvasW * displayScale) + 'px';
       canvas.style.height = Math.round(board.canvasH * displayScale) + 'px';
       slide.appendChild(canvas);
