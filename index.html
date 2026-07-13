@@ -264,7 +264,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v296</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v297</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2642,8 +2642,11 @@ function pasteClipboard(){
     var copy = JSON.parse(JSON.stringify(entry));
     copy.id = idMap[entry.id];
     copy.name = (copy.name || 'Layer') + ' copy';
-    if(typeof copy.x === 'number') copy.x += 20;
-    if(typeof copy.y === 'number') copy.y += 20;
+    // v297: paste at the source's exact coordinates — no more +20 offset. Jason relies on
+    // copy/paste to align a layer across boards (same brand element in the same spot on 1080²
+    // and 1080×1350, for example); nudging the paste 20px off broke that. On same-board paste
+    // the copy sits directly on top of the source — visible via selection and in the layer list,
+    // and the copy is auto-selected, so dragging it away from the source is one gesture.
     // v275: rewire group-related id references via idMap.
     if(copy.parentId != null){
       if(idMap[copy.parentId] != null) copy.parentId = idMap[copy.parentId];
