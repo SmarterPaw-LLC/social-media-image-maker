@@ -87,9 +87,26 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 #mainCanvas{display:block;}
 .drop-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;transition:opacity 0.2s;background:rgba(138,184,29,0.08);border:3px dashed var(--green);border-radius:4px;font-size:15px;font-weight:700;color:var(--green);}
 .canvas-wrap.drag-over .drop-hint{opacity:1;}
-.zoom-controls{position:absolute;bottom:14px;right:14px;display:flex;gap:5px;}
+.zoom-controls{position:absolute;bottom:14px;right:14px;display:flex;gap:5px;z-index:90;}
 .zoom-btn{width:30px;height:30px;border-radius:7px;border:1.5px solid var(--border);background:var(--panel);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow);transition:all 0.15s;}
 .zoom-btn:hover{border-color:var(--green);}
+.zoom-btn.active{background:var(--green);color:#fff;border-color:var(--green-dark);}
+/* v294: carousel preview overlay — sits above the canvas area to show every board side-by-side.
+   Layered above the canvas card but below any modal overlays. Its own horizontal scroll never
+   interferes with the outer .canvas-area scroll because the overlay covers it. */
+#carouselView{position:absolute;inset:0;background:#e8e8e0;z-index:80;display:flex;flex-direction:column;padding:14px 20px 20px;}
+#carouselView.hidden{display:none;}
+.carousel-header{display:flex;align-items:center;justify-content:space-between;padding:0 4px 12px;gap:12px;}
+.carousel-title{font-size:14px;font-weight:700;color:#333;display:flex;align-items:center;gap:8px;}
+.carousel-title .count-pill{font-size:11px;font-weight:600;color:var(--muted);background:rgba(0,0,0,0.05);border-radius:10px;padding:2px 8px;}
+.carousel-hint{font-size:11px;color:var(--muted);}
+.carousel-track{flex:1;display:flex;gap:24px;overflow-x:auto;overflow-y:hidden;align-items:center;padding:8px 4px 16px;scroll-snap-type:x proximity;}
+.carousel-slide{flex:none;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;scroll-snap-align:start;transition:transform .12s;padding:4px;border-radius:6px;}
+.carousel-slide:hover{transform:translateY(-2px);}
+.carousel-slide .idx{font-size:10px;font-weight:700;color:var(--muted);background:rgba(0,0,0,0.05);border-radius:10px;padding:2px 8px;letter-spacing:0.03em;}
+.carousel-slide canvas{background:#fff;box-shadow:0 4px 16px rgba(0,0,0,0.15);border-radius:4px;border:1px solid rgba(0,0,0,0.06);display:block;}
+.carousel-slide .label{font-size:12px;font-weight:600;color:#333;max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;}
+.carousel-slide .sublabel{font-size:10px;color:var(--muted);}
 .zoom-label{background:var(--panel);border:1.5px solid var(--border);border-radius:7px;padding:0 9px;font-size:11px;font-weight:700;color:var(--muted);display:flex;align-items:center;box-shadow:var(--shadow);}
 .hidden{display:none!important;}
 .divider{height:1px;background:var(--border);margin:1px 0;}
@@ -247,7 +264,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v293</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v294</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -402,7 +419,20 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <div class="drop-hint">Drop image here</div>
     </div>
   </div>
+  <!-- v294: carousel preview overlay. Hidden by default; toggled by the 👁 button in .zoom-controls.
+       Populated on open by renderCarouselView(), which walks boards[] and renders each board's
+       top-level layers into a private canvas at scaled-down display size. Clicking a slide switches
+       to that board and closes the overlay. -->
+  <div id="carouselView" class="hidden">
+    <div class="carousel-header">
+      <div class="carousel-title">👁 All boards <span class="count-pill" id="carouselCountPill">0</span></div>
+      <div class="carousel-hint">Click a slide to jump to that board · Export all boards from the ⬇ menu (Export all boards checkbox)</div>
+      <button class="btn-cancel" onclick="toggleCarouselView()" style="padding:6px 14px;font-size:12px;">✕ Close</button>
+    </div>
+    <div class="carousel-track" id="carouselTrack"></div>
+  </div>
   <div class="zoom-controls">
+    <button class="zoom-btn" id="carouselBtn" onclick="toggleCarouselView()" title="Preview all boards side by side (carousel view)">👁</button>
     <button class="zoom-btn" id="snapBtn" onclick="toggleSnap()" title="Snap to canvas edges/center — click to toggle. Hold Alt while dragging or resizing to bypass.">🧲</button>
     <button class="zoom-btn" id="overscanBtn" onclick="toggleOverscan()" title="Show off-canvas content (so you can drag stray layers back). Doesn't affect export.">⤢</button>
     <button class="zoom-btn" onclick="zoom(-0.1)">−</button>
@@ -492,6 +522,13 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         <div id="gifClipInfo" style="font-size:11px;color:var(--muted);padding:6px 8px;background:#fafafa;border:1px solid var(--border);border-radius:5px;"></div>
       </div>
       <div id="exportInfo" style="font-size:11px;color:var(--muted);"></div>
+      <!-- v294: multi-board export. Only shown when >1 board exists — openExportModal() toggles visibility.
+           When checked, doStaticExport() iterates every board, applies the same size mode + format +
+           quality settings to each, and downloads them with a -slide-N-<w>x<h>.<ext> suffix. -->
+      <div id="exportAllBoardsWrap" class="hidden" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);padding:6px 8px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;">
+        <input type="checkbox" id="exportAllBoards" style="margin:0;">
+        <label for="exportAllBoards" style="margin:0;font-weight:600;cursor:pointer;">Export all boards as a carousel <span style="font-weight:400;color:var(--muted);">— one file per board, named <code>-slide-1</code>, <code>-slide-2</code>, …</span></label>
+      </div>
     </div>
     <!-- Progress UI (hidden until GIF encode starts) -->
     <div id="gifProgress" class="hidden" style="margin-top:10px;">
@@ -2133,6 +2170,126 @@ function createNewBoard(){
   var b = makeBoard(null, cur.canvasW, cur.canvasH);
   boards.push(b);
   switchBoard(b.id);
+}
+
+// ── CAROUSEL PREVIEW (v294) ──
+// Shows every board side-by-side in a horizontally-scrolling overlay. Click a slide to jump to
+// that board and close the overlay. Read-only preview — edits happen in the single-board editor.
+//
+// Rendering strategy: for each board, temporarily swap currentBoardId, then call the same
+// _topLevelLayers + _drawSingleLayerInto path used by redraw() and export. The window getters
+// (defineBoardAccessors, ~line 1976) route layers/canvasW/etc. off currentBoardId, so the entire
+// draw stack "just works" against whichever board we point at. currentBoardId is restored at the
+// end of the loop — nothing else runs on the main thread during the loop so the swap is invisible.
+var _carouselViewOn = false;
+
+function toggleCarouselView(){
+  var overlay = document.getElementById('carouselView');
+  var btn = document.getElementById('carouselBtn');
+  if(!overlay) return;
+  _carouselViewOn = !_carouselViewOn;
+  if(_carouselViewOn){
+    overlay.classList.remove('hidden');
+    if(btn) btn.classList.add('active');
+    renderCarouselView();
+  } else {
+    overlay.classList.add('hidden');
+    if(btn) btn.classList.remove('active');
+    var track = document.getElementById('carouselTrack');
+    if(track) track.innerHTML = '';   // release the per-slide canvases so their pixel buffers can GC
+  }
+}
+
+function renderCarouselView(){
+  var track = document.getElementById('carouselTrack');
+  var pill  = document.getElementById('carouselCountPill');
+  if(!track) return;
+  track.innerHTML = '';
+  if(pill) pill.textContent = boards.length + (boards.length === 1 ? ' board' : ' boards');
+
+  // Cap each thumbnail at ~65% of the canvas-area's inner height so multiple slides fit vertically
+  // without scrolling, and at 900px wide so ultra-wide banners don't monopolize the row.
+  var area = document.getElementById('canvasArea');
+  var areaH = area ? area.clientHeight : window.innerHeight;
+  var maxSlideH = Math.max(240, areaH - 140);
+  var maxSlideW = 900;
+
+  var origBoardId = currentBoardId;
+  boards.forEach(function(board, i){
+    var slide, canvas;
+    try {
+      currentBoardId = board.id;   // routes layers/canvasW/etc. accessors to this board
+
+      slide = document.createElement('div');
+      slide.className = 'carousel-slide';
+
+      var idx = document.createElement('div');
+      idx.className = 'idx';
+      idx.textContent = 'SLIDE ' + (i + 1);
+      slide.appendChild(idx);
+
+      canvas = document.createElement('canvas');
+      canvas.width = board.canvasW;
+      canvas.height = board.canvasH;
+      var displayScale = Math.min(maxSlideH / board.canvasH, maxSlideW / board.canvasW, 1);
+      canvas.style.width  = Math.round(board.canvasW * displayScale) + 'px';
+      canvas.style.height = Math.round(board.canvasH * displayScale) + 'px';
+      slide.appendChild(canvas);
+
+      var label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = board.name || ('Board ' + board.id);
+      slide.appendChild(label);
+
+      var sub = document.createElement('div');
+      sub.className = 'sublabel';
+      sub.textContent = board.canvasW + ' × ' + board.canvasH + '  ·  ' + board.layers.length + ' layers';
+      slide.appendChild(sub);
+
+      var ctx = canvas.getContext('2d');
+      _renderCurrentBoardInto(ctx);
+
+      // Highlight the currently active board so it's easy to find in a long carousel
+      if(board.id === origBoardId){
+        slide.style.outline = '2px solid var(--green)';
+        slide.style.outlineOffset = '2px';
+      }
+
+      var targetId = board.id;   // captured for click handler
+      slide.onclick = function(){
+        // Close carousel first, then switch — switchBoard triggers a redraw of the single-board view
+        toggleCarouselView();
+        if(targetId !== origBoardId) switchBoard(targetId);
+      };
+
+      track.appendChild(slide);
+    } catch(e){
+      console.error('[carousel] render board', board.id, 'failed:', e);
+    }
+  });
+  currentBoardId = origBoardId;
+}
+
+// Draw the CURRENTLY-selected board's top-level layers into `ctx`. Mirrors the redraw() and
+// export path exactly (group-aware, legacy mask-pair-aware, blend-mode-aware via
+// _drawSingleLayerInto). Used by both the carousel thumbnails and the per-board export loop.
+function _renderCurrentBoardInto(ctx){
+  var top = _topLevelLayers();
+  for(var i = 0; i < top.length; i++){
+    var l = top[i];
+    if(l.hidden) continue;
+    if(l.isMask && i + 1 < top.length){
+      var above = top[i + 1];
+      if(above && !above.hidden){
+        try { _drawMaskedPair(ctx, l, above); }
+        catch(e){ console.error('[render-board] mask pair error:', e); }
+        i++;
+        continue;
+      }
+    }
+    try { _drawSingleLayerInto(ctx, l); }
+    catch(e){ console.error('[render-board] layer', i, 'type', l.type, 'error:', e); }
+  }
 }
 
 // Duplicate the given board: clone all layers (with fresh ids and properly rehydrated image/video
@@ -7139,24 +7296,29 @@ function _drawRatingIcon(ctx, iconType, x, y, size, color){
   ctx.restore();
 }
 
-// Emoji renderer: fillText at iconSize, with unfilled = 30% opacity (natural "greyed" look) and
-// partial = interpolated alpha so a 0.5 rating renders as half-strength emoji rather than a
-// clip trick (emojis don't respond to fillStyle so the clip approach would look weird).
+// v293/v294: emoji renderer. Draws centered inside each iconSize×iconSize slot with the font
+// shrunk to 0.85× so the glyph stays inside the slot bounds (many emoji glyphs extend beyond the
+// em box, and textBaseline:top used to let them poke above the layer's visual rect and get
+// clipped by the selection chrome). textBaseline:middle + textAlign:center + centered pen position
+// puts the glyph in the slot regardless of the specific emoji's metrics.
 function _drawRatingEmoji(ctx, emoji, x, y, size, fillFrac){
   ctx.save();
+  var fontSize = size * 0.85;
+  ctx.font = fontSize + 'px sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  var cx = x + size / 2;
+  var cy = y + size / 2;
   // Layer 1: greyed-out (unfilled) base
   ctx.globalAlpha = 0.3;
-  ctx.font = size + 'px sans-serif';
-  ctx.textBaseline = 'top';
-  ctx.textAlign = 'left';
-  ctx.fillText(emoji, x, y);
+  ctx.fillText(emoji, cx, cy);
   // Layer 2: fully-opaque overlay clipped to the filled portion
   if(fillFrac > 0){
     ctx.globalAlpha = 1;
     ctx.beginPath();
-    ctx.rect(x, y, size * fillFrac, size * 1.1);   // 1.1 for baseline slack
+    ctx.rect(x, y, size * fillFrac, size);
     ctx.clip();
-    ctx.fillText(emoji, x, y);
+    ctx.fillText(emoji, cx, cy);
   }
   ctx.restore();
 }
@@ -13946,6 +14108,13 @@ function openExportModal(){
   toggleExportSize();
   toggleExportFormat();   // sets initial visibility based on selected format
   updateExportInfo();
+  // v294: reveal the "Export all boards" checkbox only when there's more than one board.
+  // Always start unchecked so a single-board export doesn't silently keep the toggle from
+  // a prior multi-board session.
+  var allWrap = document.getElementById('exportAllBoardsWrap');
+  var allChk  = document.getElementById('exportAllBoards');
+  if(allWrap) allWrap.classList.toggle('hidden', boards.length < 2);
+  if(allChk)  allChk.checked = false;
   document.getElementById('exportModal').classList.remove('hidden');
 }
 function closeExportModal(){
@@ -14051,6 +14220,14 @@ function exportFilenameSlug(){
 }
 
 function doStaticExport(){
+  // v294: "Export all boards" checkbox — if checked, hand off to the multi-board loop instead
+  // of exporting only the currently-active board. Only meaningful with >1 board; guarded so a
+  // stray checked state on a single board still falls through to the normal path.
+  var allChk = document.getElementById('exportAllBoards');
+  if(allChk && allChk.checked && boards.length > 1){
+    doStaticExportAllBoards();
+    return;
+  }
   // Pause any playing video so the exported frame matches exactly what the user sees on canvas.
   // (Otherwise the video advances during the few ms of export, capturing a slightly later frame.)
   layers.forEach(function(l){
@@ -14108,6 +14285,80 @@ function doStaticExport(){
   link.href=dataUrl;link.click();
   closeExportModal();
   redraw();
+}
+
+// v294: Multi-board export — one file per board, sequentially numbered. The size mode + format +
+// quality settings apply to every board (a scale factor scales each board relative to its own
+// canvas size, so a 2× on a 1080² and a 1080×1350 stays proportional). Downloads are staggered by
+// ~350ms so Chrome doesn't collapse rapid same-origin downloads or trigger the "site is trying to
+// download multiple files" prompt oddly. currentBoardId is swapped per board so the accessor
+// getters route layers/canvasW/etc. correctly, then restored at the end.
+function doStaticExportAllBoards(){
+  // Pause any playing videos across all boards so exported frames are stable
+  boards.forEach(function(board){
+    board.layers.forEach(function(l){
+      if(l.type === 'video' && l._playing && l._video){
+        l._video.pause();
+        l._playing = false;
+      }
+    });
+  });
+
+  var format  = document.getElementById('exportFormat').value;
+  var quality = (+document.getElementById('exportQuality').value) / 100;
+  var modeEl  = document.getElementById('exportSizeMode');
+  var mode    = modeEl ? modeEl.value : 'full';
+  var customW = +document.getElementById('exportW').value || 0;
+  var customH = +document.getElementById('exportH').value || 0;
+  var scaleF  = +document.getElementById('exportScale').value || 1;
+  var baseName = exportFilenameSlug();
+  var mime = {'png':'image/png','jpeg':'image/jpeg','webp':'image/webp'}[format] || 'image/png';
+
+  var origBoardId = currentBoardId;
+  var total = boards.length;
+
+  boards.forEach(function(board, idx){
+    setTimeout(function(){
+      try {
+        currentBoardId = board.id;   // routes accessor getters to this board
+        var bcW = board.canvasW, bcH = board.canvasH;
+        var ew = bcW, eh = bcH;
+        if(mode === 'custom'){
+          ew = customW || bcW;
+          eh = customH || bcH;
+        } else if(mode === 'scale'){
+          ew = Math.round(bcW * scaleF);
+          eh = Math.round(bcH * scaleF);
+        }
+
+        var outCanvas = document.createElement('canvas');
+        outCanvas.width  = ew;
+        outCanvas.height = eh;
+        var bctx = outCanvas.getContext('2d');
+        bctx.imageSmoothingEnabled = true;
+        bctx.imageSmoothingQuality = 'high';
+        bctx.scale(ew / bcW, eh / bcH);
+        _renderCurrentBoardInto(bctx);
+
+        var dataUrl = format === 'png'
+          ? outCanvas.toDataURL('image/png')
+          : outCanvas.toDataURL(mime, quality);
+        var link = document.createElement('a');
+        link.download = baseName + '-slide-' + (idx + 1) + '-' + ew + 'x' + eh + '.' + format;
+        link.href = dataUrl;
+        link.click();
+      } catch(e){
+        console.error('[export-all] board', idx + 1, 'failed:', e);
+      }
+
+      // Last board: restore currentBoardId and clean up modal + redraw
+      if(idx === total - 1){
+        currentBoardId = origBoardId;
+        closeExportModal();
+        redraw();
+      }
+    }, idx * 350);
+  });
 }
 
 // ── GIF EXPORT ──
