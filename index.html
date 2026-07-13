@@ -264,7 +264,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v294</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v295</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -431,7 +431,29 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
     </div>
     <div class="carousel-track" id="carouselTrack"></div>
   </div>
+  <!-- v295: performance panel — floating card anchored above the ⚡ button. Shows JS heap, undo-
+       stack size, and offers the two most impactful memory-relief actions: "Clear undo history"
+       (frees the biggest single memory hog in long sessions — the stacked JSON snapshots) and
+       "Reload & keep session" (persists every board to IDB, does a real full-page reload to reset
+       every closure/handler/cached blob, then restores the boards on startup). -->
+  <div id="perfPanel" class="hidden" style="position:absolute;bottom:56px;right:14px;z-index:95;background:var(--panel);border:1.5px solid var(--border);border-radius:9px;box-shadow:0 8px 32px rgba(0,0,0,0.16);padding:12px 14px;min-width:280px;font-size:12px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div style="font-weight:700;font-size:13px;">⚡ Performance</div>
+      <button onclick="togglePerfPanel()" style="background:none;border:none;font-size:16px;cursor:pointer;color:var(--muted);padding:0 4px;line-height:1;">✕</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.7;background:#fafafa;border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
+      <div>JS heap: <b id="perfHeap" style="color:var(--text);">—</b></div>
+      <div>Undo history: <b id="perfUndo" style="color:var(--text);">—</b> snapshots</div>
+      <div>Boards: <b id="perfBoards" style="color:var(--text);">—</b></div>
+    </div>
+    <button class="btn-add" style="width:100%;margin-bottom:6px;" onclick="perfClearUndo()" title="Drop every undo/redo snapshot across all boards. Frees the biggest single memory hog in long sessions.">🧹 Clear undo history</button>
+    <button class="btn-add" style="width:100%;margin-bottom:6px;" onclick="perfReloadKeepSession()" title="Save every board's state to browser storage, then reload the page. Every closure, handler, and cached blob is released. Boards + selection restore automatically.">↻ Reload &amp; keep session</button>
+    <div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.4;">
+      Closing unused boards also frees memory (× on the board tab). Autosave restores your current design if the page crashes.
+    </div>
+  </div>
   <div class="zoom-controls">
+    <button class="zoom-btn" id="perfBtn" onclick="togglePerfPanel()" title="Performance tools — free memory, reload with session preserved">⚡</button>
     <button class="zoom-btn" id="carouselBtn" onclick="toggleCarouselView()" title="Preview all boards side by side (carousel view)">👁</button>
     <button class="zoom-btn" id="snapBtn" onclick="toggleSnap()" title="Snap to canvas edges/center — click to toggle. Hold Alt while dragging or resizing to bypass.">🧲</button>
     <button class="zoom-btn" id="overscanBtn" onclick="toggleOverscan()" title="Show off-canvas content (so you can drag stray layers back). Doesn't affect export.">⤢</button>
@@ -2270,6 +2292,180 @@ function renderCarouselView(){
   currentBoardId = origBoardId;
 }
 
+// ── PERFORMANCE PANEL (v295) ──
+// Multi-hour editing sessions grow heavy from three sources:
+//   1. Per-board undo stacks — JSON snapshots of layers[], stacked up to UNDO_LIMIT (50) each.
+//      Every meaningful edit pushes one; long sessions across many boards can hold hundreds of
+//      snapshots for tens of MB of retained memory.
+//   2. Cached image data on layers (_originalImg for the eraser Restore brush, live HTMLImageElements
+//      that never get released even when hidden or off-canvas).
+//   3. General closure/handler accumulation on the JS heap — DOM re-renders, event listeners, big
+//      offscreen canvases from recent effect passes.
+//
+// "Clear undo history" attacks (1) — instant, safe, doesn't touch visible state.
+// "Reload & keep session" attacks (2) and (3) — persists every board to IDB, does a full page
+// reload (which lets the browser reclaim everything), then rehydrates on startup.
+
+var SESSION_RESTORE_ID = 999999998;   // dedicated IDB record ID for the reload-with-session bundle
+
+function togglePerfPanel(){
+  var panel = document.getElementById('perfPanel');
+  var btn = document.getElementById('perfBtn');
+  if(!panel) return;
+  var willShow = panel.classList.contains('hidden');
+  if(willShow){
+    updatePerfPanel();
+    panel.classList.remove('hidden');
+    if(btn) btn.classList.add('active');
+  } else {
+    panel.classList.add('hidden');
+    if(btn) btn.classList.remove('active');
+  }
+}
+
+function updatePerfPanel(){
+  var heapEl = document.getElementById('perfHeap');
+  var undoEl = document.getElementById('perfUndo');
+  var boardsEl = document.getElementById('perfBoards');
+  if(heapEl){
+    // performance.memory is Chromium-only. Firefox/Safari get "(not available)" — still safe to show.
+    if(performance && performance.memory && performance.memory.usedJSHeapSize){
+      var mb = Math.round(performance.memory.usedJSHeapSize / 1024 / 1024);
+      var totalMb = performance.memory.jsHeapSizeLimit
+        ? Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024) : null;
+      heapEl.textContent = totalMb ? (mb + ' MB / ' + totalMb + ' MB') : (mb + ' MB');
+    } else {
+      heapEl.textContent = '(browser doesn\'t expose this)';
+    }
+  }
+  if(undoEl){
+    var totalUndo = boards.reduce(function(t, b){
+      return t + (b.undoStack ? b.undoStack.length : 0) + (b.redoStack ? b.redoStack.length : 0);
+    }, 0);
+    undoEl.textContent = totalUndo;
+  }
+  if(boardsEl){
+    boardsEl.textContent = boards.length + ' · total layers: '
+      + boards.reduce(function(t, b){ return t + (b.layers ? b.layers.length : 0); }, 0);
+  }
+}
+
+function perfClearUndo(){
+  var totalCleared = 0;
+  boards.forEach(function(b){
+    totalCleared += (b.undoStack ? b.undoStack.length : 0) + (b.redoStack ? b.redoStack.length : 0);
+    b.undoStack = [];
+    b.redoStack = [];
+  });
+  if(typeof _refreshUndoButtons === 'function') _refreshUndoButtons();
+  console.log('[perf] cleared ' + totalCleared + ' undo/redo snapshots across ' + boards.length + ' boards');
+  // Flash the undo counter green so it's clear something happened
+  var undoEl = document.getElementById('perfUndo');
+  if(undoEl){
+    undoEl.style.transition = 'background 0.15s, color 0.15s';
+    undoEl.style.background = 'var(--green)';
+    undoEl.style.color = '#fff';
+    undoEl.style.padding = '1px 6px';
+    undoEl.style.borderRadius = '4px';
+    setTimeout(function(){
+      undoEl.style.background = '';
+      undoEl.style.color = 'var(--text)';
+      undoEl.style.padding = '';
+      undoEl.style.borderRadius = '';
+      updatePerfPanel();
+    }, 900);
+  } else {
+    updatePerfPanel();
+  }
+}
+
+function perfReloadKeepSession(){
+  if(!confirm('Reload the app to free memory?\n\n' +
+              'All boards, layers, and canvas dimensions will be restored after reload. ' +
+              'Any in-progress crop / erase / mask editing will be cancelled, and undo history ' +
+              'will be cleared (that\'s the point).')){
+    return;
+  }
+  // Gather every board's design state. gatherDesignState() only knows about the CURRENT board
+  // (via the window getters), so we swap currentBoardId per board, snapshot, then restore.
+  var origBoardId = currentBoardId;
+  var bundle = {
+    kind: 'session-restore',
+    version: 1,
+    savedAt: new Date().toISOString(),
+    activeBoardIdx: 0,
+    boards: []
+  };
+  boards.forEach(function(board, i){
+    if(board.id === origBoardId) bundle.activeBoardIdx = i;
+    currentBoardId = board.id;
+    try {
+      var state = gatherDesignState();
+      state.name = board.name;
+      bundle.boards.push({ name: board.name, state: state });
+    } catch(e){
+      console.error('[perf] failed to snapshot board', board.name, ':', e);
+    }
+  });
+  currentBoardId = origBoardId;
+
+  idbSaveDesign(SESSION_RESTORE_ID, bundle).then(function(){
+    // Successful save — the reload path will find and restore it on startup
+    location.reload();
+  }).catch(function(e){
+    console.error('[perf] session bundle save failed:', e);
+    alert('Could not save session for reload:\n\n' + (e && e.message ? e.message : e)
+      + '\n\nYour work is still safe — use "Save to Computer" or "Save to Cloud" first.');
+  });
+}
+
+// Called from DOMContentLoaded. If a session-restore bundle exists (from a prior "Reload & keep
+// session" click), rebuild the boards and restore each. The bundle is deleted after restore so a
+// subsequent normal reload starts fresh.
+function tryRestoreSessionBundle(){
+  if(typeof idbGetDesign !== 'function') return Promise.resolve(false);
+  return idbGetDesign(SESSION_RESTORE_ID).then(function(bundle){
+    if(!bundle || bundle.kind !== 'session-restore' || !bundle.boards || !bundle.boards.length){
+      return false;
+    }
+    console.log('[perf] restoring session bundle:', bundle.boards.length, 'boards');
+    // Delete FIRST so a mid-restore failure doesn't leave the bundle to be applied again next reload
+    idbDeleteDesign(SESSION_RESTORE_ID).catch(function(e){
+      console.warn('[perf] failed to delete session bundle after restore:', e);
+    });
+    // Wipe the default seeded board(s) and build fresh ones from the bundle
+    boards = [];
+    var newIds = [];
+    bundle.boards.forEach(function(entry, idx){
+      var st = entry.state || {};
+      var name = entry.name || ('Board ' + (idx + 1));
+      var w = st.canvasW || 1080;
+      var h = st.canvasH || 1080;
+      var b = makeBoard(name, w, h);
+      newIds.push(b.id);
+      boards.push(b);
+      // Route accessor getters to this board and populate it via restoreDesignState.
+      currentBoardId = b.id;
+      try {
+        restoreDesignState(st);
+      } catch(e){
+        console.error('[perf] failed to restore board', name, ':', e);
+      }
+    });
+    var restoredActive = newIds[bundle.activeBoardIdx] || newIds[0];
+    currentBoardId = restoredActive;
+    var active = getBoard();
+    if(active){
+      setCanvasSize(active.canvasW, active.canvasH);
+    }
+    renderBoardTabs(); renderLayerList(); renderProps(); renderPresets(); redraw();
+    return true;
+  }).catch(function(e){
+    console.log('[perf] no session bundle to restore:', e && e.message ? e.message : e);
+    return false;
+  });
+}
+
 // Draw the CURRENTLY-selected board's top-level layers into `ctx`. Mirrors the redraw() and
 // export path exactly (group-aware, legacy mask-pair-aware, blend-mode-aware via
 // _drawSingleLayerInto). Used by both the carousel thumbnails and the per-board export loop.
@@ -2536,6 +2732,14 @@ window.addEventListener('DOMContentLoaded',function(){
     navigator.storage.persist().then(function(granted){
       console.log('[storage] persist granted:', granted);
     }).catch(function(e){});
+  }
+  // v295: if the last action before reload was "Reload & keep session", a session-restore bundle
+  // is waiting in IDB. Rebuild every board from it and jump back to whichever one was active.
+  // Runs asynchronously — the fresh single-board seed already showed while this resolves.
+  if(typeof tryRestoreSessionBundle === 'function'){
+    tryRestoreSessionBundle().catch(function(e){
+      console.warn('[perf] session restore failed:', e);
+    });
   }
 });
 
