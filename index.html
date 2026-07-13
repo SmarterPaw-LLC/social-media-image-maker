@@ -264,7 +264,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v295</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v296</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9728,7 +9728,26 @@ function buildShapeProps(l){
     +(isGradient ? R('Gradient Angle','pshGradAngle',l.gradAngle,0,360,5) : '')
     +params
     +R('Corner Radius','pshCorner',l.cornerRadius||0,0,200,1)
-    +COL('Stroke','pshStroke',l.strokeColor==='rgba(0,0,0,0)'?'#000000':l.strokeColor)
+    // v296: stroke type + gradient controls. Solid keeps the classic color-picker UX. Gradient
+    // unlocks Top/Bottom colors, gradient type, angle, and a dedicated preset row that applies
+    // to the STROKE (parallel to the fill preset row above, but scoped via applyPresetToLayerStroke).
+    // strokeFillType defaults to 'solid' so every existing shape reads unchanged.
+    +SEL('Stroke Type','pshStrokeFillType',[['solid','Solid'],['gradient','Gradient']],l.strokeFillType||'solid')
+    +((l.strokeFillType||'solid')==='solid'
+      ? COL('Stroke Color','pshStroke', l.strokeColor==='rgba(0,0,0,0)'?'#000000':l.strokeColor)
+      : '<div class="col2" style="margin-bottom:5px;">'
+          + COL('Stroke Top','pshStrokeGradTop', l.strokeGradTop || l.gradTop || '#8ab81d')
+          + COL('Stroke Bottom','pshStrokeGradBot', l.strokeGradBottom || l.gradBottom || '#3c8e14')
+        + '</div>'
+        + '<div style="margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset to Stroke →</label>'
+        + '<div class="preset-grid" style="margin-top:3px;">'
+        + gradientPresets.map(function(p){
+            return '<div class="preset-swatch" style="background:'+presetSwatchCss(p)+'" title="'+p.label+' (stroke)" onclick="applyPresetToLayerStroke(\''+l.id+'\',\''+p.id+'\')"></div>';
+          }).join('')
+        + '</div></div>'
+        + SEL('Stroke Gradient Type','pshStrokeGradType',[['linear','Linear'],['radial','Radial'],['conic','Conic']], l.strokeGradType||l.gradType||'linear')
+        + R('Stroke Gradient Angle','pshStrokeGradAngle', l.strokeGradAngle==null ? (l.gradAngle==null?135:l.gradAngle) : l.strokeGradAngle, 0, 360, 5)
+    )
     +R('Stroke Width (0 = no stroke)','pshStrokeW',l.strokeWidth,0,40,1)
     +NUMPAIR('X (px)','nshx',l.x,'Y (px)','nshy',l.y)
     +NUMPAIR('W (px)','nshw',l.w,'H (px)','nshh',l.h)
@@ -10290,6 +10309,29 @@ function applyPresetToLayer(layerId,presetId){
   activePresetId=presetId; renderPresets(); renderProps(); redraw();
 }
 
+// v296: parallel to applyPresetToLayer but writes into the strokeGrad* field family so the STROKE
+// gets the preset colors while the fill is untouched. Also flips strokeFillType to 'gradient' so
+// the stroke immediately reflects the picked palette (matches the fill preset's UX: click and see).
+// activePresetId is left alone — it tracks the fill preset for the swatch-highlight UI upstream;
+// tying it to the stroke would create confusing dual-source-of-truth behavior.
+function applyPresetToLayerStroke(layerId, presetId){
+  var layer = layers.find(function(l){ return l.id == layerId; });
+  var preset = gradientPresets.find(function(p){ return p.id === presetId; });
+  if(!layer || !preset) return;
+  snapshotState();
+  layer.strokeFillType = 'gradient';
+  layer.strokeGradTop = preset.top;
+  layer.strokeGradBottom = preset.bottom;
+  if(preset.stops && preset.stops.length > 1) layer.strokeGradStops = preset.stops.slice();
+  else delete layer.strokeGradStops;
+  if(preset.gradType) layer.strokeGradType = preset.gradType;
+  if(preset.gradAngle != null) layer.strokeGradAngle = preset.gradAngle;
+  // If the shape has no visible stroke yet (width 0) bump to a reasonable default so the preset
+  // actually shows up — otherwise the user picks a preset and nothing appears to change.
+  if(!layer.strokeWidth || layer.strokeWidth === 0) layer.strokeWidth = 8;
+  renderProps(); redraw();
+}
+
 // Returns a CSS background string that matches a preset's gradient type,
 // used for rendering preview swatches in property panels.
 function presetSwatchCss(p){
@@ -10456,6 +10498,32 @@ function bindPropEvents(layer){
     });
     on('pshStroke','input',function(e){layer.strokeColor=e.target.value;redraw();});
     rng('pshStrokeW',function(v){layer.strokeWidth=v;redraw();});
+    // v296: stroke fill type + gradient controls (parallel to fill). Changing the type re-renders
+    // the properties panel so the correct set of inputs is visible for the newly-selected mode.
+    on('pshStrokeFillType','change',function(e){
+      layer.strokeFillType = e.target.value;
+      // Seed gradient fields from the fill's gradient if we're switching to gradient for the first time,
+      // so the stroke starts with the same colors as the shape's fill rather than a jarring default.
+      if(layer.strokeFillType === 'gradient'){
+        if(layer.strokeGradTop == null) layer.strokeGradTop = layer.gradTop || '#8ab81d';
+        if(layer.strokeGradBottom == null) layer.strokeGradBottom = layer.gradBottom || '#3c8e14';
+      }
+      renderProps(); redraw();
+    });
+    on('pshStrokeGradTop','input',function(e){
+      layer.strokeGradTop = e.target.value;
+      // Manual edit invalidates any multi-stop preset applied to the stroke — same rule as fill's
+      // revertToTwoStopOnEdit but scoped to the strokeGradStops array.
+      if(layer.strokeGradStops) delete layer.strokeGradStops;
+      redraw();
+    });
+    on('pshStrokeGradBot','input',function(e){
+      layer.strokeGradBottom = e.target.value;
+      if(layer.strokeGradStops) delete layer.strokeGradStops;
+      redraw();
+    });
+    on('pshStrokeGradType','change',function(e){ layer.strokeGradType = e.target.value; redraw(); });
+    rng('pshStrokeGradAngle', function(v){ layer.strokeGradAngle = +v; redraw(); });
     // Universal corner radius — works on any shape
     rng('pshCorner',function(v){layer.cornerRadius=+v;redraw();});
     // Parametric shape controls
@@ -13403,14 +13471,18 @@ function drawShapeLayer(ctx,layer){
     ctx.save();
     if(hasFill) ctx.fillStyle=fill;
     if(layer.strokeWidth>0){
-      // v269: default strokeColor is 'rgba(0,0,0,0)' (transparent sentinel — see shape layer
-      // creation). The `|| '#000'` fallback below only catches falsy values, and a transparent-
-      // rgba string is truthy, so the stroke was painting with transparent ink — invisible at any
-      // width. The color picker UI already displays this sentinel as black; match that here so the
-      // rendered stroke matches what the swatch shows.
-      var sc = layer.strokeColor;
-      if(!sc || sc === 'rgba(0,0,0,0)' || sc === 'transparent') sc = '#000';
-      ctx.strokeStyle = sc;
+      // v296: strokeFillType is 'solid' (default) or 'gradient'. Solid path preserves the
+      // v269 transparent-sentinel handling (rgba(0,0,0,0) means "user hasn't picked a color yet"
+      // → fall back to black so the swatch UI and the rendered stroke agree). Gradient path
+      // builds a canvas gradient with strokeGradTop/Bottom/Type/Angle/Stops using the same math
+      // as the fill gradient — so the stroke can carry the same brand preset the fill uses.
+      if(layer.strokeFillType === 'gradient'){
+        ctx.strokeStyle = _buildShapeStrokeGradient(ctx, layer);
+      } else {
+        var sc = layer.strokeColor;
+        if(!sc || sc === 'rgba(0,0,0,0)' || sc === 'transparent') sc = '#000';
+        ctx.strokeStyle = sc;
+      }
       ctx.lineWidth = layer.strokeWidth;
     }
     buildShapePath(ctx, layer);
@@ -13418,6 +13490,42 @@ function drawShapeLayer(ctx,layer){
     if(layer.strokeWidth>0)ctx.stroke();
     ctx.restore();
   });
+}
+
+// v296: build a canvas gradient for a shape layer's STROKE using the strokeGrad* field family.
+// Mirrors the fill-gradient math (bbox-anchored, linear default). Falls back to the fill's
+// gradient fields if strokeGrad* isn't set yet — that way a shape whose fill is already gradient
+// gets a matching stroke gradient the moment strokeFillType is switched to gradient.
+function _buildShapeStrokeGradient(ctx, layer){
+  var x = layer.x, y = layer.y, w = layer.w, h = layer.h;
+  var cx = x + w/2, cy = y + h/2;
+  var gradType = layer.strokeGradType || layer.gradType || 'linear';
+  var ang = ((layer.strokeGradAngle == null ? (layer.gradAngle == null ? 135 : layer.gradAngle) : layer.strokeGradAngle)) * Math.PI/180;
+  var len = Math.sqrt(w*w + h*h) / 2;
+  var grad;
+  if(gradType === 'radial'){
+    grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h)/2);
+  } else if(gradType === 'conic' && ctx.createConicGradient){
+    var angRadC = ((layer.strokeGradAngle == null ? (layer.gradAngle == null ? 135 : layer.gradAngle) : layer.strokeGradAngle) - 90) * Math.PI/180;
+    grad = ctx.createConicGradient(angRadC, cx, cy);
+  } else {
+    var gx1 = cx - Math.cos(ang) * len, gy1 = cy - Math.sin(ang) * len;
+    var gx2 = cx + Math.cos(ang) * len, gy2 = cy + Math.sin(ang) * len;
+    grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
+  }
+  // Multi-stop preset support — parallel to addLayerGradientStops but reading strokeGradStops.
+  var stops = layer.strokeGradStops;
+  if(stops && stops.length > 1){
+    for(var i = 0; i < stops.length; i++){
+      grad.addColorStop(i / (stops.length - 1), stops[i]);
+    }
+  } else {
+    var top = layer.strokeGradTop || layer.gradTop || '#8ab81d';
+    var bot = layer.strokeGradBottom || layer.gradBottom || '#3c8e14';
+    grad.addColorStop(0, top);
+    grad.addColorStop(1, bot);
+  }
+  return grad;
 }
 
 function drawStar(ctx,cx,cy,points,outer,inner){
