@@ -280,7 +280,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v300</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v301</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1012,6 +1012,14 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
         <input type="password" id="signInPassword" name="password" placeholder="••••••••" autocomplete="current-password" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
       </div>
       <div id="signInError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
+      <!-- v301: outage-aware banner. Shown when the health check to Supabase can't reach the auth
+           service. Distinct visual from the red error so users see at a glance "this is upstream,
+           not something I did." The health check re-polls every 20s while this is visible; when
+           the endpoint responds we auto-hide the banner and let the sign-in flow proceed. -->
+      <div id="signInOutage" class="hidden" style="padding:10px 12px;background:#fff8e6;border:1px solid #f3d38c;border-radius:6px;font-size:12px;color:#8a5a10;line-height:1.5;">
+        <div style="font-weight:700;margin-bottom:2px;">🟡 Supabase looks unreachable</div>
+        <div>The auth service isn't responding — this is upstream, not your setup. Check <a href="https://status.supabase.com" target="_blank" rel="noopener" style="color:#8a5a10;font-weight:700;text-decoration:underline;">status.supabase.com</a> for the current incident. Sign-in will auto-retry when it comes back <span id="signInOutageDot">·</span></div>
+      </div>
       <div style="font-size:11px;color:var(--muted);">
         Designs are synced to your account. To reset a password or invite users, use the Supabase dashboard.
       </div>
@@ -20349,8 +20357,102 @@ function retrySupabaseInit(){
   showSignInError('Cloud sign-in is loading… If it doesn\'t finish, click "Continue offline" — Save to Computer and local My Designs still work.');
   retrySupabaseInit().catch(function(){
     showSignInError('Cloud sign-in unavailable (CDN blocked or network offline). Click "Continue offline" to keep working — everything except cloud sync still works.');
+    // v301: if all CDN attempts failed, also probe Supabase itself so we can distinguish a client-
+    // side block (CDN blocked → red error stays) from an upstream outage (auth API unreachable →
+    // amber banner replaces it).
+    maybeShowOutageBanner();
   });
 })();
+
+// v301: outage-aware sign-in banner. When the sign-in modal is stuck (init failed, or sign-in
+// returned a network error), ping Supabase's auth health endpoint. If it's unreachable, show a
+// distinct amber banner pointing at status.supabase.com so the user knows it's upstream, not
+// their setup. Poll every 20s while visible — when it responds, hide the banner. Bounded polling
+// (stops when the modal closes) so we don't leak intervals.
+var _supabaseOutageBanner = { visible: false, timer: null, tickTimer: null, tickCount: 0 };
+
+// Fetch `${SUPABASE_URL}/auth/v1/health` with a 5s timeout. Resolves to `{healthy: bool}`:
+// - healthy=true when the auth service returned ANY response (200 or 4xx — both mean reachable)
+// - healthy=false on network error, 5xx, or timeout (Supabase down or unreachable)
+function checkSupabaseHealth(){
+  return new Promise(function(resolve){
+    var settled = false;
+    var t = setTimeout(function(){
+      if(settled) return;
+      settled = true;
+      resolve({healthy: false, reason: 'timeout'});
+    }, 5000);
+    fetch(SUPABASE_URL + '/auth/v1/health', {
+      method: 'GET',
+      mode: 'cors',
+      cache: 'no-store',
+      headers: { 'apikey': SUPABASE_ANON_KEY }
+    }).then(function(res){
+      if(settled) return;
+      settled = true;
+      clearTimeout(t);
+      resolve({healthy: res.status < 500, status: res.status});
+    }).catch(function(e){
+      if(settled) return;
+      settled = true;
+      clearTimeout(t);
+      resolve({healthy: false, reason: (e && e.message) || 'network'});
+    });
+  });
+}
+
+function showOutageBanner(){
+  var el = document.getElementById('signInOutage');
+  var err = document.getElementById('signInError');
+  if(!el) return;
+  el.classList.remove('hidden');
+  // Hide the red error while the outage banner is up — one clear message beats two competing ones.
+  if(err) err.classList.add('hidden');
+  _supabaseOutageBanner.visible = true;
+  // Animated dots so the user sees the retry loop is alive
+  var dotEl = document.getElementById('signInOutageDot');
+  if(_supabaseOutageBanner.tickTimer) clearInterval(_supabaseOutageBanner.tickTimer);
+  _supabaseOutageBanner.tickCount = 0;
+  _supabaseOutageBanner.tickTimer = setInterval(function(){
+    _supabaseOutageBanner.tickCount = (_supabaseOutageBanner.tickCount + 1) % 4;
+    if(dotEl) dotEl.textContent = '·'.repeat(_supabaseOutageBanner.tickCount + 1);
+  }, 500);
+  // Kick off the retry poll
+  if(_supabaseOutageBanner.timer) clearInterval(_supabaseOutageBanner.timer);
+  _supabaseOutageBanner.timer = setInterval(function(){
+    // Bail if the modal was dismissed (Continue offline) — no need to keep polling
+    var modal = document.getElementById('signInModal');
+    if(modal && modal.classList.contains('hidden')){
+      hideOutageBanner();
+      return;
+    }
+    checkSupabaseHealth().then(function(res){
+      if(res.healthy){
+        console.log('[auth] Supabase health restored — hiding outage banner');
+        hideOutageBanner();
+        // If sb was never initialized (CDN chain had also failed), take one more shot now that
+        // upstream is back. Otherwise the user just clicks Sign In and it works.
+        if(!sb) retrySupabaseInit().catch(function(){});
+      }
+    });
+  }, 20000);
+}
+
+function hideOutageBanner(){
+  var el = document.getElementById('signInOutage');
+  if(el) el.classList.add('hidden');
+  _supabaseOutageBanner.visible = false;
+  if(_supabaseOutageBanner.timer){ clearInterval(_supabaseOutageBanner.timer); _supabaseOutageBanner.timer = null; }
+  if(_supabaseOutageBanner.tickTimer){ clearInterval(_supabaseOutageBanner.tickTimer); _supabaseOutageBanner.tickTimer = null; }
+}
+
+// Convenience: if a sign-in or init failure smells like an outage, run the health check and
+// show/hide the banner accordingly. Safe to call from any failure path — no-op if healthy.
+function maybeShowOutageBanner(){
+  checkSupabaseHealth().then(function(res){
+    if(!res.healthy) showOutageBanner();
+  });
+}
 
 // v300: escape hatch. Hide the sign-in modal and let the user work locally. Cloud-gated features
 // (My Designs cloud tab, Save to Cloud, Share) already check `currentUser` — they'll show the
@@ -20465,12 +20567,16 @@ function doSignIn(){
   sb.auth.signInWithPassword({email: email, password: password}).then(function(res){
     if(res.error){
       showSignInError(res.error.message || 'Sign-in failed.');
+      // v301: probe for outage — invalid password returns a fast 400 (banner won't show); a real
+      // outage returns 5xx or a network fetch failure inside the SDK (banner will show).
+      maybeShowOutageBanner();
       return;
     }
     // onAuthStateChange will fire SIGNED_IN and call onSignedIn — no further work here.
   }).catch(function(e){
     console.error('[auth] signIn exception:', e);
     showSignInError('Sign-in failed: ' + (e.message || e));
+    maybeShowOutageBanner();
   });
 }
 
@@ -20511,10 +20617,12 @@ function doGoogleSignIn(){
     if(res && res.error){
       console.error('[auth] google sign-in error:', res.error);
       showSignInError(res.error.message || 'Google sign-in failed. Check that Google OAuth is enabled in Supabase.');
+      maybeShowOutageBanner();
     }
   }).catch(function(e){
     console.error('[auth] google sign-in exception:', e);
     showSignInError('Google sign-in failed: ' + (e.message || e));
+    maybeShowOutageBanner();
   });
 }
 

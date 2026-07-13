@@ -127,7 +127,7 @@ URLs are version-pinned. If a logo updates, the `?v=` query string changes — u
 
 ## Supabase
 
-**Dedicated project** for this app (separate from forecast). Free tier — 2nd of 2 free projects under the SmarterPaw-LLC org. Auto-pauses after 7 days of inactivity; restored manually from the Supabase dashboard.
+**Dedicated project** for this app (separate from forecast). On the **Pro plan** under the SmarterPaw-LLC org (no auto-pause). If sign-in ever appears broken, check [status.supabase.com](https://status.supabase.com) — the app has an outage-aware banner (v301+) that surfaces this automatically, but manual check is faster.
 
 - URL: `https://ttyxodttyeykjijffgql.supabase.co`
 - Anon key (JWT): `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0eXhvZHR0eWV5a2ppamZmZ3FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1ODM5MjcsImV4cCI6MjA5NDE1OTkyN30.784lD_-utaZc9-0m1GMH37AGyjcCa7RApYI2ZNE97Do`
