@@ -280,7 +280,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v298</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v299</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -610,9 +610,16 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       </div>
       <!-- v115: "Save as new copy" toggle — applies to whichever destination button is clicked.
            Shown only when updating an existing design (set by promptSaveDesign). -->
-      <div id="saveAsNewWrap" class="hidden" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);">
-        <input type="checkbox" id="saveAsNewChk" style="margin:0;">
-        <label for="saveAsNewChk" style="margin:0;font-weight:600;cursor:pointer;">Save as a new copy (don't overwrite the existing entry)</label>
+      <div id="saveAsNewWrap" class="hidden" style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--text);">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="saveAsNewChk" style="margin:0;">
+          <label for="saveAsNewChk" style="margin:0;font-weight:600;cursor:pointer;">Save as a new copy (don't overwrite the existing entry)</label>
+        </div>
+        <!-- v299: hint shown when the typed name differs from the design's loaded name. The checkbox
+             also auto-ticks in that case, so the default action is safe (create new, not rename). -->
+        <div id="saveAsNewHint" class="hidden" style="font-size:11px;color:#8a5a10;background:#fff8ec;border:1px solid #f2d99a;border-radius:5px;padding:6px 8px;line-height:1.4;">
+          ⚠ Name changed from <b id="saveAsNewHintOld">—</b>. Auto-ticked <b>Save as a new copy</b> so <b>the original stays intact</b>. Un-tick to rename in place instead.
+        </div>
       </div>
       <div style="font-size:11px;color:var(--muted);">
         <b>💾 Save to Computer</b> writes a <code>.spdesign.json</code> download and a copy in this browser's My Designs (no cloud). <b>☁ Save to Cloud</b> syncs to your account so the design follows you across devices (no file download).
@@ -2040,7 +2047,16 @@ function makeBoard(name, w, h){
     selectedIds: [],        // multi-select (layer list shift-click)
     undoStack: [],
     redoStack: [],
-    activePresetId: ''
+    activePresetId: '',
+    // v299: saved-design identity is PER-BOARD. Was global, which caused a nasty overwrite bug:
+    // load design "A" → duplicate the board via ⧉ → tweak the duplicate → Save. Because
+    // _currentDesignId was global, the duplicate carried A's id, so Save UPDATED A's row (renaming
+    // A to the typed name and replacing its content) instead of creating a new record. Fresh
+    // nulls per board mean a duplicate defaults to "unsaved" and saves create new rows.
+    _currentDesignId: null,       // IDB record id (null = never saved to My Designs on this device)
+    _currentCloudId: null,        // Supabase social_designs.id (null = not synced to cloud)
+    _lastDesignName: '',          // name this board was last saved/loaded as; drives the save dialog banner
+    _currentFolderIdForSave: null // folder_id remembered for Save default folder
   };
 }
 // Seed with one board on startup
@@ -2053,7 +2069,9 @@ function getBoard(){
 // Expose per-board fields as top-level identifiers via window getters/setters.
 // This lets the entire rest of the codebase keep using `layers`, `canvasW`, etc. unchanged.
 (function defineBoardAccessors(){
-  var fields = ['layers','canvasW','canvasH','selectedId','selectedIds','undoStack','redoStack','activePresetId'];
+  var fields = ['layers','canvasW','canvasH','selectedId','selectedIds','undoStack','redoStack','activePresetId',
+                // v299: saved-design identity, now per-board (see makeBoard for why)
+                '_currentDesignId','_currentCloudId','_lastDesignName','_currentFolderIdForSave'];
   fields.forEach(function(f){
     Object.defineProperty(window, f, {
       configurable: true,
@@ -3192,6 +3210,13 @@ function promptSaveDesign(){
   }
   // Always reset the checkbox between opens so it doesn't surprise the user with a stale state
   if(saveAsNewChk) saveAsNewChk.checked = false;
+  // v299: snapshot the loaded design's name at modal-open so the input-diff detector can compare
+  // against it. Also reset the user-toggled flag so this modal starts fresh — a manual tick/untick
+  // from a prior open shouldn't stick around.
+  _saveModalOriginalName = _lastDesignName || '';
+  _saveAsNewUserToggled = false;
+  var hint = document.getElementById('saveAsNewHint');
+  if(hint) hint.classList.add('hidden');
   // Cloud button: disable when not signed in, with a tooltip explaining
   if(cloudBtn){
     if(currentUser){
@@ -3244,6 +3269,45 @@ function promptSaveDesign(){
   }
 }
 function closeSaveModal(){ document.getElementById('saveModal').classList.add('hidden'); }
+
+// v299: name-mismatch safety net. If the user types a name that differs from what the design was
+// loaded as, we auto-tick "Save as a new copy" so the source stays intact. If they explicitly
+// toggle the checkbox themselves, the flag below suppresses further auto-flipping so their
+// intent wins.
+var _saveModalOriginalName = '';    // captured at modal open — the design's loaded name
+var _saveAsNewUserToggled = false;  // set when the user manually clicks the checkbox
+
+function _saveModalSyncNewCopyDefault(){
+  if(_saveAsNewUserToggled) return;
+  var updating = (_currentDesignId != null) || (_currentCloudId != null);
+  if(!updating) return;   // no loaded design → the checkbox is hidden anyway
+  var chk = document.getElementById('saveAsNewChk');
+  var input = document.getElementById('saveDesignName');
+  var hint = document.getElementById('saveAsNewHint');
+  var oldNameEl = document.getElementById('saveAsNewHintOld');
+  if(!chk || !input) return;
+  var typed = (input.value || '').trim();
+  var orig = (_saveModalOriginalName || '').trim();
+  var differ = !!typed && typed.toLowerCase() !== orig.toLowerCase();
+  chk.checked = differ;
+  if(hint) hint.classList.toggle('hidden', !differ);
+  if(oldNameEl) oldNameEl.textContent = orig || '(unnamed)';
+}
+
+// Bind once at load-time (before any modal is opened). The Save modal exists in the DOM from the
+// start, so the input/checkbox refs are safe to grab here.
+document.addEventListener('DOMContentLoaded', function(){
+  var input = document.getElementById('saveDesignName');
+  var chk   = document.getElementById('saveAsNewChk');
+  if(input) input.addEventListener('input', _saveModalSyncNewCopyDefault);
+  if(chk) chk.addEventListener('change', function(){
+    // User-initiated toggle — stop auto-syncing for the rest of this modal session so their choice sticks
+    _saveAsNewUserToggled = true;
+    var hint = document.getElementById('saveAsNewHint');
+    if(hint) hint.classList.add('hidden');   // once the user has taken over, the auto-explanation is noise
+  });
+});
+
 var _lastDesignName = '';
 // v115: Save was split into two destinations — Save to Computer and Save to Cloud — so the user
 // can pick where the design goes instead of always doing all of {file, IDB, cloud} at once.
