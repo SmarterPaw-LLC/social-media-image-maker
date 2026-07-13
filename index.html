@@ -247,7 +247,7 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v292</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v293</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -350,6 +350,9 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
       <button class="btn-add" onclick="addSprinkleLayer()" title="Scatter catnip or an uploaded image inside a resizable box">+ Sprinkle 🌿</button>
     </div>
     <div class="col2">
+      <!-- v293: rating row — paw/star/heart/emoji icons with a filled portion, brand-recolorable
+           for vector icons or free-form via any emoji -->
+      <button class="btn-add" onclick="addRatingLayer()" title="Row of rating icons (paw / star / heart / custom emoji) with adjustable fill">+ Rating 🐾</button>
       <button class="btn-add" onclick="addSvgLayer()">+ SVG</button>
     </div>
     <!-- v253: + Framed Image moved to a setting on the existing image layer. Now use + Image
@@ -7014,6 +7017,150 @@ function _measureButtonText(ctx, layer){
   return { w: w, h: layer.fontSize || 56 };
 }
 
+// ── RATING LAYER (v293) ──
+// A row of N rating icons with an adjustable filled portion. Two icon modes:
+//   'paw' / 'star' / 'heart' / 'circle' → drawn as Canvas paths → recolorable to any hex
+//   'emoji'                              → drawn as text via ctx.fillText → native emoji colors,
+//                                           unfilled = 30% opacity (natural "greyed out" look)
+// Width is auto-fit from count × iconSize + (count−1) × spacing when autoFit is on; user can
+// override by dragging the resize handle (which turns autoFit off).
+function addRatingLayer(){
+  snapshotState();
+  var id = nextId++;
+  // Brand-appropriate default color for vector-icon fill
+  var color = currentBrand === 'kkz' ? '#F79C0B' : '#f07830';
+  var iconSize = 60;
+  var count = 5;
+  var spacing = 10;
+  var w = count * iconSize + (count - 1) * spacing;
+  layers.push({
+    id: id, type: 'rating', name: 'Rating ' + id,
+    iconType: 'paw',            // 'paw' | 'star' | 'heart' | 'circle' | 'emoji'
+    emoji: '⭐',                 // used only when iconType === 'emoji'
+    count: count,
+    filled: count,              // supports fractional (e.g. 4.5) — right half of the boundary icon fills
+    filledColor: color,
+    unfilledColor: '#D0D0D0',
+    iconSize: iconSize,
+    spacing: spacing,
+    autoFit: true,
+    x: Math.round(canvasW * 0.5 - w / 2),
+    y: Math.round(canvasH * 0.5 - iconSize / 2),
+    w: w, h: iconSize,
+    opacity: 100, rotation: 0
+  });
+  selectLayer(id); renderLayerList(); redraw();
+}
+
+// Draw one rating layer. Iterates count icons at (x + i*step, y). For each icon we decide filled
+// vs unfilled vs partial from the .filled value; partial icons draw a full unfilled base then clip
+// the left portion and repaint filled — cheap, works for any icon shape.
+function drawRatingLayer(ctx, layer){
+  withRotation(ctx, layer, function(){
+    var iconSize = Math.max(8, layer.iconSize || 60);
+    var spacing = layer.spacing || 0;
+    var count = Math.max(1, Math.min(20, Math.round(layer.count || 5)));
+    var filled = Math.max(0, Math.min(count, layer.filled != null ? layer.filled : count));
+    var totalW = count * iconSize + (count - 1) * spacing;
+    if(layer.autoFit !== false){
+      layer.w = totalW;
+      layer.h = iconSize;
+    }
+    var x = layer.x, y = layer.y;
+    var isEmoji = layer.iconType === 'emoji';
+    for(var i = 0; i < count; i++){
+      var ix = x + i * (iconSize + spacing);
+      var fullyFilled = i < Math.floor(filled);
+      var isBoundary = i === Math.floor(filled) && filled % 1 !== 0;
+      var partialFrac = isBoundary ? (filled % 1) : 0;
+      if(isEmoji){
+        _drawRatingEmoji(ctx, layer.emoji || '⭐', ix, y, iconSize, fullyFilled ? 1 : (isBoundary ? partialFrac : 0));
+      } else {
+        // Vector icon: paint the unfilled color base, then overlay the filled color clipped to
+        // the appropriate horizontal fraction. For fully-unfilled we skip the overlay entirely.
+        _drawRatingIcon(ctx, layer.iconType || 'paw', ix, y, iconSize, layer.unfilledColor || '#D0D0D0');
+        if(fullyFilled || isBoundary){
+          var frac = fullyFilled ? 1 : partialFrac;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(ix, y, iconSize * frac, iconSize);
+          ctx.clip();
+          _drawRatingIcon(ctx, layer.iconType || 'paw', ix, y, iconSize, layer.filledColor || '#f07830');
+          ctx.restore();
+        }
+      }
+    }
+  });
+}
+
+// Draws one rating icon at (x, y) sized to iconSize, filled with the given color. All shapes are
+// normalized to a 0–100 local coord space then scaled to iconSize so tweaking sizes doesn't need
+// to touch the geometry.
+function _drawRatingIcon(ctx, iconType, x, y, size, color){
+  var s = size / 100;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(s, s);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  if(iconType === 'star'){
+    // 5-point star, centered on (50, 50). Outer radius 45, inner 20.
+    var cx = 50, cy = 55, outerR = 45, innerR = 20;
+    for(var i = 0; i < 10; i++){
+      var r = i % 2 === 0 ? outerR : innerR;
+      var ang = (i * Math.PI) / 5 - Math.PI / 2;
+      var px = cx + Math.cos(ang) * r;
+      var py = cy + Math.sin(ang) * r;
+      if(i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  } else if(iconType === 'heart'){
+    // Classic heart shape via two bezier curves, meeting at top notch and pointing at bottom
+    ctx.moveTo(50, 88);
+    ctx.bezierCurveTo(-15, 55, 12, 5, 50, 30);
+    ctx.bezierCurveTo(88, 5, 115, 55, 50, 88);
+    ctx.closePath();
+    ctx.fill();
+  } else if(iconType === 'circle'){
+    ctx.arc(50, 50, 42, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // paw (default): four toes fanned above one big pad. Each is a separate subpath so we
+    // moveTo before each arc/ellipse — otherwise ctx.arc silently connects them with lineTos.
+    ctx.moveTo(75, 68); ctx.ellipse(50, 68, 25, 20, 0, 0, Math.PI * 2);      // pad
+    ctx.moveTo(30, 42); ctx.arc(20, 42, 10, 0, Math.PI * 2);                 // outer left toe
+    ctx.moveTo(48, 25); ctx.arc(38, 25, 10, 0, Math.PI * 2);                 // inner left toe
+    ctx.moveTo(72, 25); ctx.arc(62, 25, 10, 0, Math.PI * 2);                 // inner right toe
+    ctx.moveTo(90, 42); ctx.arc(80, 42, 10, 0, Math.PI * 2);                 // outer right toe
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Emoji renderer: fillText at iconSize, with unfilled = 30% opacity (natural "greyed" look) and
+// partial = interpolated alpha so a 0.5 rating renders as half-strength emoji rather than a
+// clip trick (emojis don't respond to fillStyle so the clip approach would look weird).
+function _drawRatingEmoji(ctx, emoji, x, y, size, fillFrac){
+  ctx.save();
+  // Layer 1: greyed-out (unfilled) base
+  ctx.globalAlpha = 0.3;
+  ctx.font = size + 'px sans-serif';
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'left';
+  ctx.fillText(emoji, x, y);
+  // Layer 2: fully-opaque overlay clipped to the filled portion
+  if(fillFrac > 0){
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.rect(x, y, size * fillFrac, size * 1.1);   // 1.1 for baseline slack
+    ctx.clip();
+    ctx.fillText(emoji, x, y);
+  }
+  ctx.restore();
+}
+
 // ── ARROW LAYER (v156) ──
 // Hand-drawn marker-style arrow. Bbox holds a horizontal arrow going from (0, h/2) to (w, h/2)
 // in local space; user rotates the bbox to point in any direction and resizes for length. Wobble
@@ -8314,7 +8461,7 @@ function _renderLayerRow(list, layer, depth, parentGroup){
     item.style.borderLeft = '2px solid var(--border)';
     item.style.paddingLeft = '4px';
   }
-  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘'};
+  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾'};
   var eyeIcon = layer.hidden ? '⊘' : '●';
   var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
   var lockIcon = layer.locked ? '🔒' : '🔓';
@@ -8508,6 +8655,7 @@ function renderProps(){
   else if(layer.type==='arrow')   innerHtml=buildArrowProps(layer);
   else if(layer.type==='button')  innerHtml=buildButtonProps(layer);   // v282
   else if(layer.type==='group')   innerHtml=buildGroupProps(layer);    // v285
+  else if(layer.type==='rating')  innerHtml=buildRatingProps(layer);   // v293
   // v257: append a shared blend-mode dropdown to every layer panel. Applied in
   // _drawSingleLayerInto via globalCompositeOperation so it composes with whatever
   // pixels the layer below has already rendered. Works for any layer type.
@@ -9334,6 +9482,43 @@ function buildButtonProps(l){
     + moveBtns(l.id) + '</div>';
 }
 
+// ── RATING LAYER PROPS (v293) ──
+// Icon-type picker, filled/count sliders, colors, and a small emoji entry that only shows when
+// iconType is 'emoji'. Filled slider uses 0.5 step so half-star ratings work naturally.
+function buildRatingProps(l){
+  var isEmoji = l.iconType === 'emoji';
+  var iconOpts = [
+    ['paw',    '🐾 Paw'],
+    ['star',   '★ Star'],
+    ['heart',  '♥ Heart'],
+    ['circle', '● Circle'],
+    ['emoji',  '✨ Custom emoji…']
+  ];
+  return '<div class="prop-section">'
+    + SEL('Icon Type', 'prat_iconType', iconOpts, l.iconType || 'paw')
+    + (isEmoji
+        ? '<label style="font-size:10px;color:var(--muted);">Emoji</label>'
+          + '<input type="text" id="prat_emoji" value="'+escAttr(l.emoji||'⭐')+'" maxlength="4" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:22px;text-align:center;">'
+          + '<div style="font-size:10px;color:var(--muted);margin-top:2px;margin-bottom:6px;">Paste or type any emoji. Unfilled icons render at 30% opacity.</div>'
+        : '')
+    + R('Count',       'prat_count',       l.count       || 5, 1, 10, 1)
+    + R('Filled',      'prat_filled',      l.filled != null ? l.filled : 5, 0, l.count || 10, 0.5)
+    + '<div class="col2">'
+      + '<div>' + COL('Filled color',   'prat_filledColor',   l.filledColor   || '#f07830') + '</div>'
+      + '<div>' + COL('Unfilled color', 'prat_unfilledColor', l.unfilledColor || '#D0D0D0') + '</div>'
+    + '</div>'
+    + (isEmoji ? '<div style="font-size:10px;color:var(--muted);margin-top:-2px;margin-bottom:6px;">Colors only apply to vector icons (paw / star / heart / circle).</div>' : '')
+    + R('Icon Size',   'prat_iconSize',    l.iconSize    || 60, 16, 200, 1)
+    + R('Spacing',     'prat_spacing',     l.spacing     || 10,   0,  60, 1)
+    + '<label style="font-size:11px;display:flex;align-items:center;gap:6px;margin-top:6px;"><input type="checkbox" id="prat_autoFit"'+(l.autoFit!==false?' checked':'')+'>Auto-fit width to icons</label>'
+    + NUMPAIR('X (px)', 'nratx', l.x, 'Y (px)', 'nraty', l.y)
+    + NUMPAIR('W (px)', 'nratw', l.w, 'H (px)', 'nrath', l.h)
+    + R('Rotation', 'prat_rotation', l.rotation, -180, 180, 1)
+    + R('Opacity',  'prat_opacity',  l.opacity,  0,    100, 1)
+    + shadowUI('prat_', l)
+    + moveBtns(l.id) + '</div>';
+}
+
 // ── SPRINKLE LAYER PROPS ──
 // Standalone sprinkle layer panel. Sections:
 //   - position/size of the sprinkle box
@@ -10044,6 +10229,30 @@ function bindPropEvents(layer){
     on('pgrp_name', 'input', function(e){ layer.name = e.target.value; renderLayerList(); });
     on('pgrp_keepMaskFill', 'change', function(e){ layer.keepMaskFill = !!e.target.checked; redraw(); });
     rng('pgrp_opacity', function(v){ layer.opacity = +v; redraw(); });
+  } else if(layer.type==='rating'){
+    // v293: rating layer bindings. Icon type / count / emoji edits rebuild the panel because they
+    // toggle which controls are shown; slider edits redraw only.
+    on('prat_iconType', 'change', function(e){ layer.iconType = e.target.value; renderProps(); redraw(); });
+    on('prat_emoji',    'input',  function(e){ layer.emoji    = e.target.value; redraw(); });
+    rng('prat_count',   function(v){
+      layer.count = Math.max(1, Math.min(20, Math.round(+v)));
+      // Clamp filled so it never exceeds the new count
+      if(layer.filled > layer.count) layer.filled = layer.count;
+      renderProps(); redraw();   // rebuild so the Filled slider's max updates
+    });
+    rng('prat_filled', function(v){ layer.filled = +v; redraw(); });
+    on('prat_filledColor',   'input', function(e){ layer.filledColor   = e.target.value; redraw(); });
+    on('prat_unfilledColor', 'input', function(e){ layer.unfilledColor = e.target.value; redraw(); });
+    rng('prat_iconSize', function(v){ layer.iconSize = +v; redraw(); });
+    rng('prat_spacing',  function(v){ layer.spacing  = +v; redraw(); });
+    on('prat_autoFit', 'change', function(e){ layer.autoFit = !!e.target.checked; redraw(); });
+    num('nratx', function(v){ layer.x = v; redraw(); });
+    num('nraty', function(v){ layer.y = v; redraw(); });
+    num('nratw', function(v){ layer.w = v; layer.autoFit = false; var ck=document.getElementById('prat_autoFit'); if(ck) ck.checked = false; redraw(); });
+    num('nrath', function(v){ layer.h = v; layer.autoFit = false; var ck=document.getElementById('prat_autoFit'); if(ck) ck.checked = false; redraw(); });
+    rng('prat_rotation', function(v){ layer.rotation = +v; redraw(); });
+    rng('prat_opacity',  function(v){ layer.opacity  = +v; redraw(); });
+    bindShadowEvents('prat_', layer);
   } else if(layer.type==='sprinkle'){
     // Position / size — number inputs only (no sliders). Users drag on-canvas for visual positioning.
     num('nsprx', function(v){ layer.x = v; redraw(); });
@@ -11493,6 +11702,7 @@ function _drawSingleLayerInto(ctx, layer){
   else if(layer.type==='arrow')drawArrowLayer(ctx,layer);
   else if(layer.type==='group')_drawGroupInto(ctx,layer);   // v270
   else if(layer.type==='button')drawButtonLayer(ctx,layer);  // v282
+  else if(layer.type==='rating')drawRatingLayer(ctx,layer);  // v293
   ctx.restore();
 }
 
