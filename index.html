@@ -304,7 +304,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v304</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v305</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1071,6 +1071,18 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       </svg>
       Sign in with Google
     </button>
+    <!-- v305: emergency direct-HTTP sign-in that bypasses supabase-js entirely. Uses plain fetch()
+         against the Supabase auth REST API and downloads every cloud design as a .spdesign.json
+         file. This exists because some browsers/networks are somehow preventing the inlined library
+         from producing a working client — this path uses ONLY fetch() and JSON, no library at all,
+         so it works even when everything else about sign-in is broken. -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--border);">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5;">
+        Sign-in still broken? Use this to download your cloud designs directly. Load them via <b>Continue offline</b> → <b>My Designs</b> → <b>Load from file</b>.
+      </div>
+      <button type="button" onclick="emergencyRecoverDesigns()" style="width:100%;padding:10px 14px;background:#b3261e;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;">🆘 Emergency: recover my cloud designs</button>
+      <div id="emergencyStatus" class="hidden" style="margin-top:8px;padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:11px;color:#3a5e10;line-height:1.5;"></div>
+    </div>
   </div>
 </div>
 
@@ -20475,6 +20487,139 @@ function hideOutageBanner(){
 function maybeShowOutageBanner(){
   checkSupabaseHealth().then(function(res){
     if(!res.healthy) showOutageBanner();
+  });
+}
+
+// v305: emergency direct-HTTP path. Uses ONLY fetch() and JSON — no supabase-js needed. Auths
+// against the Supabase REST endpoint, lists the user's designs, downloads each as a .spdesign.json
+// file. This is the escape valve when sign-in works nowhere else (library not loading, weird
+// browser cache, VPN filtering). Once files are downloaded, the user does Continue offline → My
+// Designs → Load from file to open them in the editor.
+function _emergencyStatus(msg, isError){
+  var el = document.getElementById('emergencyStatus');
+  if(!el) return;
+  el.classList.remove('hidden');
+  el.style.background = isError ? '#fef2f0' : '#f4faf4';
+  el.style.borderColor = isError ? '#fbcaba' : '#d5e8bc';
+  el.style.color = isError ? '#b3261e' : '#3a5e10';
+  el.innerHTML = msg;
+}
+
+function _slugify(s){
+  return (s || 'design').replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'design';
+}
+
+function emergencyRecoverDesigns(){
+  var email = (document.getElementById('signInEmail').value || '').trim();
+  var password = document.getElementById('signInPassword').value || '';
+  if(!email || !password){
+    _emergencyStatus('⚠ Type your email and password above first, then click Emergency recover.', true);
+    return;
+  }
+  _emergencyStatus('Signing in via direct HTTP (no library)…');
+
+  var authUrl = SUPABASE_URL + '/auth/v1/token?grant_type=password';
+  fetch(authUrl, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ email: email, password: password })
+  }).then(function(r){
+    if(!r.ok) return r.text().then(function(t){ throw new Error('Auth ' + r.status + ': ' + t.substring(0, 200)); });
+    return r.json();
+  }).then(function(auth){
+    var accessToken = auth.access_token;
+    var user = auth.user;
+    if(!accessToken || !user){
+      throw new Error('Auth response missing access_token or user');
+    }
+    _emergencyStatus('✅ Signed in as ' + user.email + ' — fetching design list…');
+
+    // Fetch every design (excluding autosave) for this user via REST
+    var listUrl = SUPABASE_URL + '/rest/v1/social_designs'
+      + '?user_id=eq.' + user.id
+      + '&is_autosave=eq.false'
+      + '&order=updated_at.desc'
+      + '&select=id,name,state,brand,canvas_w,canvas_h,folder_id,schema_version,app_version';
+
+    return fetch(listUrl, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + accessToken
+      }
+    }).then(function(r){
+      if(!r.ok) return r.text().then(function(t){ throw new Error('List ' + r.status + ': ' + t.substring(0, 200)); });
+      return r.json();
+    }).then(function(rows){
+      if(!rows || rows.length === 0){
+        _emergencyStatus('Signed in fine, but no cloud designs found on your account.', true);
+        return;
+      }
+      _emergencyStatus('Found <b>' + rows.length + '</b> cloud designs. Downloading now… stay on this tab.');
+      // For rows where state is null, fetch from Storage (design-states bucket). Otherwise use inline.
+      var downloaded = 0;
+      var failed = 0;
+      var seq = Promise.resolve();
+      rows.forEach(function(row, i){
+        seq = seq.then(function(){
+          var statePromise;
+          if(row.state){
+            statePromise = Promise.resolve(row.state);
+          } else {
+            var storageUrl = SUPABASE_URL + '/storage/v1/object/authenticated/design-states/'
+              + user.id + '/' + row.id + '.json';
+            statePromise = fetch(storageUrl, {
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + accessToken
+              }
+            }).then(function(r){
+              if(!r.ok) throw new Error('Storage ' + r.status);
+              return r.json();
+            });
+          }
+          return statePromise.then(function(state){
+            // Ensure the file has a name field (loader uses this to seed the design name)
+            if(!state.name) state.name = row.name;
+            if(!state.canvasW && row.canvas_w) state.canvasW = row.canvas_w;
+            if(!state.canvasH && row.canvas_h) state.canvasH = row.canvas_h;
+            if(!state.currentBrand && row.brand) state.currentBrand = row.brand;
+            if(!state.schema && row.schema_version) state.schema = row.schema_version;
+            if(!state.appVersion && row.app_version) state.appVersion = row.app_version;
+            // Trigger a browser download
+            var blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = _slugify(row.name || ('design-' + row.id)) + '.spdesign.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+            downloaded++;
+            _emergencyStatus('Downloaded <b>' + downloaded + '</b> / ' + rows.length + '…');
+          }).catch(function(e){
+            console.error('[emergency] design ' + row.id + ' failed:', e);
+            failed++;
+          });
+        }).then(function(){
+          // Small delay between downloads so the browser doesn't collapse them or trigger the
+          // "site is trying to download multiple files" prompt confusingly.
+          return new Promise(function(res){ setTimeout(res, 400); });
+        });
+      });
+      return seq.then(function(){
+        var msg = '✅ Done. Downloaded <b>' + downloaded + '</b> of ' + rows.length + ' designs.'
+          + (failed ? ' <b>' + failed + '</b> failed (probably storage-permission issues).' : '')
+          + '<br><br><b>Next:</b> Click <b>Continue offline</b>, then open <b>My Designs</b> → <b>Load from file…</b> and pick each downloaded .spdesign.json.';
+        _emergencyStatus(msg);
+      });
+    });
+  }).catch(function(e){
+    console.error('[emergency] failed:', e);
+    _emergencyStatus('❌ Recovery failed: ' + (e.message || e), true);
   });
 }
 
