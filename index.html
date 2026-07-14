@@ -114,9 +114,15 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .carousel-track.align-mode{gap:0;padding-top:8px;padding-bottom:8px;}
 .carousel-track.align-mode .carousel-slide{padding:0;gap:0;transition:none;}
 .carousel-track.align-mode .carousel-slide:hover{transform:none;}
-.carousel-track.align-mode .carousel-slide canvas{border-radius:0;box-shadow:none;border:none;border-left:1px solid rgba(0,0,0,0.25);}
-.carousel-track.align-mode .carousel-slide:first-child canvas{border-left:none;box-shadow:-4px 0 16px rgba(0,0,0,0.12);}
+/* v320: truly seamless align mode — no divider, no shadow, no border. Slides literally touch
+   so a treat sitting flush against a slide's right edge appears to continue directly into the
+   next slide with zero visual gap. Only the outer boundary (first slide's left, last slide's
+   right) gets a subtle shadow to separate the whole strip from the surrounding page. */
+.carousel-track.align-mode .carousel-slide canvas{border-radius:0;box-shadow:none;border:none;}
+.carousel-track.align-mode .carousel-slide:first-child canvas{box-shadow:-4px 0 16px rgba(0,0,0,0.12);}
 .carousel-track.align-mode .carousel-slide:last-child canvas{box-shadow:4px 0 16px rgba(0,0,0,0.12);}
+/* Drag cursor on slide canvases in align mode — hints at the new drag-to-edit affordance. */
+.carousel-track.align-mode .carousel-slide canvas{cursor:move;}
 .carousel-track.align-mode .carousel-slide .idx,
 .carousel-track.align-mode .carousel-slide .label,
 .carousel-track.align-mode .carousel-slide .sublabel{display:none;}
@@ -379,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v319</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v320</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2496,11 +2502,23 @@ function renderCarouselView(){
       }
 
       var targetId = board.id;   // captured for click handler
-      slide.onclick = function(){
-        // Close carousel first, then switch — switchBoard triggers a redraw of the single-board view
+      // v320: in align mode, canvas clicks are used for drag-to-edit (see _bindSlideDrag below).
+      // In non-align mode, click on the slide wrapper (not canvas) switches boards. This lets
+      // the align mode be a real editor while spaced-out mode stays a quick navigator.
+      slide.onclick = function(e){
+        // Ignore clicks that originated from the canvas itself in align mode (those are drags)
+        if(_carouselAlignMode && e.target && e.target.tagName === 'CANVAS') return;
         toggleCarouselView();
         if(targetId !== origBoardId) switchBoard(targetId);
       };
+
+      // v320: drag-to-edit in align mode. Click a layer on the slide canvas, drag it, live-preview
+      // in the same slide. On release, if this board is the active one, redraw the main canvas
+      // so its state matches. Hit-testing uses simple bounding boxes (no rotation math) — good
+      // enough for alignment work.
+      if(_carouselAlignMode){
+        _bindCarouselSlideDrag(canvas, board, displayScale);
+      }
 
       track.appendChild(slide);
     } catch(e){
@@ -2508,6 +2526,82 @@ function renderCarouselView(){
     }
   });
   currentBoardId = origBoardId;
+}
+
+// v320: attach drag handlers to a carousel-view slide canvas so layers can be moved directly.
+// Layer coordinate math: click at display px (relative to canvas) ÷ displayScale = canvas px.
+// Drag delta in display px ÷ displayScale = canvas-px delta to add to layer.x / layer.y.
+function _bindCarouselSlideDrag(canvas, board, displayScale){
+  var dragState = null;
+  canvas.addEventListener('mousedown', function(e){
+    if(e.button !== 0) return;   // left-click only
+    var rect = canvas.getBoundingClientRect();
+    var cx = (e.clientX - rect.left) / displayScale;
+    var cy = (e.clientY - rect.top) / displayScale;
+    var hit = _hitTestBoardLayer(board, cx, cy);
+    if(!hit) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragState = {
+      layer: hit,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: hit.x,
+      origY: hit.y,
+      moved: false
+    };
+    // Snapshot the board's undo state before the drag so this move is undoable in the main view
+    var origBoardId = currentBoardId;
+    currentBoardId = board.id;
+    try { if(typeof snapshotState === 'function') snapshotState(); }
+    catch(_){}
+    currentBoardId = origBoardId;
+  });
+
+  // mousemove and mouseup on the WINDOW so drags survive the mouse leaving the canvas
+  window.addEventListener('mousemove', function(e){
+    if(!dragState) return;
+    var dx = (e.clientX - dragState.startX) / displayScale;
+    var dy = (e.clientY - dragState.startY) / displayScale;
+    dragState.layer.x = Math.round(dragState.origX + dx);
+    dragState.layer.y = Math.round(dragState.origY + dy);
+    dragState.moved = true;
+    // Re-render THIS slide only (cheap — one board, no full page redraw)
+    var origBoardId = currentBoardId;
+    currentBoardId = board.id;
+    try {
+      var ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      _renderCurrentBoardInto(ctx);
+    } finally {
+      currentBoardId = origBoardId;
+    }
+  });
+
+  window.addEventListener('mouseup', function(){
+    if(!dragState) return;
+    var wasActiveBoard = (board.id === currentBoardId);
+    dragState = null;
+    // If this board is the one currently open in the main editor, sync the main canvas so the
+    // move is visible when the user closes the carousel.
+    if(wasActiveBoard && typeof redraw === 'function') redraw();
+  });
+}
+
+// v320: simple bounding-box hit-test for carousel drag. Top-down (topmost layer first),
+// skips hidden layers. Doesn't account for rotation — acceptable for the alignment workflow
+// where users are usually working with axis-aligned content.
+function _hitTestBoardLayer(board, cx, cy){
+  var ls = board && board.layers;
+  if(!ls || !ls.length) return null;
+  for(var i = ls.length - 1; i >= 0; i--){
+    var l = ls[i];
+    if(!l || l.hidden) continue;
+    if(l.parentId != null) continue;   // skip group children; grouped layers move as their group
+    var lx = l.x || 0, ly = l.y || 0, lw = l.w || 0, lh = l.h || 0;
+    if(cx >= lx && cx <= lx + lw && cy >= ly && cy <= ly + lh) return l;
+  }
+  return null;
 }
 
 // ── PERFORMANCE PANEL (v295) ──
