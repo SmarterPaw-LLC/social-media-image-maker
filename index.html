@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v323</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v324</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2173,7 +2173,8 @@ function makeBoard(name, w, h){
     _currentDesignId: null,       // IDB record id (null = never saved to My Designs on this device)
     _currentCloudId: null,        // Supabase social_designs.id (null = not synced to cloud)
     _lastDesignName: '',          // name this board was last saved/loaded as; drives the save dialog banner
-    _currentFolderIdForSave: null // folder_id remembered for Save default folder
+    _currentFolderIdForSave: null,// folder_id remembered for Save default folder
+    _cloudDirty: false            // v324: unsaved-cloud-changes flag, per-board so saving board A doesn't clear board B's dirty state
   };
 }
 // Seed with one board on startup
@@ -2347,6 +2348,7 @@ function switchBoard(id){
     outgoing._currentCloudId = (typeof _currentCloudId !== 'undefined') ? _currentCloudId : null;
     outgoing._lastDesignName = (typeof _lastDesignName !== 'undefined') ? _lastDesignName : '';
     outgoing._currentFolderIdForSave = (typeof _currentFolderIdForSave !== 'undefined') ? _currentFolderIdForSave : null;
+    outgoing._cloudDirty = (typeof _cloudDirty !== 'undefined') ? _cloudDirty : false;
   }
   currentBoardId = id;
   // Update all UI that depends on current board
@@ -2356,6 +2358,7 @@ function switchBoard(id){
   _currentCloudId  = (b && b._currentCloudId  != null) ? b._currentCloudId  : null;
   _lastDesignName  = (b && b._lastDesignName)          ? b._lastDesignName  : '';
   _currentFolderIdForSave = (b && b._currentFolderIdForSave != null) ? b._currentFolderIdForSave : null;
+  _cloudDirty = !!(b && b._cloudDirty);
   if(typeof updateCloudSyncStatus === 'function') updateCloudSyncStatus();
   // Use setCanvasSize (rather than poking canvas.width directly) so the overscan state is
   // applied correctly. Without this, switching boards while overscan is on would leave the
