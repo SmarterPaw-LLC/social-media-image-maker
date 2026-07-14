@@ -379,7 +379,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v313</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v314</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2333,6 +2333,35 @@ function switchBoard(id){
   setCanvasSize(b.canvasW, b.canvasH);
   renderBoardTabs(); renderLayerList(); renderProps(); renderPresets();
   updateExportInfo();
+  // v314: auto-prune inactive boards to keep memory in check. Chrome's "Aw Snap, ran out of
+  // memory" crash happens when the tab exceeds ~4GB — each board's undo stack (up to 50 JSON
+  // snapshots of every layer) and per-layer erase-restore images (v280, live HTMLImageElement
+  // held for the Restore brush) are the two biggest recoverable hogs. Neither affects design
+  // data — undo history is convenience-only past the current state, and the restore-brush
+  // image can be recreated when the user next enters erase mode.
+  _pruneInactiveBoards();
+}
+
+// v314: memory recovery for inactive boards. Only touches non-design state — layer transforms,
+// image bytes, video refs, canvas dimensions are all preserved.
+function _pruneInactiveBoards(){
+  var pruned = 0;
+  boards.forEach(function(board){
+    if(board.id === currentBoardId) return;
+    // 1. Undo/redo history — cheapest and biggest win. Each snapshot is a full JSON
+    //    serialization of layers[]; on inactive boards there's no meaningful undo target anyway.
+    if(board.undoStack && board.undoStack.length){ pruned += board.undoStack.length; board.undoStack = []; }
+    if(board.redoStack && board.redoStack.length){ pruned += board.redoStack.length; board.redoStack = []; }
+    // 2. Per-layer erase-restore image (v280 Restore brush cache). Regenerable on next erase.
+    if(board.layers && board.layers.length){
+      board.layers.forEach(function(l){
+        if(l && l._originalImg){
+          try { delete l._originalImg; } catch(_){ l._originalImg = null; }
+        }
+      });
+    }
+  });
+  if(pruned) console.log('[perf] pruned ' + pruned + ' undo/redo snapshots from inactive boards');
 }
 
 function createNewBoard(){
