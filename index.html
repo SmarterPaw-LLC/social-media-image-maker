@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v321</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v322</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2547,9 +2547,9 @@ function renderCarouselView(){
   currentBoardId = origBoardId;
 }
 
-// v320: attach drag handlers to a carousel-view slide canvas so layers can be moved directly.
-// Layer coordinate math: click at display px (relative to canvas) ÷ displayScale = canvas px.
-// Drag delta in display px ÷ displayScale = canvas-px delta to add to layer.x / layer.y.
+// v320/v322: drag handlers on a carousel-view slide canvas. v322 delegates hit-testing to the
+// real `getLayerAt` (rotation-aware, per-type bounds via getLayerBounds, returns group when a
+// child is clicked). Groups are moved by shifting every child's x/y by the drag delta.
 function _bindCarouselSlideDrag(canvas, board, displayScale){
   var dragState = null;
   canvas.addEventListener('mousedown', function(e){
@@ -2565,8 +2565,16 @@ function _bindCarouselSlideDrag(canvas, board, displayScale){
       layer: hit,
       startX: e.clientX,
       startY: e.clientY,
-      origX: hit.x,
-      origY: hit.y,
+      origX: hit.x || 0,
+      origY: hit.y || 0,
+      // For groups, capture every child's original position — moving a group means translating
+      // every child by the same delta (the group's own x/y is nominal).
+      origChildren: (hit.type === 'group' && hit.childIds)
+        ? hit.childIds.map(function(cid){
+            var c = board.layers.find(function(l){ return l.id === cid; });
+            return c ? { id: c.id, x: c.x || 0, y: c.y || 0 } : null;
+          }).filter(Boolean)
+        : null,
       moved: false
     };
     // Snapshot the board's undo state before the drag so this move is undoable in the main view
@@ -2582,6 +2590,16 @@ function _bindCarouselSlideDrag(canvas, board, displayScale){
     if(!dragState) return;
     var dx = (e.clientX - dragState.startX) / displayScale;
     var dy = (e.clientY - dragState.startY) / displayScale;
+    if(dragState.origChildren){
+      // Group drag — shift every child by the delta from ITS original position
+      dragState.origChildren.forEach(function(orig){
+        var child = board.layers.find(function(l){ return l.id === orig.id; });
+        if(child){
+          child.x = Math.round(orig.x + dx);
+          child.y = Math.round(orig.y + dy);
+        }
+      });
+    }
     dragState.layer.x = Math.round(dragState.origX + dx);
     dragState.layer.y = Math.round(dragState.origY + dy);
     dragState.moved = true;
@@ -2607,20 +2625,19 @@ function _bindCarouselSlideDrag(canvas, board, displayScale){
   });
 }
 
-// v320: simple bounding-box hit-test for carousel drag. Top-down (topmost layer first),
-// skips hidden layers. Doesn't account for rotation — acceptable for the alignment workflow
-// where users are usually working with axis-aligned content.
+// v322: real hit-test via the existing getLayerAt. Temporarily swaps currentBoardId so the
+// window `layers` accessor points at the board we're testing, then delegates to the same
+// rotation-aware, group-aware hit-tester the main canvas uses. Replaces v320's naive raw-x/y/w/h
+// version which missed text, stickers, rotated content, and layers with type-specific bounds.
 function _hitTestBoardLayer(board, cx, cy){
-  var ls = board && board.layers;
-  if(!ls || !ls.length) return null;
-  for(var i = ls.length - 1; i >= 0; i--){
-    var l = ls[i];
-    if(!l || l.hidden) continue;
-    if(l.parentId != null) continue;   // skip group children; grouped layers move as their group
-    var lx = l.x || 0, ly = l.y || 0, lw = l.w || 0, lh = l.h || 0;
-    if(cx >= lx && cx <= lx + lw && cy >= ly && cy <= ly + lh) return l;
+  if(!board || typeof getLayerAt !== 'function') return null;
+  var origBoardId = currentBoardId;
+  currentBoardId = board.id;
+  try {
+    return getLayerAt(cx, cy);
+  } finally {
+    currentBoardId = origBoardId;
   }
-  return null;
 }
 
 // ── PERFORMANCE PANEL (v295) ──
