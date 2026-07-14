@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v324</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v325</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -9547,10 +9547,26 @@ function moveBtns(id){
 // automatically surfaces them across every layer type that uses the shared shadowUI helper
 // (video, arrow, image, shape, sprinkle, svg, text). Values chosen by Jason as the "default"
 // text-shadow look — a slightly-below-and-right cast that reads well on light backgrounds.
+// v325: expanded to a full set of realistic shadow presets. Values chosen for photorealistic
+// object shadows across the common design use cases:
+//   Contact   — sharp, tight, dark. Object sitting flush on a surface (product on table).
+//   Subtle    — barely-there lift. Small elevation, light touch.
+//   Card      — mid-range floating card look (Material-style elevation).
+//   Elevated  — bigger, higher-off-surface. Hero images, floating panels.
+//   Long Cast — directional dramatic. Late-afternoon-sun angle.
+//   Ambient   — soft glow around edges, no offset. Reads as light bouncing under the object.
+//   Deep      — heavy, dramatic. Poster/theatrical feel.
 window._SHADOW_PRESETS = {
-  'text':   {label:'Text Shadow', shadowBlur:4,  shadowOffsetX:3, shadowOffsetY:1, shadowOpacity:78, shadowColor:'#000000'},
-  'button': {label:'Button',      shadowBlur:12, shadowOffsetX:0, shadowOffsetY:6, shadowOpacity:30, shadowColor:'#000000'},   // v282: soft lift for CTA pills
-  'none':   {label:'None',        shadowBlur:0,  shadowOffsetX:0, shadowOffsetY:0, shadowOpacity:0}
+  'none':     {label:'None',      shadowBlur:0,  shadowOffsetX:0,  shadowOffsetY:0,  shadowOpacity:0,  shadowColor:'#000000'},
+  'text':     {label:'Text',      shadowBlur:4,  shadowOffsetX:3,  shadowOffsetY:1,  shadowOpacity:78, shadowColor:'#000000'},
+  'button':   {label:'Button',    shadowBlur:12, shadowOffsetX:0,  shadowOffsetY:6,  shadowOpacity:30, shadowColor:'#000000'},   // v282: soft lift for CTA pills
+  'contact':  {label:'Contact',   shadowBlur:4,  shadowOffsetX:0,  shadowOffsetY:3,  shadowOpacity:65, shadowColor:'#000000'},
+  'subtle':   {label:'Subtle',    shadowBlur:10, shadowOffsetX:0,  shadowOffsetY:3,  shadowOpacity:22, shadowColor:'#000000'},
+  'card':     {label:'Card',      shadowBlur:24, shadowOffsetX:0,  shadowOffsetY:12, shadowOpacity:28, shadowColor:'#000000'},
+  'elevated': {label:'Elevated',  shadowBlur:40, shadowOffsetX:0,  shadowOffsetY:22, shadowOpacity:32, shadowColor:'#000000'},
+  'long':     {label:'Long Cast', shadowBlur:18, shadowOffsetX:22, shadowOffsetY:22, shadowOpacity:45, shadowColor:'#000000'},
+  'ambient':  {label:'Ambient',   shadowBlur:44, shadowOffsetX:0,  shadowOffsetY:0,  shadowOpacity:40, shadowColor:'#000000'},
+  'deep':     {label:'Deep',      shadowBlur:28, shadowOffsetX:6,  shadowOffsetY:16, shadowOpacity:60, shadowColor:'#000000'}
 };
 function applyShadowPreset(layerId, presetKey){
   var layer = layers.find(function(l){ return l.id === layerId; });
