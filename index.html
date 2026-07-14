@@ -379,7 +379,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v317</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v318</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -20482,7 +20482,13 @@ function confirmDeleteLibraryItem(item){
 // `currentUser` var is what later phases will read to scope queries to the
 // signed-in user. Until then it's just gating UI visibility.
 var SUPABASE_URL = 'https://ttyxodttyeykjijffgql.supabase.co';
-var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0eXhvZHR0eWV5a2ppamZmZ3FsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1ODM5MjcsImV4cCI6MjA5NDE1OTkyN30.784lD_-utaZc9-0m1GMH37AGyjcCa7RApYI2ZNE97Do';
+// v318: switched from JWT-based anon key to publishable key. The legacy JWT anon key required
+// Supabase's server to verify its signature against the legacy HS256 secret on every request.
+// After this project migrated to ECC signing keys (2 months ago), that verification path became
+// unreliable — which is what was causing every /rest/v1/* call to 401 even with a valid user
+// access token. Publishable keys don't rely on JWT verification, they just grant anon-level
+// access directly. Documented in CLAUDE.md as the replacement for anon on newer projects.
+var SUPABASE_ANON_KEY = 'sb_publishable_yhwf6AeM6nYDe_cmEQt6RQ_b531DdxP';
 var sb = null;
 var currentUser = null;
 
