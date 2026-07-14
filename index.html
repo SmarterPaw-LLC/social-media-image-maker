@@ -379,7 +379,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v312</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v313</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3007,11 +3007,41 @@ function serializeForUndo(){
 }
 
 function deserializeLayers(json){
-  var raw = JSON.parse(json);
+  var raw;
+  try { raw = JSON.parse(json); } catch(e){
+    console.error('[deserialize] JSON.parse failed on layers payload:', e, 'payload preview:', String(json).slice(0, 200));
+    throw new Error('This design\'s layer data is malformed JSON. It was probably corrupted during a bad save. Try loading a different version, or restore from an earlier autosave.');
+  }
+  // v313: some historical saves may have written non-array `layers` (an object with numeric
+  // keys, or something else). Coerce to array. If we can't produce an array, fail loudly with a
+  // useful message instead of "Cannot read properties of undefined (reading 'forEach')".
+  if(raw == null){
+    throw new Error('This design has no layers data (null). It was probably corrupted during a bad save.');
+  }
+  if(!Array.isArray(raw)){
+    // Try object-with-numeric-keys → array coercion
+    if(typeof raw === 'object'){
+      var keys = Object.keys(raw).filter(function(k){ return /^\d+$/.test(k); }).sort(function(a,b){return +a-+b;});
+      if(keys.length){
+        console.warn('[deserialize] raw layers is an object with numeric keys — coercing to array');
+        raw = keys.map(function(k){ return raw[k]; });
+      } else {
+        throw new Error('This design\'s layer data is an object, not an array. Save format is corrupted.');
+      }
+    } else {
+      throw new Error('This design\'s layer data is ' + typeof raw + ', expected array. Save format is corrupted.');
+    }
+  }
   // Build a lookup of currently-live layers by id so we can copy image/video references that
-  // weren't serialized (in undo snapshots).
+  // weren't serialized (in undo snapshots). Guard against a board whose `layers` accessor
+  // somehow returns non-array (per-board state bugs have caused this in the past).
   var liveById = {};
-  layers.forEach(function(l){ liveById[l.id] = l; });
+  var _live = layers;
+  if(Array.isArray(_live)){
+    _live.forEach(function(l){ liveById[l.id] = l; });
+  } else {
+    console.warn('[deserialize] current board layers is not an array (was ' + typeof _live + ') — treating as empty for live-lookup');
+  }
 
   var restored = [];
   raw.forEach(function(o){
