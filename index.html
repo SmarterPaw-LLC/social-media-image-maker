@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v320</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v321</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2335,9 +2335,28 @@ function renderBoardTabs(){
 function switchBoard(id){
   if(id === currentBoardId) return;
   if(!boards.some(function(b){return b.id===id;})) return;
+  // v321: per-board design identity via save/restore, not accessors. v299 tried to make these
+  // globals per-board via defineProperty and blew up the app (see the v319 comment in the
+  // accessor IIFE). Doing it here is safer: before switching AWAY, stash the current globals
+  // onto the outgoing board. After switching, hydrate the globals from the incoming board's
+  // saved values. Result: each board remembers "which cloud/IDB row am I linked to and what's
+  // my last-saved name," so a save on Board B never targets Board A's cloud row.
+  var outgoing = getBoard();
+  if(outgoing){
+    outgoing._currentDesignId = (typeof _currentDesignId !== 'undefined') ? _currentDesignId : null;
+    outgoing._currentCloudId = (typeof _currentCloudId !== 'undefined') ? _currentCloudId : null;
+    outgoing._lastDesignName = (typeof _lastDesignName !== 'undefined') ? _lastDesignName : '';
+    outgoing._currentFolderIdForSave = (typeof _currentFolderIdForSave !== 'undefined') ? _currentFolderIdForSave : null;
+  }
   currentBoardId = id;
   // Update all UI that depends on current board
   var b = getBoard();
+  // Restore the incoming board's design identity (or clear if this board has never been linked)
+  _currentDesignId = (b && b._currentDesignId != null) ? b._currentDesignId : null;
+  _currentCloudId  = (b && b._currentCloudId  != null) ? b._currentCloudId  : null;
+  _lastDesignName  = (b && b._lastDesignName)          ? b._lastDesignName  : '';
+  _currentFolderIdForSave = (b && b._currentFolderIdForSave != null) ? b._currentFolderIdForSave : null;
+  if(typeof updateCloudSyncStatus === 'function') updateCloudSyncStatus();
   // Use setCanvasSize (rather than poking canvas.width directly) so the overscan state is
   // applied correctly. Without this, switching boards while overscan is on would leave the
   // canvas pixel buffer at canvasW × canvasH (no overscan) while applyZoom sized the CSS for
