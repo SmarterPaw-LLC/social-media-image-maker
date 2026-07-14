@@ -379,7 +379,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v311</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v312</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1146,18 +1146,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       </svg>
       Sign in with Google
     </button>
-    <!-- v305: emergency direct-HTTP sign-in that bypasses supabase-js entirely. Uses plain fetch()
-         against the Supabase auth REST API and downloads every cloud design as a .spdesign.json
-         file. This exists because some browsers/networks are somehow preventing the inlined library
-         from producing a working client — this path uses ONLY fetch() and JSON, no library at all,
-         so it works even when everything else about sign-in is broken. -->
-    <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--border);">
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5;">
-        Sign-in still broken? Use this to download your cloud designs directly. Load them via <b>Continue offline</b> → <b>My Designs</b> → <b>Load from file</b>.
-      </div>
-      <button type="button" onclick="emergencyRecoverDesigns()" style="width:100%;padding:10px 14px;background:#b3261e;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;">🆘 Emergency: recover my cloud designs</button>
-      <div id="emergencyStatus" class="hidden" style="margin-top:8px;padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:11px;color:#3a5e10;line-height:1.5;"></div>
-    </div>
   </div>
 </div>
 
