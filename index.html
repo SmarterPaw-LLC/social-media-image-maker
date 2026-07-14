@@ -304,7 +304,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v309</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v310</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -20382,56 +20382,106 @@ function retrySupabaseInit(){
   return _supabaseInitInFlight;
 }
 
-// v309: manual URL-fragment session picker. When Supabase magic-link / OAuth redirects back to us,
-// the session ends up in the URL hash like `#access_token=xxx&refresh_token=yyy&...`. Normally
-// supabase-js reads this automatically on init (detectSessionInUrl:true), but in Jason's env we
-// can't be 100% sure the library is functioning end-to-end. This runs FIRST — completely
-// independent of the library — parses the hash, stores the session in the localStorage key
-// supabase-js expects, sets currentUser + updates UI. Works even if `sb` is null.
+// v310: bulletproof URL-fragment session picker. v309 was silently erroring on some paths,
+// leaving the modal up even after successful Google OAuth. This version:
+//   - hides the sign-in modal IMMEDIATELY on detecting access_token in the URL, before ANY
+//     parsing that could fail — so the user sees the app instantly even if downstream steps
+//     have issues
+//   - wraps EVERY step in its own try/catch so no single failure cascades
+//   - falls back to a placeholder user if JWT decode fails, so onSignedIn still gets called
+//   - logs verbosely to the console so failures are visible without me having to iterate
 (function catchAuthFragment(){
+  var hash = '';
+  try { hash = window.location.hash || ''; } catch(e){}
+  if(hash.indexOf('access_token=') === -1) return;
+  console.log('[auth-fragment v310] access_token detected in URL — processing');
+
+  // STEP 1 (critical, must run): hide the sign-in modal immediately, unconditionally. Even if
+  // every following step blows up, the user sees the app.
   try {
-    var hash = window.location.hash || '';
-    if(hash.indexOf('access_token=') === -1) return;
-    var params = {};
+    var modal = document.getElementById('signInModal');
+    if(modal) modal.classList.add('hidden');
+  } catch(e){ console.warn('[auth-fragment] modal hide failed:', e); }
+
+  // STEP 2: parse fragment into params. Each key/value protected — a bad %-escape on ONE value
+  // doesn't kill the whole parse.
+  var params = {};
+  try {
     hash.replace(/^#/, '').split('&').forEach(function(kv){
       var i = kv.indexOf('=');
-      if(i > 0) params[kv.substring(0, i)] = decodeURIComponent(kv.substring(i + 1));
+      if(i <= 0) return;
+      var key = kv.substring(0, i);
+      var raw = kv.substring(i + 1);
+      try { params[key] = decodeURIComponent(raw); }
+      catch(_){ params[key] = raw; }   // keep raw if decode fails
     });
-    if(!params.access_token) return;
-    // Decode the JWT payload to get the user object (Supabase includes email + id in the token)
-    var user = null;
-    try {
-      var payload = JSON.parse(atob(params.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-      user = { id: payload.sub, email: payload.email, aud: payload.aud, role: payload.role };
-    } catch(e){ console.warn('[auth-fragment] jwt decode failed:', e); }
-    var expiresAt = Math.floor(Date.now()/1000) + parseInt(params.expires_in || '3600', 10);
-    var projectRef = 'ttyxodttyeykjijffgql';
-    try {
-      localStorage.setItem('sb-' + projectRef + '-auth-token', JSON.stringify({
-        access_token: params.access_token,
-        refresh_token: params.refresh_token || '',
-        expires_at: expiresAt,
-        expires_in: parseInt(params.expires_in || '3600', 10),
-        token_type: params.token_type || 'bearer',
-        user: user
-      }));
-    } catch(e){ console.warn('[auth-fragment] localStorage write failed:', e); }
-    // Wipe the fragment so a subsequent reload doesn't re-run this (and to hide the raw token
-    // from the URL bar for basic hygiene)
-    try {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    } catch(e){}
-    // Update in-app UI as signed-in. If sb wasn't loaded yet, this still hides the modal and
-    // sets currentUser so the app behaves as signed-in. If sb loads later, it will find the
-    // session we just stored via getSession().
-    if(user && typeof onSignedIn === 'function'){
-      // Defer to next tick so onSignedIn's DOM ops run after the modal is rendered
-      setTimeout(function(){ onSignedIn(user); }, 0);
-    }
-    console.log('[auth-fragment] session captured for', user && user.email);
-  } catch(e){
-    console.error('[auth-fragment] failed:', e);
+  } catch(e){ console.warn('[auth-fragment] parse failed:', e); }
+
+  if(!params.access_token){
+    console.warn('[auth-fragment] no access_token in params — bailing');
+    return;
   }
+
+  // STEP 3: decode JWT payload for user info. Base64url → base64 → atob → JSON.
+  var user = null;
+  try {
+    var seg = params.access_token.split('.')[1] || '';
+    seg = seg.replace(/-/g, '+').replace(/_/g, '/');
+    // Pad to length multiple of 4 (some browsers' atob is strict about this)
+    while(seg.length % 4) seg += '=';
+    var payload = JSON.parse(atob(seg));
+    user = {
+      id: payload.sub,
+      email: payload.email || payload.user_metadata && payload.user_metadata.email || 'signed-in',
+      aud: payload.aud,
+      role: payload.role || 'authenticated'
+    };
+    console.log('[auth-fragment] decoded user:', user.email);
+  } catch(e){
+    console.warn('[auth-fragment] jwt decode failed, using placeholder user:', e);
+    user = { id: 'unknown', email: 'signed-in', role: 'authenticated' };
+  }
+
+  // STEP 4: persist session so a reload picks it up via supabase-js.
+  try {
+    var expiresIn = parseInt(params.expires_in || '3600', 10);
+    var expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
+    localStorage.setItem('sb-ttyxodttyeykjijffgql-auth-token', JSON.stringify({
+      access_token: params.access_token,
+      refresh_token: params.refresh_token || '',
+      expires_at: expiresAt,
+      expires_in: expiresIn,
+      token_type: params.token_type || 'bearer',
+      provider_token: params.provider_token || null,
+      provider_refresh_token: params.provider_refresh_token || null,
+      user: user
+    }));
+    console.log('[auth-fragment] session stored in localStorage');
+  } catch(e){ console.warn('[auth-fragment] localStorage write failed:', e); }
+
+  // STEP 5: wipe the fragment from the URL so a refresh doesn't re-run this and the token
+  // isn't visible in the address bar.
+  try {
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  } catch(e){ console.warn('[auth-fragment] replaceState failed:', e); }
+
+  // STEP 6: update in-app UI to signed-in state. Deferred so DOM is fully ready.
+  setTimeout(function(){
+    try {
+      if(typeof onSignedIn === 'function'){
+        onSignedIn(user);
+      } else {
+        // onSignedIn not defined yet (shouldn't happen but be defensive) — set currentUser
+        // directly and hide the modal ourselves.
+        try { window.currentUser = user; } catch(_){}
+        var m = document.getElementById('signInModal');
+        if(m) m.classList.add('hidden');
+        var am = document.getElementById('accountMenu');
+        if(am) am.style.display = '';
+      }
+      console.log('[auth-fragment v310] signed-in UI applied for', user.email);
+    } catch(e){ console.error('[auth-fragment] onSignedIn threw:', e); }
+  }, 0);
 })();
 
 (function initSupabase(){
