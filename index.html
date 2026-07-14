@@ -379,7 +379,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v314</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v315</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -16383,14 +16383,66 @@ function cloudListLibraryItems(){
   // v142: removed the categoryIdOrUncat param. Library is small enough that loading all items
   // once and filtering client-side gives a snappier UX (no DB round-trip on every dropdown
   // change) AND lets us derive the unique-tags list without a second query.
-  if(!sb || !currentUser) return Promise.resolve([]);
+  // v315: added direct-fetch fallback — if sb is missing or errors, hit the REST endpoint with
+  // the stored access_token directly. Same headers supabase-js would have sent, no library
+  // dependency. Solves the case where sb creation quietly failed but the user is otherwise
+  // signed in and has a valid session in localStorage.
+  if(!currentUser) return Promise.resolve([]);
+  var selectCols = 'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, created_at';
+  if(!sb) return _directFetchLibraryItems(selectCols);
   return sb.from('image_library_items')
-    .select('id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, created_at')
+    .select(selectCols)
     .order('created_at', {ascending: false})
     .then(function(res){
       if(res.error) throw new Error(res.error.message || 'Item list failed');
       return res.data || [];
+    })
+    .catch(function(e){
+      console.warn('[library] sb path failed, falling back to direct fetch:', e && e.message);
+      return _directFetchLibraryItems(selectCols);
     });
+}
+
+// v315: read the stored session token from localStorage without any library dependency. Same key
+// supabase-js writes/reads. Returns the raw access_token string, or null if none.
+function _readStoredAccessToken(){
+  try {
+    var raw = localStorage.getItem('sb-ttyxodttyeykjijffgql-auth-token');
+    if(!raw) return null;
+    var parsed = JSON.parse(raw);
+    return parsed && parsed.access_token || null;
+  } catch(_){ return null; }
+}
+
+// v315: direct GET to /rest/v1/image_library_items using the stored JWT. Mirrors what
+// supabase-js would send — same apikey + Authorization headers. Returns [] on any failure so
+// the caller sees an empty library rather than an exception.
+function _directFetchLibraryItems(selectCols){
+  var token = _readStoredAccessToken();
+  if(!token){
+    console.warn('[library-direct] no stored access token — returning empty');
+    return Promise.resolve([]);
+  }
+  var url = 'https://ttyxodttyeykjijffgql.supabase.co/rest/v1/image_library_items'
+    + '?select=' + encodeURIComponent(selectCols)
+    + '&order=created_at.desc';
+  return fetch(url, {
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + token
+    }
+  }).then(function(r){
+    if(!r.ok){
+      return r.text().then(function(t){
+        console.warn('[library-direct] HTTP ' + r.status + ':', t.substring(0, 200));
+        return [];
+      });
+    }
+    return r.json().catch(function(){ return []; });
+  }).catch(function(e){
+    console.warn('[library-direct] fetch threw:', e);
+    return [];
+  });
 }
 
 // v142: generic update for one library row (category, tags, name, etc.)
