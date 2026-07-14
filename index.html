@@ -304,7 +304,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v308</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v309</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -20381,6 +20381,58 @@ function retrySupabaseInit(){
   });
   return _supabaseInitInFlight;
 }
+
+// v309: manual URL-fragment session picker. When Supabase magic-link / OAuth redirects back to us,
+// the session ends up in the URL hash like `#access_token=xxx&refresh_token=yyy&...`. Normally
+// supabase-js reads this automatically on init (detectSessionInUrl:true), but in Jason's env we
+// can't be 100% sure the library is functioning end-to-end. This runs FIRST — completely
+// independent of the library — parses the hash, stores the session in the localStorage key
+// supabase-js expects, sets currentUser + updates UI. Works even if `sb` is null.
+(function catchAuthFragment(){
+  try {
+    var hash = window.location.hash || '';
+    if(hash.indexOf('access_token=') === -1) return;
+    var params = {};
+    hash.replace(/^#/, '').split('&').forEach(function(kv){
+      var i = kv.indexOf('=');
+      if(i > 0) params[kv.substring(0, i)] = decodeURIComponent(kv.substring(i + 1));
+    });
+    if(!params.access_token) return;
+    // Decode the JWT payload to get the user object (Supabase includes email + id in the token)
+    var user = null;
+    try {
+      var payload = JSON.parse(atob(params.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      user = { id: payload.sub, email: payload.email, aud: payload.aud, role: payload.role };
+    } catch(e){ console.warn('[auth-fragment] jwt decode failed:', e); }
+    var expiresAt = Math.floor(Date.now()/1000) + parseInt(params.expires_in || '3600', 10);
+    var projectRef = 'ttyxodttyeykjijffgql';
+    try {
+      localStorage.setItem('sb-' + projectRef + '-auth-token', JSON.stringify({
+        access_token: params.access_token,
+        refresh_token: params.refresh_token || '',
+        expires_at: expiresAt,
+        expires_in: parseInt(params.expires_in || '3600', 10),
+        token_type: params.token_type || 'bearer',
+        user: user
+      }));
+    } catch(e){ console.warn('[auth-fragment] localStorage write failed:', e); }
+    // Wipe the fragment so a subsequent reload doesn't re-run this (and to hide the raw token
+    // from the URL bar for basic hygiene)
+    try {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch(e){}
+    // Update in-app UI as signed-in. If sb wasn't loaded yet, this still hides the modal and
+    // sets currentUser so the app behaves as signed-in. If sb loads later, it will find the
+    // session we just stored via getSession().
+    if(user && typeof onSignedIn === 'function'){
+      // Defer to next tick so onSignedIn's DOM ops run after the modal is rendered
+      setTimeout(function(){ onSignedIn(user); }, 0);
+    }
+    console.log('[auth-fragment] session captured for', user && user.email);
+  } catch(e){
+    console.error('[auth-fragment] failed:', e);
+  }
+})();
 
 (function initSupabase(){
   if(typeof supabase !== 'undefined' && supabase.createClient){
