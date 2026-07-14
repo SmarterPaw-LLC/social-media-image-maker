@@ -304,7 +304,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v305</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v306</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -20717,35 +20717,82 @@ function hideSignInError(){
 }
 
 function doSignIn(){
-  // v300: if sb isn't ready yet, don't dead-end — try to load it now, then retry the sign-in.
-  // Keeps a slow CDN load from becoming a "Refresh the page" wall.
-  if(!sb){
-    showSignInError('Cloud sign-in loading… retrying now.');
-    retrySupabaseInit().then(function(){
-      hideSignInError();
-      doSignIn();   // re-enter now that sb is ready
-    }).catch(function(){
-      showSignInError('Still can\'t reach cloud sign-in. Click "Continue offline" to keep working — Save to Computer and local My Designs still work.');
-    });
-    return;
-  }
+  // v306: sign-in via direct HTTP POST to Supabase auth API. Bypasses the library's own
+  // signInWithPassword flow entirely — that flow was failing for reasons we couldn't pin down
+  // (nothing wrong with the library, the Supabase project, or the network in isolation, but the
+  // combination in one specific browser/environment produced a "sb is null" state that no CDN
+  // retry could fix). This uses the same fetch() call that /auth/v1/health responded to fine in
+  // Jason's browser — proven-reachable path. On success we store the session in localStorage
+  // under the key supabase-js reads at boot, and hand it to the library via setSession() if the
+  // library is loaded, so both future page reloads AND the current in-memory client work.
   var email = (document.getElementById('signInEmail').value || '').trim();
   var password = document.getElementById('signInPassword').value || '';
   if(!email || !password){ showSignInError('Email and password are both required.'); return; }
   hideSignInError();
-  sb.auth.signInWithPassword({email: email, password: password}).then(function(res){
-    if(res.error){
-      showSignInError(res.error.message || 'Sign-in failed.');
-      // v301: probe for outage — invalid password returns a fast 400 (banner won't show); a real
-      // outage returns 5xx or a network fetch failure inside the SDK (banner will show).
-      maybeShowOutageBanner();
-      return;
+
+  var submitBtn = document.querySelector('#signInForm button[type="submit"]');
+  var origLabel = submitBtn ? submitBtn.textContent : null;
+  if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Signing in…'; }
+
+  fetch(SUPABASE_URL + '/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ email: email, password: password })
+  }).then(function(r){
+    if(!r.ok){
+      return r.text().then(function(t){
+        // Try to surface Supabase's structured error message ("Invalid login credentials", etc.)
+        var msg = 'HTTP ' + r.status;
+        try { var j = JSON.parse(t); if(j && (j.error_description || j.msg || j.message)) msg = j.error_description || j.msg || j.message; }
+        catch(_){ if(t) msg = t.substring(0, 200); }
+        throw new Error(msg);
+      });
     }
-    // onAuthStateChange will fire SIGNED_IN and call onSignedIn — no further work here.
+    return r.json();
+  }).then(function(session){
+    if(!session || !session.access_token || !session.user){
+      throw new Error('Malformed auth response (missing access_token or user)');
+    }
+    // Persist session in the format supabase-js expects, so future page reloads pick it up via
+    // sb.auth.getSession() and the user stays signed in. Key format: sb-<projectRef>-auth-token.
+    try {
+      var projectRef = (SUPABASE_URL.match(/https:\/\/([^.]+)/) || [])[1] || '';
+      if(projectRef){
+        var expiresAt = Math.floor(Date.now()/1000) + (session.expires_in || 3600);
+        localStorage.setItem('sb-' + projectRef + '-auth-token', JSON.stringify({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+          expires_at: expiresAt,
+          expires_in: session.expires_in,
+          token_type: session.token_type || 'bearer',
+          user: session.user
+        }));
+      }
+    } catch(e){ console.warn('[auth] could not persist session to localStorage:', e); }
+
+    // Hand the session to the library if it's loaded, so in-memory API calls (list designs, save,
+    // etc.) work without a page reload. If sb is null this is a no-op — the app will still show
+    // the user as signed-in via onSignedIn, and cloud features that require sb will nudge them
+    // to reload (at which point sb.auth.getSession picks up the persisted session).
+    if(sb && sb.auth && typeof sb.auth.setSession === 'function'){
+      sb.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token
+      }).catch(function(e){ console.warn('[auth] setSession failed (non-fatal):', e); });
+    }
+
+    onSignedIn(session.user);
   }).catch(function(e){
-    console.error('[auth] signIn exception:', e);
-    showSignInError('Sign-in failed: ' + (e.message || e));
+    console.error('[auth] direct sign-in failed:', e);
+    showSignInError(e.message || 'Sign-in failed');
     maybeShowOutageBanner();
+  }).then(function(){
+    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = origLabel || 'Sign In'; }
+  }, function(){
+    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = origLabel || 'Sign In'; }
   });
 }
 
