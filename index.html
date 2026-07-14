@@ -379,7 +379,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v318</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v319</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2180,9 +2180,16 @@ function getBoard(){
 // Expose per-board fields as top-level identifiers via window getters/setters.
 // This lets the entire rest of the codebase keep using `layers`, `canvasW`, etc. unchanged.
 (function defineBoardAccessors(){
-  var fields = ['layers','canvasW','canvasH','selectedId','selectedIds','undoStack','redoStack','activePresetId',
-                // v299: saved-design identity, now per-board (see makeBoard for why)
-                '_currentDesignId','_currentCloudId','_lastDesignName','_currentFolderIdForSave'];
+  var fields = ['layers','canvasW','canvasH','selectedId','selectedIds','undoStack','redoStack','activePresetId'];
+  // v319: DO NOT add `_currentDesignId`, `_currentCloudId`, `_lastDesignName`,
+  // `_currentFolderIdForSave` here. They already exist as global `var` declarations elsewhere in
+  // the script, which creates non-configurable window properties. Object.defineProperty CANNOT
+  // convert those to accessors — it throws "Cannot redefine property". The throw kills this
+  // entire IIFE, so NONE of the accessors above get installed either. Result: every access to
+  // `layers`, `canvasW`, etc. silently fails from that point on and the whole app breaks.
+  // v299 tried to make those design-identity fields per-board via this accessor. They stay
+  // global for now — the "duplicate board carries over source's design_id" bug they were
+  // meant to fix has to be solved a different way.
   fields.forEach(function(f){
     Object.defineProperty(window, f, {
       configurable: true,
