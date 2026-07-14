@@ -304,7 +304,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v306</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v307</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -20810,20 +20810,26 @@ function doSignOut(){
 // Requires Google OAuth to be enabled in Supabase → Authentication → Providers → Google with a
 // configured Google Cloud Console OAuth 2.0 Client ID + Secret (see README / setup notes).
 function doGoogleSignIn(){
-  // v300: same retry pattern as doSignIn — don't dead-end if sb is null; try to load it now.
-  if(!sb){
-    showSignInError('Cloud sign-in loading… retrying now.');
-    retrySupabaseInit().then(function(){
-      hideSignInError();
-      doGoogleSignIn();
-    }).catch(function(){
-      showSignInError('Still can\'t reach cloud sign-in. Click "Continue offline" to keep working — Save to Computer and local My Designs still work.');
-    });
-    return;
-  }
+  // v307: direct GET navigation to Supabase's OAuth authorize endpoint. Bypasses the library
+  // entirely — the library's signInWithOAuth() would internally still be fine (it just does
+  // window.location.href), but going direct removes any dependency on the library being loaded.
+  // Critical because in Jason's environment POST /auth/v1/token gets intercepted and returned as
+  // fake 405, but GET requests reach Supabase (proven by the /auth/v1/health log entry). This
+  // whole OAuth round-trip is GET-based from the browser's perspective:
+  //   1. Browser navigates (GET) to /auth/v1/authorize?provider=google&redirect_to=...
+  //   2. Supabase redirects to Google's consent screen
+  //   3. Google redirects back to Supabase with an auth code
+  //   4. Supabase exchanges the code server-to-server (not from the browser) and redirects back
+  //      to our redirect_to URL with the session in the URL fragment
+  //   5. supabase-js's detectSessionInUrl (default true) reads the fragment on next load and
+  //      persists the session — so we come back signed in without any POST from the browser.
   hideSignInError();
-  // redirectTo pins the return URL to this Pages path; without it the browser ends up at the
-  // domain root which serves a 404 on github.io project-pages sites.
+  var authorizeUrl = SUPABASE_URL + '/auth/v1/authorize'
+    + '?provider=google'
+    + '&redirect_to=' + encodeURIComponent(window.location.origin + window.location.pathname);
+  window.location.href = authorizeUrl;
+  return;
+  // Legacy library path retained below for reference; unreachable now.
   sb.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: window.location.origin + window.location.pathname }
