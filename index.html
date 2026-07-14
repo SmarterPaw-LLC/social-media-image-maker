@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v322</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v323</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -16785,7 +16785,21 @@ function openImageLibraryModal(arg){
     renderImageLibrary();
   }).catch(function(e){
     console.error('[lib] load categories failed:', e);
-    document.getElementById('imageLibraryGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#a00;padding:20px;font-size:12px;">Error loading library: ' + (e.message || e) + '</div>';
+    // v323: detect JWT-expired and surface a one-click refresh instead of leaving the user
+    // stranded with a dead-end message. Any other error keeps the plain text.
+    var msg = String(e.message || e);
+    var isExpired = /JWT expired|jwt expired|token.*expired/i.test(msg);
+    var html;
+    if(isExpired){
+      html = '<div style="grid-column:1/-1;text-align:center;padding:20px;font-size:12px;line-height:1.7;">'
+        + '<div style="color:#a00;font-weight:600;margin-bottom:8px;">⚠ Your session expired</div>'
+        + '<div style="color:var(--muted);margin-bottom:12px;">Access tokens live for ~1 hour and the auto-refresh (a POST) is being blocked in your environment.</div>'
+        + '<button onclick="refreshSession()" style="padding:8px 16px;background:var(--green);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">🔄 Refresh session (sign in again with Google)</button>'
+        + '</div>';
+    } else {
+      html = '<div style="grid-column:1/-1;text-align:center;color:#a00;padding:20px;font-size:12px;">Error loading library: ' + msg + '</div>';
+    }
+    document.getElementById('imageLibraryGrid').innerHTML = html;
   });
 }
 
@@ -21068,11 +21082,35 @@ function onSignedIn(user){
 function onSignedOut(){
   currentUser = null;
   document.getElementById('signInModal').classList.remove('hidden');
+  // v323: also drop the head-script's data-authed flag. The CSS rule
+  // `html[data-authed] #signInModal{display:none!important}` (see v311) was permanently hiding
+  // the modal even after Sign Out — removing the hidden class did nothing because the CSS
+  // specificity won. Without this line, Sign Out silently succeeded but the user had no UI to
+  // sign back in.
+  try { document.documentElement.removeAttribute('data-authed'); } catch(_){}
   var accountMenu = document.getElementById('accountMenu');
   if(accountMenu) accountMenu.style.display = 'none';
   closeAccountMenu(); // dismiss the dropdown if it's open at sign-out time
   // Clear password field for safety; keep email so re-sign-in is one fewer keystroke
   var pw = document.getElementById('signInPassword'); if(pw) pw.value = '';
+}
+
+// v323: one-click session refresh. Triggers a fresh Google OAuth round-trip without needing to
+// sign out first — kicks off the same GET-based /auth/v1/authorize flow that Sign In with
+// Google uses. Comes back with a fresh access token and refresh token, which the head script
+// captures and stores. Use case: when your access token expires (~1 hour default) and Supabase's
+// automatic refresh can't run because the refresh POST is blocked in your environment.
+function refreshSession(){
+  // Clear the current session so the OAuth round-trip stores a clean one on return
+  try { localStorage.removeItem('sb-ttyxodttyeykjijffgql-auth-token'); } catch(_){}
+  currentUser = null;
+  try { document.documentElement.removeAttribute('data-authed'); } catch(_){}
+  // Go through the same URL construction as doGoogleSignIn — this bypasses the library and
+  // is proven to work in Jason's environment.
+  var authorizeUrl = 'https://ttyxodttyeykjijffgql.supabase.co/auth/v1/authorize'
+    + '?provider=google'
+    + '&redirect_to=' + encodeURIComponent(window.location.origin + window.location.pathname);
+  window.location.href = authorizeUrl;
 }
 
 // ── ACCOUNT DROPDOWN (v127) ──
