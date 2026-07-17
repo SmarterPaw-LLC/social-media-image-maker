@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v326</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v327</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -12042,30 +12042,36 @@ function bindCanvasEvents(){
         // keeps the size they drag it to instead of snapping back to canvas dims each frame.
         if(selLayer._fillsCanvas) selLayer._fillsCanvas = false;
         resizeState={layerId:selLayer.id,startX:e.clientX,startY:e.clientY,origW:sbds.w,origH:sbds.h,aspect:sbds.w/sbds.h,origScale:selLayer.scale||1};
-        // If we're in a multi-selection, capture each selected layer's original geometry so we
-        // can scale the whole group proportionally. Anchor: top-left of the combined bounding
-        // box — that point stays put while everything scales toward/away from the BR handle.
+        // v327: unified group-resize setup. Two paths trigger it:
+        //   (a) multi-selection resize (Shift+click multiple layers, then drag any resize handle)
+        //   (b) a single group layer selected (its resize handle sits at the union-bounds BR;
+        //       the group itself has no meaningful w/h, so we scale every child instead)
+        // In both cases, we capture each affected layer's original geometry and use the union
+        // top-left as the fixed anchor — that point stays put while everything scales toward/away
+        // from the BR handle.
+        var groupCollect = [];
+        var groupMinX = Infinity, groupMinY = Infinity;
+        function _addToGroupResize(l){
+          if(!l || l.locked) return;
+          if(typeof l.x !== 'number' || typeof l.y !== 'number') return;
+          if(typeof l.w !== 'number' || typeof l.h !== 'number') return;
+          groupCollect.push({id: l.id, origX: l.x, origY: l.y, origW: l.w, origH: l.h});
+          if(l.x < groupMinX) groupMinX = l.x;
+          if(l.y < groupMinY) groupMinY = l.y;
+        }
+        var primaryIsGroup = (selLayer.type === 'group');
         if(selectedIds && selectedIds.length > 1 && selectedIds.indexOf(selLayer.id) >= 0){
-          var group = [];
-          var minX = Infinity, minY = Infinity;
-          selectedIds.forEach(function(id){
-            var l = layers.find(function(x){return x.id===id;});
-            if(!l || l.locked) return;
-            // Only layers with w/h are group-resizable (skip stickers — they use scale instead,
-            // and skip anything without numeric x/y/w/h like text-without-explicit-size).
-            if(typeof l.w !== 'number' || typeof l.h !== 'number') return;
-            if(typeof l.x !== 'number' || typeof l.y !== 'number') return;
-            group.push({id: id, origX: l.x, origY: l.y, origW: l.w, origH: l.h});
-            if(l.x < minX) minX = l.x;
-            if(l.y < minY) minY = l.y;
-          });
-          if(group.length > 1){
-            resizeState.groupIds = group.map(function(g){return g.id;});
-            resizeState.groupOrig = {};
-            group.forEach(function(g){ resizeState.groupOrig[g.id] = g; });
-            resizeState.groupAnchorX = minX;
-            resizeState.groupAnchorY = minY;
-          }
+          selectedIds.forEach(function(id){ _addToGroupResize(layers.find(function(x){return x.id===id;})); });
+        } else if(primaryIsGroup){
+          (selLayer.childIds || []).forEach(function(cid){ _addToGroupResize(layers.find(function(x){return x.id===cid;})); });
+        }
+        if(groupCollect.length > 1){
+          resizeState.groupIds = groupCollect.map(function(g){return g.id;});
+          resizeState.groupOrig = {};
+          groupCollect.forEach(function(g){ resizeState.groupOrig[g.id] = g; });
+          resizeState.groupAnchorX = groupMinX;
+          resizeState.groupAnchorY = groupMinY;
+          resizeState.primaryIsGroup = primaryIsGroup;
         }
         e.preventDefault();
         return;
@@ -12280,15 +12286,18 @@ function bindCanvasEvents(){
         }
         layer.w=Math.round(nw);layer.h=Math.round(nh);
         syncPropWH(layer);
-        // Group resize: scale every other selected layer proportionally around the group anchor.
-        // sx/sy are the horizontal/vertical scale factors derived from the primary layer's change;
-        // each other layer's offset from the anchor and its own size both scale by that factor.
+        // Group resize: scale every layer in the group proportionally around the anchor.
+        // sx/sy are the horizontal/vertical scale factors from the primary's dimensional change;
+        // each layer's offset from the anchor and its own size both scale by that factor.
+        // v327: primaryIsGroup case — the primary IS the group layer itself (its childIds are all
+        // in groupIds); iterate ALL of them (the group layer's own w/h are meaningless and were
+        // already set to nw/nh above harmlessly, but we don't want to skip any child).
         if(resizeState.groupIds && resizeState.groupIds.length > 1){
           var sx = nw / resizeState.origW;
           var sy = nh / resizeState.origH;
           var ax = resizeState.groupAnchorX, ay = resizeState.groupAnchorY;
           resizeState.groupIds.forEach(function(id){
-            if(id === resizeState.layerId) return;   // primary already updated
+            if(!resizeState.primaryIsGroup && id === resizeState.layerId) return;   // multi-select primary already updated
             var l = layers.find(function(x){return x.id===id;});
             if(!l) return;
             var o = resizeState.groupOrig[id];
