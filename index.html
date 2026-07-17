@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v329</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v330</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -12083,8 +12083,28 @@ function bindCanvasEvents(){
         function _addToGroupResize(l){
           if(!l || l.locked) return;
           if(typeof l.x !== 'number' || typeof l.y !== 'number') return;
-          if(typeof l.w !== 'number' || typeof l.h !== 'number') return;
-          groupCollect.push({id: l.id, origX: l.x, origY: l.y, origW: l.w, origH: l.h});
+          // v330: also capture type-specific size properties so scaling actually changes what
+          // each layer type draws. Images and shapes use w/h. Stickers use `scale`. Text uses
+          // fontSize (and w for wrap). Rating uses iconSize + spacing. Buttons use fontSize +
+          // padX/padY (their autoFit derives w/h from those).
+          var o = {
+            id: l.id,
+            origX: l.x, origY: l.y,
+            origW: (typeof l.w === 'number') ? l.w : null,
+            origH: (typeof l.h === 'number') ? l.h : null
+          };
+          if(l.type === 'sticker' && typeof l.scale === 'number') o.origScale = l.scale;
+          if(l.type === 'text' && typeof l.fontSize === 'number') o.origFontSize = l.fontSize;
+          if(l.type === 'rating'){
+            if(typeof l.iconSize === 'number') o.origIconSize = l.iconSize;
+            if(typeof l.spacing === 'number') o.origSpacing = l.spacing;
+          }
+          if(l.type === 'button'){
+            if(typeof l.fontSize === 'number') o.origFontSize = l.fontSize;
+            if(typeof l.padX === 'number') o.origPadX = l.padX;
+            if(typeof l.padY === 'number') o.origPadY = l.padY;
+          }
+          groupCollect.push(o);
           if(l.x < groupMinX) groupMinX = l.x;
           if(l.y < groupMinY) groupMinY = l.y;
         }
@@ -12339,12 +12359,15 @@ function bindCanvasEvents(){
         // Group resize: scale every layer in the group proportionally around the anchor.
         // sx/sy are the horizontal/vertical scale factors from the primary's dimensional change;
         // each layer's offset from the anchor and its own size both scale by that factor.
-        // v327: primaryIsGroup case — the primary IS the group layer itself (its childIds are all
-        // in groupIds); iterate ALL of them (the group layer's own w/h are meaningless and were
-        // already set to nw/nh above harmlessly, but we don't want to skip any child).
+        // v327: primaryIsGroup case — the primary IS the group layer itself; iterate ALL of them.
+        // v330: also scale type-specific size properties (fontSize, sticker scale, iconSize, etc.)
+        // so text, stickers, rating icons, and buttons actually change size — not just their
+        // (often unused) w/h. avg = geometric-ish mean of sx & sy, used for uniformly-scaling
+        // properties (font size, icon size) that shouldn't stretch anisotropically.
         if(resizeState.groupIds && resizeState.groupIds.length > 1){
           var sx = nw / resizeState.origW;
           var sy = nh / resizeState.origH;
+          var avgScale = (Math.abs(sx) + Math.abs(sy)) / 2;
           var ax = resizeState.groupAnchorX, ay = resizeState.groupAnchorY;
           resizeState.groupIds.forEach(function(id){
             if(!resizeState.primaryIsGroup && id === resizeState.layerId) return;   // multi-select primary already updated
@@ -12354,8 +12377,15 @@ function bindCanvasEvents(){
             if(!o) return;
             l.x = Math.round(ax + (o.origX - ax) * sx);
             l.y = Math.round(ay + (o.origY - ay) * sy);
-            l.w = Math.round(o.origW * sx);
-            l.h = Math.round(o.origH * sy);
+            if(o.origW != null) l.w = Math.round(o.origW * sx);
+            if(o.origH != null) l.h = Math.round(o.origH * sy);
+            // v330: type-specific scaling
+            if(o.origScale != null)    l.scale = o.origScale * avgScale;
+            if(o.origFontSize != null) l.fontSize = Math.max(6, Math.round(o.origFontSize * avgScale));
+            if(o.origIconSize != null) l.iconSize = Math.max(4, Math.round(o.origIconSize * avgScale));
+            if(o.origSpacing != null)  l.spacing = Math.round(o.origSpacing * sx);
+            if(o.origPadX != null)     l.padX = Math.round(o.origPadX * sx);
+            if(o.origPadY != null)     l.padY = Math.round(o.origPadY * sy);
           });
         }
       }
