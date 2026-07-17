@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v327</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v328</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -12031,6 +12031,35 @@ function bindCanvasEvents(){
       if(Math.abs(lcx-rhx)<hitR && Math.abs(lcy-rhy)<hitR){
         snapshotState();
         rotateState={layerId:selLayer.id, ccx:ccx, ccy:ccy, origRotation:selLayer.rotation||0, startAngleRad:Math.atan2(cy-ccy, cx-ccx)};
+        // v328: group rotation. Capture each child's original rotation + bounds-center + the
+        // offset from bounds-center to layer.x/y. During mousemove we orbit each child's center
+        // around the group center by the delta AND increment its own rotation by the same delta.
+        // Result: the whole group spins around its bbox center like a rigid body, each child
+        // maintaining its position and orientation relative to the group.
+        if(selLayer.type === 'group'){
+          var origChildren = [];
+          (selLayer.childIds || []).forEach(function(cid){
+            var c = layers.find(function(x){return x.id === cid;});
+            if(!c || c.locked) return;
+            if(typeof c.x !== 'number' || typeof c.y !== 'number') return;
+            var cb = getLayerBounds(c);
+            var childCx = cb.x + cb.w/2;
+            var childCy = cb.y + cb.h/2;
+            origChildren.push({
+              id: c.id,
+              origRotation: c.rotation || 0,
+              origCx: childCx,
+              origCy: childCy,
+              // Offset from bounds-center to the layer's own x/y (top-left). For a plain image
+              // that's (-w/2, -h/2). Preserved so we can reconstruct layer.x/y from the new center.
+              offsetX: c.x - childCx,
+              offsetY: c.y - childCy
+            });
+          });
+          if(origChildren.length){
+            rotateState.origChildren = origChildren;
+          }
+        }
         e.preventDefault();
         return;
       }
@@ -12220,6 +12249,27 @@ function bindCanvasEvents(){
       // Normalize to [-180, 180]
       newRot=((newRot+540)%360)-180;
       layer.rotation=newRot;
+      // v328: group rotation — orbit each child's center around the group center by the same
+      // final delta the group used (accounts for shift-snap), and increment each child's own
+      // rotation by that delta. Result: rigid-body rotation of the whole group.
+      if(rotateState.origChildren && rotateState.origChildren.length){
+        var effDelta = newRot - rotateState.origRotation;
+        var rad = effDelta * Math.PI / 180;
+        var cs = Math.cos(rad), sn = Math.sin(rad);
+        rotateState.origChildren.forEach(function(o){
+          var c = layers.find(function(x){return x.id === o.id;});
+          if(!c) return;
+          // Rotate the child's original bounds-center around the group center
+          var dx = o.origCx - rotateState.ccx;
+          var dy = o.origCy - rotateState.ccy;
+          var newCx = rotateState.ccx + dx*cs - dy*sn;
+          var newCy = rotateState.ccy + dx*sn + dy*cs;
+          // Reconstruct top-left using the captured offset
+          c.x = Math.round(newCx + o.offsetX);
+          c.y = Math.round(newCy + o.offsetY);
+          c.rotation = ((o.origRotation + effDelta + 540) % 360) - 180;
+        });
+      }
       // sync slider if present
       var slider=document.getElementById(layer.type==='shape'?'pshrotation':layer.type==='svg'?'svgrotation':layer.type==='sticker'?'prot':layer.type==='sprinkle'?'psprRot':layer.type==='arrow'?'parrrotation':'protation');
       if(slider){slider.value=Math.round(newRot); var v=document.getElementById(slider.id+'_v'); if(v) v.textContent=Math.round(newRot);}
