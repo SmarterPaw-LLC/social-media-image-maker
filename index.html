@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v334</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v335</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -473,6 +473,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openImageLibraryModal();">📚 From library…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openClipArtBrowser();">🎨 Clip art (open source)…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openStockPhotoBrowser();">📷 Stock photo (Pixabay)…</button>
+          <button class="add-image-popup-item" onclick="closeAddImageMenu(); addEmojiPatternLayer();" title="Drop one emoji tiled in a grid or scattered randomly across the canvas with a chosen count">🎉 Emoji tile / scatter…</button>
         </div>
       </div>
       <button class="btn-add" id="addStickerBtn" onclick="addStickerLayer()">+ Sticker</button>
@@ -8063,6 +8064,97 @@ function _measureButtonText(ctx, layer){
 //                                           unfilled = 30% opacity (natural "greyed out" look)
 // Width is auto-fit from count × iconSize + (count−1) × spacing when autoFit is on; user can
 // override by dragging the resize handle (which turns autoFit off).
+// ── EMOJI PATTERN LAYER (v335) ──
+// Drops one emoji character N times across the canvas in one of two modes:
+//   'tile'    — regular grid layout that fills the bounding box
+//   'scatter' — pseudo-random placement seeded by scatterSeed (reproducible)
+// Emojis render natively via canvas fillText; the browser picks the emoji font automatically
+// for emoji code points, so no font loading required.
+function addEmojiPatternLayer(){
+  snapshotState();
+  var id = nextId++;
+  layers.push({
+    id: id, type: 'emojiPattern', name: 'Emoji ' + id,
+    emoji: '🐱',
+    mode: 'scatter',       // 'tile' | 'scatter'
+    count: 20,
+    size: 80,              // per-emoji size in canvas px
+    spacing: 20,           // tile mode: gap between emojis
+    randomRotation: 45,    // scatter mode: max ± rotation jitter in degrees
+    scatterSeed: Math.floor(Math.random() * 1e6),  // reproducibility handle
+    x: 0, y: 0, w: canvasW, h: canvasH,   // default to full canvas
+    opacity: 100, rotation: 0
+  });
+  selectLayer(id); renderLayerList(); redraw();
+}
+
+// Seeded LCG (parkmiller) — same math the sprinkle and cosmic layers use, so scatter placement
+// stays stable across re-renders/exports until the seed changes.
+function _emojiPatternRng(seed){
+  var s = (seed | 0) || 1;
+  return function(){
+    s = (s * 48271) % 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
+function drawEmojiPatternLayer(ctx, layer){
+  var emoji = layer.emoji || '🐱';
+  var size = Math.max(4, layer.size || 80);
+  var count = Math.max(1, layer.count || 1);
+  var x = layer.x || 0, y = layer.y || 0;
+  var w = Math.max(1, layer.w || canvasW), h = Math.max(1, layer.h || canvasH);
+  var mode = layer.mode || 'scatter';
+  ctx.save();
+  // Rotate the whole pattern around its bbox center if the layer has a rotation. Same withRotation
+  // pattern as other layers use — inlined here since emojiPattern doesn't share the standard
+  // single-rectangle bounds.
+  if(layer.rotation){
+    var ccx = x + w/2, ccy = y + h/2;
+    ctx.translate(ccx, ccy);
+    ctx.rotate(layer.rotation * Math.PI / 180);
+    ctx.translate(-ccx, -ccy);
+  }
+  ctx.font = size + 'px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "EmojiOne Color", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if(mode === 'tile'){
+    // Fit `count` cells into the bbox in a rough sqrt-based grid, then draw one per cell.
+    var spacing = Math.max(0, layer.spacing || 0);
+    var cellsPerRow = Math.max(1, Math.round(Math.sqrt(count * (w / Math.max(h, 1)))));
+    var rows = Math.ceil(count / cellsPerRow);
+    var cellW = w / cellsPerRow;
+    var cellH = h / rows;
+    for(var i = 0; i < count; i++){
+      var col = i % cellsPerRow;
+      var row = Math.floor(i / cellsPerRow);
+      var ex = x + cellW * (col + 0.5);
+      var ey = y + cellH * (row + 0.5);
+      ctx.fillText(emoji, ex, ey);
+    }
+  } else {
+    // Scatter: seeded random placement within (x, y, w, h). Each emoji gets its own random
+    // rotation within ± randomRotation.
+    var rng = _emojiPatternRng(layer.scatterSeed);
+    var jitter = Math.max(0, layer.randomRotation || 0);
+    for(var j = 0; j < count; j++){
+      var jx = x + rng() * w;
+      var jy = y + rng() * h;
+      var jrot = jitter ? ((rng() - 0.5) * 2 * jitter) : 0;
+      if(jrot){
+        ctx.save();
+        ctx.translate(jx, jy);
+        ctx.rotate(jrot * Math.PI / 180);
+        ctx.fillText(emoji, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.fillText(emoji, jx, jy);
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function addRatingLayer(){
   snapshotState();
   var id = nextId++;
@@ -9505,7 +9597,7 @@ function _renderLayerRow(list, layer, depth, parentGroup){
     item.style.borderLeft = '2px solid var(--border)';
     item.style.paddingLeft = '4px';
   }
-  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾'};
+  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾',emojiPattern:'🎉'};
   var eyeIcon = layer.hidden ? '⊘' : '●';
   var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
   var lockIcon = layer.locked ? '🔒' : '🔓';
@@ -9700,6 +9792,7 @@ function renderProps(){
   else if(layer.type==='button')  innerHtml=buildButtonProps(layer);   // v282
   else if(layer.type==='group')   innerHtml=buildGroupProps(layer);    // v285
   else if(layer.type==='rating')  innerHtml=buildRatingProps(layer);   // v293
+  else if(layer.type==='emojiPattern') innerHtml=buildEmojiPatternProps(layer);   // v335
   // v257: append a shared blend-mode dropdown to every layer panel. Applied in
   // _drawSingleLayerInto via globalCompositeOperation so it composes with whatever
   // pixels the layer below has already rendered. Works for any layer type.
@@ -10564,6 +10657,36 @@ function buildButtonProps(l){
 // ── RATING LAYER PROPS (v293) ──
 // Icon-type picker, filled/count sliders, colors, and a small emoji entry that only shows when
 // iconType is 'emoji'. Filled slider uses 0.5 step so half-star ratings work naturally.
+// v335: emoji-pattern property panel — pick the emoji, mode (tile/scatter), count, and size.
+// Scatter mode adds a random-rotation slider + seed. Tile mode adds a spacing slider.
+function buildEmojiPatternProps(l){
+  var isScatter = (l.mode || 'scatter') === 'scatter';
+  return '<div class="prop-section">'
+    + '<label style="font-size:10px;color:var(--muted);">Emoji</label>'
+    + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
+      + '<input type="text" id="pep_emoji" value="'+escAttr(l.emoji||'🐱')+'" maxlength="4" style="flex:1;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:22px;text-align:center;">'
+      + '<button type="button" class="btn-add" id="pep_emojiPickerBtn" style="padding:6px 10px;font-size:11px;" title="Open emoji picker">🎉 Pick</button>'
+    + '</div>'
+    + '<div id="pep_emojiPicker" class="hidden" style="border:1px solid var(--border);border-radius:6px;padding:6px;margin-bottom:8px;background:#fafafa;max-height:220px;overflow-y:auto;"></div>'
+    + SEL('Mode', 'pep_mode', [['scatter','Scatter (random)'],['tile','Tile (grid)']], l.mode || 'scatter')
+    + R('Number of copies', 'pep_count', l.count || 20, 1, 300, 1)
+    + R('Emoji size',       'pep_size',  l.size  || 80, 8, 400, 1)
+    + (isScatter
+        ? R('Random rotation ±°', 'pep_randomRotation', l.randomRotation || 0, 0, 180, 1)
+          + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
+            + '<label style="font-size:10px;color:var(--muted);flex:1;">Scatter seed</label>'
+            + '<input type="number" id="pep_scatterSeed" value="'+(l.scatterSeed||0)+'" style="width:110px;padding:5px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;">'
+            + '<button type="button" class="btn-sm" id="pep_reroll" title="New random layout">🎲</button>'
+          + '</div>'
+        : R('Spacing', 'pep_spacing', l.spacing || 20, 0, 200, 1)
+      )
+    + NUMPAIR('X (px)', 'nepx', l.x, 'Y (px)', 'nepy', l.y)
+    + NUMPAIR('W (px)', 'nepw', l.w, 'H (px)', 'neph', l.h)
+    + R('Rotation', 'pep_rotation', l.rotation || 0, -180, 180, 1)
+    + R('Opacity',  'pep_opacity',  l.opacity  || 100, 0, 100, 1)
+    + moveBtns(l.id) + '</div>';
+}
+
 function buildRatingProps(l){
   var isEmoji = l.iconType === 'emoji';
   var iconOpts = [
@@ -11381,6 +11504,44 @@ function bindPropEvents(layer){
     rng('prat_rotation', function(v){ layer.rotation = +v; redraw(); });
     rng('prat_opacity',  function(v){ layer.opacity  = +v; redraw(); });
     bindShadowEvents('prat_', layer);
+  } else if(layer.type==='emojiPattern'){
+    // v335: emoji-pattern bindings. Mode toggle rebuilds the panel because scatter and tile
+    // expose different secondary controls.
+    on('pep_emoji', 'input', function(e){ layer.emoji = e.target.value; redraw(); });
+    on('pep_emojiPickerBtn', 'click', function(e){
+      e.stopPropagation();
+      var picker = document.getElementById('pep_emojiPicker');
+      var input = document.getElementById('pep_emoji');
+      if(!picker || !input) return;
+      if(picker.classList.contains('hidden')){
+        picker.classList.remove('hidden');
+        openEmojiPicker(picker, input);
+        // Sync layer state whenever the picker writes into the input
+        input.addEventListener('input', function _syncOnce(){
+          layer.emoji = input.value; redraw();
+        });
+      } else {
+        picker.classList.add('hidden');
+      }
+    });
+    on('pep_mode', 'change', function(e){ layer.mode = e.target.value; renderProps(); redraw(); });
+    rng('pep_count', function(v){ layer.count = Math.max(1, Math.round(+v)); redraw(); });
+    rng('pep_size',  function(v){ layer.size  = +v; redraw(); });
+    rng('pep_spacing',        function(v){ layer.spacing = +v; redraw(); });
+    rng('pep_randomRotation', function(v){ layer.randomRotation = +v; redraw(); });
+    on('pep_scatterSeed', 'input', function(e){ layer.scatterSeed = parseInt(e.target.value, 10) || 0; redraw(); });
+    on('pep_reroll', 'click', function(){
+      layer.scatterSeed = Math.floor(Math.random() * 1e6);
+      var seedEl = document.getElementById('pep_scatterSeed');
+      if(seedEl) seedEl.value = layer.scatterSeed;
+      redraw();
+    });
+    num('nepx', function(v){ layer.x = v; redraw(); });
+    num('nepy', function(v){ layer.y = v; redraw(); });
+    num('nepw', function(v){ layer.w = v; redraw(); });
+    num('neph', function(v){ layer.h = v; redraw(); });
+    rng('pep_rotation', function(v){ layer.rotation = +v; redraw(); });
+    rng('pep_opacity',  function(v){ layer.opacity  = +v; redraw(); });
   } else if(layer.type==='sprinkle'){
     // Position / size — number inputs only (no sliders). Users drag on-canvas for visual positioning.
     num('nsprx', function(v){ layer.x = v; redraw(); });
@@ -12920,6 +13081,7 @@ function _drawSingleLayerInto(ctx, layer){
   else if(layer.type==='group')_drawGroupInto(ctx,layer);   // v270
   else if(layer.type==='button')drawButtonLayer(ctx,layer);  // v282
   else if(layer.type==='rating')drawRatingLayer(ctx,layer);  // v293
+  else if(layer.type==='emojiPattern')drawEmojiPatternLayer(ctx,layer);  // v335
   ctx.restore();
 }
 
