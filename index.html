@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v330</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v331</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4465,13 +4465,22 @@ function bindKeyboardShortcuts(){
     // Delete / Backspace on selected layer(s)
     if((e.key === 'Delete' || e.key === 'Backspace') && (selectedId != null || (selectedIds && selectedIds.length))){
       if(cropState) return; // don't delete while cropping
-      // Build list of layers to delete (multi-select aware)
-      var ids = (selectedIds && selectedIds.length) ? selectedIds.slice() : [selectedId];
-      var anyLocked = ids.some(function(id){
+      // v331: build the delete-list from BOTH selectedIds (multi-select) AND selectedId (single
+      // primary), deduped, since either can be set independently in edge cases (a layer-list
+      // click that mutates selectedId without touching selectedIds, etc.). Also filter out
+      // locked layers so the delete PROCEEDS on the rest instead of silently no-op'ing when the
+      // selection happens to include one locked item (v330 and earlier hard-returned).
+      var idSet = {};
+      if(selectedIds && selectedIds.length){
+        selectedIds.forEach(function(id){ if(id != null) idSet[id] = true; });
+      }
+      if(selectedId != null) idSet[selectedId] = true;
+      var ids = Object.keys(idSet).map(function(k){ return isNaN(+k) ? k : +k; });
+      var deletable = ids.filter(function(id){
         var l = layers.find(function(x){return x.id===id;});
-        return l && l.locked;
+        return l && !l.locked;
       });
-      if(anyLocked) return; // don't delete if any selected layer is locked
+      if(!deletable.length) return;   // nothing to delete (all locked or none found) — silently allow the key
       e.preventDefault();
       // v268: switched from snapshotState() (light) to snapshotStateFull() (heavy). The light
       // snapshot strips image/video/svg source data, restoring layer transforms from the live
@@ -4480,7 +4489,7 @@ function bindKeyboardShortcuts(){
       // bytes directly so the layer comes back intact. One snapshot per delete-keypress (covers
       // multi-select); image bytes are only large for image/framedImage/video layers.
       snapshotStateFull();
-      ids.forEach(function(id){ deleteLayer(id); });
+      deletable.forEach(function(id){ deleteLayer(id); });
       selectedIds = [];
     }
   });
