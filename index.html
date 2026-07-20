@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v333</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v334</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -7974,7 +7974,12 @@ function drawButtonLayer(ctx, layer){
           grad = ctx.createConicGradient(angRad, cx, cy);
         } else {
           var ang = ((layer.gradAngle == null ? 135 : layer.gradAngle)) * Math.PI/180;
-          var len = Math.sqrt(w*w + h*h)/2;
+          // v334: use bounding-box projection onto the gradient direction rather than diagonal/2.
+          // Old formula (sqrt(w²+h²)/2) always used the diagonal, so on a wide-short button (360×90)
+          // with a vertical gradient (90°) the stops spanned ~370px while the button was only 90px
+          // tall — the visible slice looked nearly solid. Projection makes the gradient exactly
+          // fit the visible extent along the chosen angle: h at 90°, w at 0°, in between at diagonals.
+          var len = (Math.abs(Math.cos(ang)) * w + Math.abs(Math.sin(ang)) * h) / 2;
           var gx1 = cx - Math.cos(ang)*len, gy1 = cy - Math.sin(ang)*len;
           var gx2 = cx + Math.cos(ang)*len, gy2 = cy + Math.sin(ang)*len;
           grad = ctx.createLinearGradient(gx1, gy1, gx2, gy2);
@@ -14216,7 +14221,10 @@ function drawShapeLayer(ctx,layer){
           grad = ctx.createConicGradient(angRad, cx2, cy2);
         } else {
           var ang=((layer.gradAngle==null?135:layer.gradAngle))*Math.PI/180;
-          var len=Math.sqrt(w*w+h*h)/2;
+          // v334: bounding-box projection (see button-layer comment for full rationale) — fits
+          // the gradient span exactly to the visible extent along the chosen angle so a wide-short
+          // shape at a vertical angle doesn't render as near-solid.
+          var len=(Math.abs(Math.cos(ang))*w + Math.abs(Math.sin(ang))*h)/2;
           var gx1=cx2-Math.cos(ang)*len, gy1=cy2-Math.sin(ang)*len;
           var gx2=cx2+Math.cos(ang)*len, gy2=cy2+Math.sin(ang)*len;
           grad = ctx.createLinearGradient(gx1,gy1,gx2,gy2);
@@ -14278,7 +14286,9 @@ function _buildShapeStrokeGradient(ctx, layer){
   var cx = x + w/2, cy = y + h/2;
   var gradType = layer.strokeGradType || layer.gradType || 'linear';
   var ang = ((layer.strokeGradAngle == null ? (layer.gradAngle == null ? 135 : layer.gradAngle) : layer.strokeGradAngle)) * Math.PI/180;
-  var len = Math.sqrt(w*w + h*h) / 2;
+  // v334: bounding-box projection so wide-short shapes with vertical stroke gradients don't look
+  // near-solid (same bug fix as fill gradient — see comment there for details).
+  var len = (Math.abs(Math.cos(ang)) * w + Math.abs(Math.sin(ang)) * h) / 2;
   var grad;
   if(gradType === 'radial'){
     grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h)/2);
