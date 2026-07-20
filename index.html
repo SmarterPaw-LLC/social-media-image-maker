@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v332</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v333</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8009,21 +8009,30 @@ function drawButtonLayer(ctx, layer){
     ctx.font = (layer.fontWeight || 700) + ' ' + (layer.fontSize || 56) + 'px ' + (layer.fontFamily || 'sans-serif');
     ctx.fillStyle = layer.textColor || '#FFFFFF';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    // v333: use alphabetic baseline + actual glyph bounds to center. `textBaseline='middle'` centers
+    // the em-square, but display fonts like Meowijuana/Cooper Black have asymmetric glyph bodies
+    // inside their em squares — the visible letters end up drifting upward. Measuring
+    // actualBoundingBoxAscent/Descent (the tight bounding box of the drawn ink) and offsetting
+    // the baseline by (ascent - descent)/2 puts the visible glyph center exactly at h/2.
+    ctx.textBaseline = 'alphabetic';
+    var _mt = ctx.measureText(display);
+    var _asc = (_mt.actualBoundingBoxAscent  != null) ? _mt.actualBoundingBoxAscent  : (layer.fontSize || 56) * 0.75;
+    var _dsc = (_mt.actualBoundingBoxDescent != null) ? _mt.actualBoundingBoxDescent : (layer.fontSize || 56) * 0.10;
+    var baselineY = y + h/2 + (_asc - _dsc) / 2;
     // Manual letter-spacing draw so the tracking is honored across all browsers.
     var ls = layer.letterSpacing || 0;
     if(ls){
       var totalW = _measureButtonText(ctx, layer).w;
       var cursor = x + w/2 - totalW/2;
+      ctx.textAlign = 'left';
       for(var i = 0; i < display.length; i++){
         var ch = display[i];
         var chW = ctx.measureText(ch).width;
-        ctx.textAlign = 'left';
-        ctx.fillText(ch, cursor, y + h/2);
+        ctx.fillText(ch, cursor, baselineY);
         cursor += chW + ls;
       }
     } else {
-      ctx.fillText(display, x + w/2, y + h/2);
+      ctx.fillText(display, x + w/2, baselineY);
     }
     ctx.restore();
   });
