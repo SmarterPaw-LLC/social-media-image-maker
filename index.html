@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v336</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v337</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10666,13 +10666,23 @@ function buildButtonProps(l){
 // Scatter mode adds a random-rotation slider + seed. Tile mode adds a spacing slider.
 function buildEmojiPatternProps(l){
   var isScatter = (l.mode || 'scatter') === 'scatter';
+  var curEmoji = l.emoji || '🐱';
   return '<div class="prop-section">'
     + '<label style="font-size:10px;color:var(--muted);">Emoji</label>'
-    + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
-      + '<input type="text" id="pep_emoji" value="'+escAttr(l.emoji||'🐱')+'" maxlength="4" style="flex:1;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:22px;text-align:center;">'
-      + '<button type="button" class="btn-add" id="pep_emojiPickerBtn" style="padding:6px 10px;font-size:11px;" title="Open emoji picker">🎉 Pick</button>'
+    // v337: big square preview so you can actually see what emoji is set. Click it to open the
+    // picker inline; the text field is still there below for direct typing/paste.
+    + '<div style="display:flex;gap:8px;align-items:stretch;margin-bottom:6px;">'
+      + '<button type="button" id="pep_emojiPickerBtn" title="Click to open emoji picker" style="width:72px;height:72px;flex-shrink:0;border:2px solid var(--border);border-radius:8px;background:#fff;font-size:44px;line-height:1;cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;">'
+        + escAttr(curEmoji)
+      + '</button>'
+      + '<div style="flex:1;display:flex;flex-direction:column;gap:4px;">'
+        + '<input type="text" id="pep_emoji" value="'+escAttr(curEmoji)+'" maxlength="4" placeholder="🐱" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:26px;text-align:center;box-sizing:border-box;">'
+        + '<div style="font-size:10px;color:var(--muted);line-height:1.3;">Type or paste any emoji, or click the tile to browse.</div>'
+      + '</div>'
     + '</div>'
-    + '<div id="pep_emojiPicker" class="hidden" style="border:1px solid var(--border);border-radius:6px;padding:6px;margin-bottom:8px;background:#fafafa;max-height:220px;overflow-y:auto;"></div>'
+    // v337: picker container is now much taller (400px) and full sidebar width so the built-in
+    // grid + search + category tabs actually have room to work.
+    + '<div id="pep_emojiPicker" class="hidden" style="border:1.5px solid var(--border);border-radius:6px;padding:6px;margin-bottom:8px;background:#fafafa;height:400px;overflow:hidden;"></div>'
     + SEL('Mode', 'pep_mode', [['scatter','Scatter (random)'],['tile','Tile (grid)']], l.mode || 'scatter')
     + R('Number of copies', 'pep_count', l.count || 20, 1, 300, 1)
     + R('Emoji size',       'pep_size',  l.size  || 80, 8, 400, 1)
@@ -11528,7 +11538,13 @@ function bindPropEvents(layer){
   } else if(layer.type==='emojiPattern'){
     // v335: emoji-pattern bindings. Mode toggle rebuilds the panel because scatter and tile
     // expose different secondary controls.
-    on('pep_emoji', 'input', function(e){ layer.emoji = e.target.value; redraw(); });
+    on('pep_emoji', 'input', function(e){
+      layer.emoji = e.target.value;
+      // v337: keep the big preview tile in sync with typed input
+      var btn = document.getElementById('pep_emojiPickerBtn');
+      if(btn) btn.textContent = e.target.value || '🐱';
+      redraw();
+    });
     on('pep_emojiPickerBtn', 'click', function(e){
       e.stopPropagation();
       var picker = document.getElementById('pep_emojiPicker');
@@ -11537,12 +11553,9 @@ function bindPropEvents(layer){
       if(picker.classList.contains('hidden')){
         picker.classList.remove('hidden');
         openEmojiPicker(picker, input);
-        // Sync layer state whenever the picker writes into the input
-        input.addEventListener('input', function _syncOnce(){
-          layer.emoji = input.value; redraw();
-        });
       } else {
         picker.classList.add('hidden');
+        if(typeof closeEmojiPicker === 'function') closeEmojiPicker();
       }
     });
     on('pep_mode', 'change', function(e){ layer.mode = e.target.value; renderProps(); redraw(); });
