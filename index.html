@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v331</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v332</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -7888,12 +7888,19 @@ function addButtonLayer(){
   snapshotState();
   var id = nextId++;
   var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+  // v332: default new buttons to match the SmarterPaw Shopify CTA style — white 3px-equivalent
+  // border, subtle corners, and the three-stop vertical highlight-shadow-highlight green gradient
+  // that Shopify's `.lp-promo-bar__btn` uses (background: linear-gradient(180deg, #8ab81d 0%,
+  // #3c8e14 50%, #8ab81d 100%)). Font stays the brand's default heading face (Meowijuana =
+  // Cooper Black-style; KKZ = Barlow Condensed) so the button looks native to the brand.
   var defaultFont = fontList[0];
-  // Default gradient: pick the current brand's first preset if present, else fall back to
-  // brand-appropriate hardcoded colors so a new button always looks intentional.
-  var preset = (gradientPresets && gradientPresets.length) ? gradientPresets[0] : null;
-  var gTop = preset ? preset.top    : (currentBrand === 'kkz' ? '#F79C0B' : '#f07830');
-  var gBot = preset ? preset.bottom : (currentBrand === 'kkz' ? '#F26C1F' : '#a63e14');
+  var isMeowi = (currentBrand !== 'kkz');
+  // Brand-appropriate gradient stops. Meowi uses the site green; KKZ uses its orange.
+  var gStops = isMeowi
+    ? ['#8ab81d', '#3c8e14', '#8ab81d']
+    : ['#F79C0B', '#C4530F', '#F79C0B'];
+  var gTop = gStops[0];
+  var gBot = gStops[1];
   layers.push({
     id:id, type:'button', name:'Button '+id,
     text:'CTA TEXT',
@@ -7903,17 +7910,18 @@ function addButtonLayer(){
     fontSize: 56,
     textColor: '#FFFFFF',
     uppercase: true,
-    letterSpacing: 2,
-    // Fill (mirrors shape layer: solid / gradient / none)
+    letterSpacing: 4,   // v332: ~0.08em at 56px = 4.5px, matches Shopify's 0.08em tracking
+    // Fill — three-stop gradient reproduces Shopify's highlight-shadow-highlight look
     fillType: 'gradient',
     fillColor: gTop,
     gradTop: gTop, gradBottom: gBot,
-    gradType: 'linear', gradAngle: 135,
-    // Shape
-    cornerRadius: 999,   // pill — capped to min(w,h)/2 in the path helper
+    gradStops: gStops,   // v332: three-stop vertical gradient (top-middle-bottom)
+    gradType: 'linear', gradAngle: 90,   // v332: 90 = top-to-bottom (matches CSS 180deg)
+    // Shape — subtle rounded rect instead of the previous pill (Shopify uses ~3px border-radius)
+    cornerRadius: 8,     // v332: gentle rounding, not full pill
     padX: 44, padY: 18,
-    strokeColor: 'rgba(0,0,0,0)',   // sentinel = no outline; picker still displays white so
-    strokeWidth: 0,                 // Jason's example (white outline) is toggleable via the width
+    strokeColor: '#FFFFFF',   // v332: white outline like Shopify's `border: 3px solid #ffffff`
+    strokeWidth: 6,           // v332: scaled up so it reads at canvas resolution (page 3px ≈ canvas 6-8)
     autoFit: true,   // when true, recompute w/h from text metrics + padding on every draw
     // Placement — dead center of canvas as a sane default
     x: Math.round(canvasW*0.5 - 180), y: Math.round(canvasH*0.5 - 45),
