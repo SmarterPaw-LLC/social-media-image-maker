@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v335</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v336</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10503,8 +10503,13 @@ function buildShapeProps(l){
           +COL('Top','pshGradTop',l.gradTop||'#8ab81d')
           +COL('Bottom','pshGradBot',l.gradBottom||'#3c8e14')
           +'</div>'
+          // v336: per-stop opacity sliders for the two ends of the gradient. Setting either to
+          // less than 100 converts the stop's hex color to rgba() at render time — that's what
+          // lets a gradient fade to fully or partially transparent.
+          +R('Top opacity',    'pshGradTopOpacity',    l.gradTopOpacity    == null ? 100 : l.gradTopOpacity,    0, 100, 1)
+          +R('Bottom opacity', 'pshGradBottomOpacity', l.gradBottomOpacity == null ? 100 : l.gradBottomOpacity, 0, 100, 1)
           +brandSwatchesHtml('pshColor')
-          +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click = Top · Alt+Click = Bottom</div>'
+          +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click = Top · Alt+Click = Bottom · Set either opacity to 0 for a fade-to-transparent</div>'
     )
     +'<div style="margin-top:8px;margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
     +'<div class="preset-grid" style="margin-top:3px;">'
@@ -11072,14 +11077,26 @@ function buildTextProps(l){
 // Helper: apply a layer's stops to a CanvasGradient object.
 // Uses layer.gradStops[] when present (multi-stop), otherwise the classic 2-stop (gradTop/gradBottom).
 function addLayerGradientStops(grad, layer){
+  // v336: per-stop opacity. Two paths — multi-stop (gradStops[] with parallel gradStopOpacities[])
+  // and simple 2-stop (gradTop/gradBottom with gradTopOpacity/gradBottomOpacity). Opacity defaults
+  // to 100 when unset so existing layers render identically. When set, the stop's hex color is
+  // converted to rgba() with the alpha applied — this is what lets a gradient fade to
+  // transparent, or have a translucent middle stop.
   if(layer.gradStops && layer.gradStops.length > 1){
     var s = layer.gradStops;
+    var ops = layer.gradStopOpacities || [];
     for(var i=0;i<s.length;i++){
-      grad.addColorStop(i/(s.length-1), s[i]);
+      var op = (ops[i] == null) ? 100 : ops[i];
+      var col = s[i];
+      grad.addColorStop(i/(s.length-1), op >= 100 ? col : hexToRgba(col, op/100));
     }
   } else {
-    grad.addColorStop(0, layer.gradTop || '#8ab81d');
-    grad.addColorStop(1, layer.gradBottom || '#3c8e14');
+    var topOp = (layer.gradTopOpacity    == null) ? 100 : layer.gradTopOpacity;
+    var botOp = (layer.gradBottomOpacity == null) ? 100 : layer.gradBottomOpacity;
+    var topCol = layer.gradTop || '#8ab81d';
+    var botCol = layer.gradBottom || '#3c8e14';
+    grad.addColorStop(0, topOp >= 100 ? topCol : hexToRgba(topCol, topOp/100));
+    grad.addColorStop(1, botOp >= 100 ? botCol : hexToRgba(botCol, botOp/100));
   }
 }
 
@@ -11296,6 +11313,10 @@ function bindPropEvents(layer){
       redraw();
     });
     on('pshGradBot','input',function(e){layer.gradBottom=e.target.value; revertToTwoStopOnEdit(layer); redraw();});
+    // v336: per-stop opacity sliders. revertToTwoStopOnEdit runs so any active multi-stop preset
+    // gets replaced by the simple 2-stop path — otherwise the new opacity value would be ignored.
+    rng('pshGradTopOpacity',    function(v){ layer.gradTopOpacity    = +v; revertToTwoStopOnEdit(layer); redraw(); });
+    rng('pshGradBottomOpacity', function(v){ layer.gradBottomOpacity = +v; revertToTwoStopOnEdit(layer); redraw(); });
     rng('pshGradAngle',function(v){layer.gradAngle=v;redraw();});
     // Brand color swatches: click = top/solid, alt+click = bottom (gradient only)
     bindBrandSwatches('pshColor', function(hex){
