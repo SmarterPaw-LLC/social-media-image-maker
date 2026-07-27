@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v337</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v338</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1094,7 +1094,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadLibraryCsv()" title="Download a CSV of every image's name, brand, category, and tags — edit it in Excel/Sheets, then re-upload to apply changes in bulk">⬇ CSV</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryCsvInput').click()" title="Upload an edited CSV to bulk-update brand, category, and tags (matched by the id column)">⬆ CSV</button>
       <input type="file" id="libraryCsvInput" accept=".csv,text/csv" style="display:none;" onchange="handleLibraryCsvUpload(event)">
-      <input type="file" id="libraryUploadInput" accept="image/*,.heic,.heif" multiple style="display:none;" onchange="handleLibraryUpload(event)">
+      <input type="file" id="libraryUploadInput" accept="image/*,.heic,.heif,video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
            Safari, and Firefox — covers all browsers SmarterPaw uses. Non-image files in the folder
            are filtered out in handleLibraryUpload before the upload loop. -->
@@ -16935,6 +16935,81 @@ function _libraryItemIsImage(item){
   return ['png','jpg','jpeg','webp','gif','svg','bmp','avif','apng','ico'].indexOf(ext) >= 0;
 }
 
+// v338: parallel predicate for videos. The library now stores video clips alongside images and
+// a companion service (the UGC clip editor) queries the same `image_library_items` table filtered
+// on mime like 'video/%' to pull them. Extension fallback catches items uploaded before mime
+// tracking landed or when the browser drops the mime for .mov files.
+function _libraryItemIsVideo(item){
+  var m = (item && item.mime || '').toLowerCase();
+  if(m) return m.indexOf('video/') === 0;
+  var match = (item && item.storage_path || '').toLowerCase().match(/\.([a-z0-9]+)(?:$|\?)/);
+  var ext = match ? match[1] : '';
+  return ['mp4','webm','mov','m4v','avi','qt','mkv'].indexOf(ext) >= 0;
+}
+
+// v338: quick predicate for the upload filter — matches image-file OR video-file by mime or
+// extension. Used to accept mixed drops without silently dropping video files.
+function _isVideoFile(file){
+  if(!file) return false;
+  var t = (file.type || '').toLowerCase();
+  if(t.indexOf('video/') === 0) return true;
+  var m = (file.name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+  var ext = m ? m[1] : '';
+  return ['mp4','webm','mov','m4v'].indexOf(ext) >= 0;
+}
+
+// v338: extract a poster-frame thumbnail from a video file client-side. Loads the file into a
+// hidden <video>, seeks a short way past the first frame (some codecs start with a black frame
+// or logo splash so 1s in usually reads better), draws to a canvas, exports as small JPEG.
+// Returns a Promise resolving to a data URI (or empty string on failure — the library still
+// works, it just won't have a preview).
+function _generateVideoThumbnail(file, targetSize){
+  targetSize = targetSize || 240;
+  return new Promise(function(resolve){
+    var url = null;
+    var v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.crossOrigin = 'anonymous';
+    var settled = false;
+    function done(dataUri){
+      if(settled) return;
+      settled = true;
+      try { if(url) URL.revokeObjectURL(url); } catch(_){}
+      resolve(dataUri || '');
+    }
+    v.addEventListener('loadedmetadata', function(){
+      // Seek to a moment past the start; guard against very short clips.
+      var t = Math.min(1, (v.duration || 1) * 0.1);
+      try { v.currentTime = t; } catch(_){}
+    });
+    v.addEventListener('seeked', function(){
+      try {
+        var vw = v.videoWidth || 1, vh = v.videoHeight || 1;
+        var scale = Math.min(targetSize / vw, targetSize / vh, 1);
+        var w = Math.round(vw * scale), h = Math.round(vh * scale);
+        var c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        var ctx = c.getContext('2d');
+        ctx.drawImage(v, 0, 0, w, h);
+        done(c.toDataURL('image/jpeg', 0.72));
+      } catch(e){
+        console.warn('[library] thumbnail failed:', e);
+        done('');
+      }
+    });
+    v.addEventListener('error', function(){ done(''); });
+    // Give up after 8 seconds even if seek never fires (some MOV containers refuse to decode
+    // in-browser — we'd rather have the row without a thumbnail than block the upload).
+    setTimeout(function(){ done(''); }, 8000);
+    try {
+      url = URL.createObjectURL(file);
+      v.src = url;
+    } catch(e){ done(''); }
+  });
+}
+
 function compressImageForLibrary(file){
   // Returns a Promise resolving to { file: <File>, originalSize, compressedSize, skipped }.
   // Falls back to the original file on any error so uploads still succeed.
@@ -17081,7 +17156,8 @@ function cloudListLibraryItems(){
   // dependency. Solves the case where sb creation quietly failed but the user is otherwise
   // signed in and has a valid session in localStorage.
   if(!currentUser) return Promise.resolve([]);
-  var selectCols = 'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, created_at';
+  // v338: include thumbnail_data_uri so video items can render their poster frame in the grid
+  var selectCols = 'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, thumbnail_data_uri, created_at';
   if(!sb) return _directFetchLibraryItems(selectCols);
   return sb.from('image_library_items')
     .select(selectCols)
@@ -17193,16 +17269,22 @@ function cloudDeleteTag(name){
     });
 }
 
-function cloudUploadLibraryItem(file, categoryId, displayName, brand){
+function cloudUploadLibraryItem(file, categoryId, displayName, brand, opts){
   if(!sb || !currentUser) return Promise.reject(new Error('Sign in to upload.'));
   if(!file) return Promise.reject(new Error('No file provided.'));
-  // v181: defense-in-depth — never let a non-image into the image library. A stray video gets
-  // rendered with an <img> tag and triggers spurious browser downloads (Supabase serves non-image
-  // objects as attachments). The upload UIs already filter to image/*, but this guards every path.
-  if(file.type && file.type.indexOf('image/') !== 0){
-    return Promise.reject(new Error('Only image files can be added to the library (got "' + file.type + '").'));
+  // v338: v181's image-only guard is gone — videos are now first-class library citizens (mp4,
+  // webm, mov). Everything else (audio, PDFs, archives) is still refused because they can't be
+  // used on the canvas AND showing them in the library would confuse users.
+  var mimeLower = (file.type || '').toLowerCase();
+  var extLower = ((file.name || '').match(/\.([a-z0-9]+)$/i) || [])[1] || '';
+  extLower = extLower.toLowerCase();
+  var isImage = mimeLower.indexOf('image/') === 0 || ['png','jpg','jpeg','webp','gif','svg','bmp','avif','apng','heic','heif'].indexOf(extLower) >= 0;
+  var isVideo = mimeLower.indexOf('video/') === 0 || ['mp4','webm','mov','m4v'].indexOf(extLower) >= 0;
+  if(!isImage && !isVideo){
+    return Promise.reject(new Error('Only image and video files can be added to the library (got "' + (file.type || extLower || 'unknown') + '").'));
   }
   if(!window.crypto || !window.crypto.subtle) return Promise.reject(new Error('SubtleCrypto required (HTTPS only).'));
+  opts = opts || {};
 
   // Hash the file bytes for content-addressable path (dedupes identical re-uploads across the team)
   return file.arrayBuffer().then(function(buf){
@@ -17233,7 +17315,7 @@ function cloudUploadLibraryItem(file, categoryId, displayName, brand){
           throw new Error('Storage upload failed' + statusInfo + ': ' + (res.error.message || 'unknown'));
         }
         // Only proceed to row insert if storage upload succeeded
-        return sb.from('image_library_items').insert({
+        var row = {
           name: displayName || file.name || 'Untitled',
           storage_path: path,
           category_id: categoryId != null ? categoryId : null,
@@ -17241,7 +17323,12 @@ function cloudUploadLibraryItem(file, categoryId, displayName, brand){
           mime: file.type || null,
           file_size_bytes: file.size,
           uploaded_by: currentUser.id
-        }).select('id, name, storage_path, category_id, brand, mime, file_size_bytes, created_at').single();
+        };
+        // v338: attach the video's poster-frame thumbnail if the caller generated one. Column
+        // is nullable so images can leave it blank.
+        if(opts.thumbnailDataUri) row.thumbnail_data_uri = opts.thumbnailDataUri;
+        return sb.from('image_library_items').insert(row)
+          .select('id, name, storage_path, category_id, brand, mime, file_size_bytes, thumbnail_data_uri, created_at').single();
       }).then(function(res){
         if(res.error) throw new Error(res.error.message || 'Library row insert failed');
         return res.data;
@@ -17503,14 +17590,27 @@ function renderImageLibrary(){
       if(typeShort) metaParts.push(typeShort);
       var metaLine = metaParts.length ? '<div class="lib-cat">' + escAttr(metaParts.join(' · ')) + '</div>' : '';
       var isChecked = !!_librarySelectedItemIds[item.id];
-      // v181: only point an <img> at genuine images. Non-image items (a stray .mov) get a
-      // non-fetching placeholder — otherwise the browser fires off canceled downloads for them.
-      var thumbHtml = _libraryItemIsImage(item)
-        ? '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '">'
-        : '<div class="lib-noimg" title="Not an image — can\'t be used on the canvas. Use ✕ to remove it.">'
-            + '<div style="font-size:22px;line-height:1;">🎬</div>'
-            + '<div style="font-size:9px;margin-top:3px;font-weight:600;">' + escAttr(_formatMimeShort(item.mime) || 'NOT AN IMAGE') + '</div>'
+      // v181/v338: images use their public URL directly; videos use the stored poster-frame
+      // thumbnail_data_uri with a ▶ overlay so they're distinguishable at a glance. Non-image /
+      // non-video items (legacy uploads from other tooling) still get a placeholder.
+      var thumbHtml;
+      if(_libraryItemIsVideo(item)){
+        var thumbSrc = item.thumbnail_data_uri || '';
+        thumbHtml = thumbSrc
+          ? '<img src="' + escAttr(thumbSrc) + '" alt="' + escAttr(item.name) + '">'
+          : '<div class="lib-noimg" style="background:#000;color:#fff;">'
+              + '<div style="font-size:22px;line-height:1;">🎬</div>'
+              + '<div style="font-size:9px;margin-top:3px;font-weight:600;">VIDEO</div>'
+            + '</div>';
+        thumbHtml += '<div class="lib-vid-badge" title="Video — click to add as a video layer" style="position:absolute;left:6px;top:6px;background:rgba(0,0,0,0.65);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;line-height:1.2;pointer-events:none;">▶ VIDEO</div>';
+      } else if(_libraryItemIsImage(item)){
+        thumbHtml = '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '">';
+      } else {
+        thumbHtml = '<div class="lib-noimg" title="Not an image or video — can\'t be used on the canvas. Use ✕ to remove it.">'
+          + '<div style="font-size:22px;line-height:1;">📄</div>'
+          + '<div style="font-size:9px;margin-top:3px;font-weight:600;">' + escAttr(_formatMimeShort(item.mime) || 'UNSUPPORTED') + '</div>'
           + '</div>';
+      }
       div.innerHTML =
         '<input type="checkbox" class="lib-check" data-action="check"' + (isChecked ? ' checked' : '') + ' title="Select for bulk edit (Ctrl-click a tile to toggle · Shift-click for a range)">'
         + '<button class="lib-del" data-action="delete" title="Delete from library">✕</button>'
@@ -17849,25 +17949,30 @@ function handleLibraryUpload(event){
   var files = event.target.files;
   if(!files || !files.length) return;
   // v147: when uploading from a folder (webkitdirectory), the browser hands us every file
-  // including non-images and OS junk. Filter to images only before the upload loop.
+  // including non-images and OS junk. Filter to images/videos only before the upload loop.
   // v260: also accept HEIC/HEIF by extension since some Windows drag sources hand them over
   // with empty MIME type — _isHeicFile checks the filename as a fallback.
+  // v338: also accept video/* + common video extensions so drag-and-drop of mixed media works.
   files = Array.prototype.slice.call(files).filter(function(f){
-    return (f.type || '').indexOf('image/') === 0 || _isHeicFile(f);
+    return (f.type || '').indexOf('image/') === 0 || _isHeicFile(f) || _isVideoFile(f);
   });
   if(!files.length){
     var statusEl0 = document.getElementById('imageLibraryStatus');
     statusEl0.classList.remove('hidden');
-    statusEl0.textContent = 'No image files found in that folder.';
+    statusEl0.textContent = 'No image or video files found in that selection.';
     setTimeout(function(){ statusEl0.classList.add('hidden'); }, 4000);
     event.target.value = '';
     return;
   }
   _pendingUploadFiles = files;
   _pendingUploadInputEl = event.target;  // cleared (.value='') once the upload finishes
-  // Show the brand picker — the count tells the user how many files they're tagging
-  document.getElementById('uploadBrandCount').textContent =
-    files.length + ' image' + (files.length === 1 ? '' : 's') + ' selected';
+  // v338: count reflects mixed image + video selection
+  var vidCount = files.filter(_isVideoFile).length;
+  var imgCount = files.length - vidCount;
+  var parts = [];
+  if(imgCount) parts.push(imgCount + ' image' + (imgCount === 1 ? '' : 's'));
+  if(vidCount) parts.push(vidCount + ' video' + (vidCount === 1 ? '' : 's'));
+  document.getElementById('uploadBrandCount').textContent = parts.join(' + ') + ' selected';
   document.getElementById('uploadBrandModal').classList.remove('hidden');
 }
 
@@ -17932,7 +18037,22 @@ function runLibraryUpload(brand){
     // files pass through unchanged; PNG/JPG get re-encoded to WebP @ 85% with a 2000px max dimension.
     // v260: HEIC files get pre-converted to JPEG via heic2any before compression — compressor uses
     // <img> decoding which can't handle HEIC in Chrome/Firefox/Edge.
+    // v338: video files skip the whole image-compression pipeline (their bytes stay untouched)
+    // and instead generate a small poster-frame thumbnail so the library grid can preview them.
     var srcFile = fileArr[i];
+    var displayName = (srcFile.name || 'Untitled').replace(/\.[^.]+$/, '');
+    if(_isVideoFile(srcFile)){
+      statusEl.textContent = 'Processing video ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + '…';
+      _generateVideoThumbnail(srcFile).then(function(thumbUri){
+        statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + ' (' + _formatBytes(srcFile.size) + ')';
+        return cloudUploadLibraryItem(srcFile, catId, displayName, brand, { thumbnailDataUri: thumbUri });
+      }).then(function(){ ok++; }).catch(function(e){
+        console.warn('[lib] video upload failed for ' + srcFile.name + ':', e);
+        failed++;
+        lastError = e.message || String(e);
+      }).then(function(){ uploadNext(i + 1); });
+      return;
+    }
     statusEl.textContent = (_isHeicFile(srcFile) ? 'Converting HEIC ' : 'Compressing ')
       + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + '…';
     prepareImageFileForLoad(srcFile).then(function(prepared){
@@ -17944,9 +18064,6 @@ function runLibraryUpload(brand){
         : ' (' + _formatBytes(result.originalSize) + ' → ' + _formatBytes(result.compressedSize) + ')';
       statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + compressMsg;
       bytesSaved += Math.max(0, result.originalSize - result.compressedSize);
-      // Strip extension AND any "(2)"-style dupe suffix the OS may have added so the library shows
-      // a clean name. Preserve the original filename (pre-HEIC-rename) when possible.
-      var displayName = (fileArr[i].name || 'Untitled').replace(/\.[^.]+$/, '');
       return cloudUploadLibraryItem(result.file, catId, displayName, brand);
     }).then(function(){
       ok++;
@@ -17968,9 +18085,32 @@ function pickLibraryItem(item){
     openMoveLibraryItemModal(item);
     return;
   }
-  // v181: a non-image item (stray .mov) can't be placed on the canvas — don't even fetch it.
+  // v338: videos land on the canvas as a video layer, streamed straight from the storage bucket's
+  // public URL. loadVideoIntoNewLayer already handles the metadata → layer flow used by upload.
+  // The URL (not a data URI) is what gets serialized into videoSrc, so designs referencing a
+  // library video keep their file size tiny — bytes stay in Supabase Storage, not in state.json.
+  if(_libraryItemIsVideo(item)){
+    var vurl = cloudGetLibraryItemPublicUrl(item.storage_path);
+    if(!vurl){
+      alert('Could not resolve the video URL — the library bucket may not be public-readable.');
+      return;
+    }
+    if(_libraryPickCallback){
+      var cbv = _libraryPickCallback;
+      _libraryPickCallback = null;
+      try { cbv({ videoUrl: vurl, name: item.name, item: item }, item); }
+      catch(e){ console.error('[lib] video pick callback failed:', e); alert('Could not use this video: ' + (e.message || e)); }
+      closeImageLibraryModal();
+      return;
+    }
+    loadVideoIntoNewLayer(vurl, item.name);
+    closeImageLibraryModal();
+    showToast('📚 Added video: ' + item.name);
+    return;
+  }
+  // v181: a non-image / non-video item can't be placed on the canvas — don't even fetch it.
   if(!_libraryItemIsImage(item)){
-    alert('"' + (item.name || 'This item') + '" is not an image (' + (_formatMimeShort(item.mime) || 'unknown type') + ') and can\'t be added to the canvas. Use the ✕ button to remove it from the library.');
+    alert('"' + (item.name || 'This item') + '" is not an image or video (' + (_formatMimeShort(item.mime) || 'unknown type') + ') and can\'t be added to the canvas. Use the ✕ button to remove it from the library.');
     return;
   }
   cloudFetchLibraryItemAsDataUri(item.storage_path).then(function(dataUri){
