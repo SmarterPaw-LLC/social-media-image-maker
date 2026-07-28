@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v344</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v345</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -778,6 +778,22 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button type="button" class="btn-cancel" onclick="bulkEditAddNewTag()" style="padding:5px 12px;font-size:12px;">+ Add</button>
         </div>
       </div>
+      <!-- v345: bulk date. Three states, gated by the checkbox so a stray empty input doesn't
+           silently clear the field on every selected row:
+             ☐ off  → leave every row's date unchanged (default)
+             ☑ on + date filled  → set every row's date to the picked date
+             ☑ on + date blank   → clear every row's original_created_at (fall back to upload date) -->
+      <div>
+        <label>Date</label>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:400;cursor:pointer;">
+            <input type="checkbox" id="bulkEditDateEnable" onchange="document.getElementById('bulkEditDateInput').disabled = !this.checked;">
+            <span>Change date to</span>
+          </label>
+          <input type="date" id="bulkEditDateInput" disabled style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;">
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4;">Leave the checkbox off to keep each row's existing date. Check it with a blank date to clear the shot date (falls back to upload date).</div>
+      </div>
       <div id="bulkEditError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
     </div>
     <div class="modal-btns">
@@ -923,6 +939,14 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button type="button" style="flex:0 0 auto;width:auto;padding:8px 14px;font-size:12px;font-weight:600;color:var(--muted);background:none;border:1.5px dashed var(--border);border-radius:6px;cursor:pointer;white-space:nowrap;" onclick="promptNewUploadCategory()" title="Create a new category and select it here">+ New</button>
         </div>
       </div>
+      <!-- v345: manual date override for the batch. Blank = auto-detect (EXIF/mvhd/XMP/PNG
+           tEXt/filename/lastModified). Set a date and every row in this batch gets stamped
+           with it, overriding what extraction would have found. Useful for scanned/re-encoded
+           media where EXIF is gone and you know the actual shot date. -->
+      <div>
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">Date <span style="font-weight:400;font-size:10px;">(blank = auto-detect from file)</span></label>
+        <input type="date" id="uploadDateInput" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;">
+      </div>
       <!-- v343: tags on upload. Uses the same chip-picker pattern as the Edit Image modal but
            namespaced with `upload*` ids so the two coexist. Empty tag set is fine — the row's
            `tags` column stays null and the caller's tag filters keep working unchanged. -->
@@ -979,6 +1003,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <input type="text" id="editNewTagInput" placeholder="new tag…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();addNewTagFromInput();}" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
           <button type="button" class="btn-cancel" onclick="addNewTagFromInput()" style="padding:5px 12px;font-size:12px;">+ Add</button>
         </div>
+      </div>
+      <!-- v345: manual date override for this single item. Blank clears the override and the
+           grid + filter fall back to the upload date via the COALESCE in the effective-date SQL. -->
+      <div>
+        <label>Date <span style="font-weight:400;color:var(--muted);font-size:11px;">(shot date; leave blank to use upload date)</span></label>
+        <input type="date" id="moveLibraryItemDate" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;margin-top:4px;background:#fff;">
       </div>
       <div id="moveLibraryItemError" class="hidden" style="padding:8px 10px;background:#fef2f0;border:1px solid #fbcaba;border-radius:6px;font-size:12px;color:#b3261e;"></div>
     </div>
@@ -1092,6 +1122,14 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <option value="doggi">Doggijuana</option>
         <option value="kkz">Kitty Ka-Zoom</option>
         <option value="__none__">(No brand)</option>
+      </select>
+      <!-- v345: media-type filter. Inline with brand rather than its own row to avoid growing
+           the filter stack. Value maps to _libraryItemIsVideo(item) in renderImageLibrary. -->
+      <label style="margin:0 0 0 6px;font-size:12px;">Media:</label>
+      <select id="imageLibraryMediaFilter" onchange="renderImageLibrary()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
+        <option value="">All</option>
+        <option value="image">📷 Images</option>
+        <option value="video">🎬 Videos</option>
       </select>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
@@ -16886,6 +16924,26 @@ var _editingTags = [];
 // the next one. Applied to every file in the batch at insert time.
 var _uploadTags = [];
 
+// v345: shared helpers for <input type="date"> ↔ ISO timestamp round-trips. Date inputs give us
+// "YYYY-MM-DD" with no time or zone; we store as noon UTC so day-boundary flips can't happen
+// when the filter renders back in local time in either hemisphere. When reading an existing
+// row's ISO back into an input, use UTC parts for the same reason.
+function _dateInputToIso(v){
+  if(!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  var d = new Date(v + 'T12:00:00Z');
+  if(isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+function _isoToDateInput(iso){
+  if(!iso) return '';
+  var d = new Date(iso);
+  if(isNaN(d.getTime())) return '';
+  var y = d.getUTCFullYear();
+  var mo = ('0' + (d.getUTCMonth() + 1)).slice(-2);
+  var dd = ('0' + d.getUTCDate()).slice(-2);
+  return y + '-' + mo + '-' + dd;
+}
+
 function renderEditTagsChips(){
   var container = document.getElementById('editTagsChips');
   if(!container) return;
@@ -17959,6 +18017,16 @@ function renderImageLibrary(){
       if(_libraryCurrentBrandFilter === '__none__') return !it.brand;        // (No brand)
       return it.brand === _libraryCurrentBrandFilter;
     }
+    // v345: media-type filter. '' = inactive (both kinds pass); 'image' = only non-videos;
+    // 'video' = only videos. Uses the existing _libraryItemIsVideo predicate for consistency
+    // with how the picker and thumb rendering already classify each row.
+    var mediaSel = document.getElementById('imageLibraryMediaFilter');
+    var mediaVal = mediaSel ? mediaSel.value : '';
+    function checkMedia(it){
+      if(!mediaVal) return null;
+      var isVid = _libraryItemIsVideo(it);
+      return mediaVal === 'video' ? isVid : !isVid;
+    }
     function checkSearch(it){
       if(!searchQ) return null;
       if((it.name || '').toLowerCase().indexOf(searchQ) >= 0) return true;
@@ -17983,7 +18051,7 @@ function renderImageLibrary(){
       return true;
     }
     var visible = items.filter(function(it){
-      var results = [checkBrand(it), checkCategory(it), checkTag(it), checkSearch(it), checkDate(it)];
+      var results = [checkBrand(it), checkMedia(it), checkCategory(it), checkTag(it), checkSearch(it), checkDate(it)];
       var active = results.filter(function(r){ return r !== null; });
       if(!active.length) return true;   // no filters set → everything passes
       if(_libraryMatchMode === 'OR') return active.some(function(r){ return r === true; });
@@ -18198,6 +18266,9 @@ function cloudBulkUpdateLibraryItems(ids, opts){
   var removeSet = opts.removeTagsSet || {};
   var setCat = opts.categoryId !== undefined;
   var setBrand = opts.brand !== undefined;
+  // v345: bulk date. `originalCreatedAt === undefined` = leave unchanged; a string ISO = set to
+  // that date; explicit null = clear the field.
+  var setDate = Object.prototype.hasOwnProperty.call(opts, 'originalCreatedAt');
   var jobs = ids.map(function(id){
     var item = _libraryItemsCache.find(function(x){return x.id === +id;});
     if(!item) return Promise.resolve();
@@ -18220,6 +18291,7 @@ function cloudBulkUpdateLibraryItems(ids, opts){
     var updates = {tags: newTags};
     if(setCat) updates.category_id = opts.categoryId;
     if(setBrand) updates.brand = opts.brand;
+    if(setDate) updates.original_created_at = opts.originalCreatedAt;
     return cloudUpdateLibraryItem(+id, updates);
   });
   return Promise.all(jobs).then(function(){ return {touched: ids.length}; });
@@ -18246,6 +18318,12 @@ function openBulkEditModal(){
   document.getElementById('bulkEditNewTagInput').value = '';
   document.getElementById('bulkEditError').classList.add('hidden');
   document.getElementById('bulkEditCount').textContent = '(' + ids.length + ' image' + (ids.length === 1 ? '' : 's') + ')';
+  // v345: reset the date section each open. Checkbox off = leave dates alone (the safe default),
+  // and the input is disabled until the user explicitly opts in.
+  var dateEnable = document.getElementById('bulkEditDateEnable');
+  var dateInput = document.getElementById('bulkEditDateInput');
+  if(dateEnable) dateEnable.checked = false;
+  if(dateInput){ dateInput.value = ''; dateInput.disabled = true; }
   renderBulkEditTagChips();
   document.getElementById('bulkEditModal').classList.remove('hidden');
 }
@@ -18346,8 +18424,16 @@ function confirmBulkEdit(){
   if(brandVal !== '__unchanged__'){
     opts.brand = brandVal || null;
   }
+  // v345: date. Only touched when the enable checkbox is on. Blank input with the checkbox on
+  // means "clear the field" (falls back to upload date via COALESCE); a filled input sets it.
+  var dateEnable = document.getElementById('bulkEditDateEnable');
+  var dateInput  = document.getElementById('bulkEditDateInput');
+  if(dateEnable && dateEnable.checked){
+    var iso = _dateInputToIso(dateInput ? dateInput.value : '');
+    opts.originalCreatedAt = iso;   // string ISO or null; both trigger the update in cloudBulkUpdateLibraryItems
+  }
   // No-op early-exit so we don't spam the network when nothing actually changed
-  if(opts.categoryId === undefined && opts.brand === undefined && !addTags.length && !Object.keys(removeTagsSet).length){
+  if(opts.categoryId === undefined && opts.brand === undefined && opts.originalCreatedAt === undefined && !addTags.length && !Object.keys(removeTagsSet).length){
     closeBulkEditModal();
     return;
   }
@@ -18440,6 +18526,10 @@ function handleLibraryUpload(event){
   renderUploadTagsChips();
   var newTagInp = document.getElementById('uploadNewTagInput');
   if(newTagInp) newTagInp.value = '';
+  // v345: reset the manual date override each open. Auto-detect is the default; user can set
+  // an explicit date if they know it (e.g., scanned prints, screen recordings, IG downloads).
+  var dateInp = document.getElementById('uploadDateInput');
+  if(dateInp) dateInp.value = '';
   document.getElementById('uploadBrandModal').classList.remove('hidden');
 }
 
@@ -18508,7 +18598,10 @@ function confirmUploadBrandCategory(){
   // v343: snapshot the current upload-modal tag set so it's stable through the async loop even
   // if the user reopens the modal later. Empty array = no tags applied (row.tags stays null).
   var batchTags = _uploadTags.slice();
-  runLibraryUpload(brand, categoryId, batchTags);
+  // v345: manual date override for the whole batch. Blank input → null → auto-detect runs.
+  var dateInp = document.getElementById('uploadDateInput');
+  var batchDateIso = _dateInputToIso(dateInp ? dateInp.value : '');
+  runLibraryUpload(brand, categoryId, batchTags, batchDateIso);
 }
 
 function cancelUploadBrand(){
@@ -18518,7 +18611,7 @@ function cancelUploadBrand(){
   _pendingUploadInputEl = null;
 }
 
-function runLibraryUpload(brand, categoryId, batchTags){
+function runLibraryUpload(brand, categoryId, batchTags, batchDateIso){
   document.getElementById('uploadBrandModal').classList.add('hidden');
   var files = _pendingUploadFiles;
   var inputEl = _pendingUploadInputEl;
@@ -18537,6 +18630,9 @@ function runLibraryUpload(brand, categoryId, batchTags){
   }
   // v343: batchTags is the tag set to stamp on every row in the batch. undefined/null → no tags.
   var uploadTags = Array.isArray(batchTags) ? batchTags.slice() : [];
+  // v345: batchDateIso is a manual date override for the whole batch. When set, extraction is
+  // bypassed and every row gets this timestamp. When null, per-file extraction runs as before.
+  var uploadDateOverride = (typeof batchDateIso === 'string' && batchDateIso) ? batchDateIso : null;
   var statusEl = document.getElementById('imageLibraryStatus');
   // v130: reset to success-styling each upload so a previous error's red doesn't bleed through
   statusEl.classList.remove('hidden');
@@ -18589,7 +18685,7 @@ function runLibraryUpload(brand, categoryId, batchTags){
       // NULL and the filter falls back to upload date.
       Promise.all([
         _generateVideoThumbnail(srcFile),
-        _extractOriginalCreationDate(srcFile)
+        uploadDateOverride ? Promise.resolve(uploadDateOverride) : _extractOriginalCreationDate(srcFile)
       ]).then(function(results){
         var thumbUri = results[0];
         var origDate = results[1];
@@ -18612,7 +18708,8 @@ function runLibraryUpload(brand, categoryId, batchTags){
     // HEIC-conversion. Both operations re-encode the pixels and strip EXIF metadata, so pulling
     // the date late would always lose it. Extraction runs in parallel with the prepare/compress
     // pipeline — best-effort, null on failure or missing tag.
-    var origDatePromise = _extractOriginalCreationDate(srcFile);
+    // v345: manual date override wins over extraction if the user set one on the upload modal.
+    var origDatePromise = uploadDateOverride ? Promise.resolve(uploadDateOverride) : _extractOriginalCreationDate(srcFile);
     prepareImageFileForLoad(srcFile).then(function(prepared){
       srcFile = prepared;   // use the converted file's name in the displayName below
       return compressImageForLibrary(prepared);
@@ -21073,6 +21170,11 @@ function openMoveLibraryItemModal(item){
   renderEditTagsChips();
   var newTagInput = document.getElementById('editNewTagInput');
   if(newTagInput) newTagInput.value = '';
+  // v345: preload the date field from original_created_at only. We DON'T preload from created_at
+  // because that's the upload date — showing it would let a user accidentally "confirm" the upload
+  // date as the shot date on save. Blank means "no explicit shot date set."
+  var dateInp = document.getElementById('moveLibraryItemDate');
+  if(dateInp) dateInp.value = _isoToDateInput(item.original_created_at);
   document.getElementById('moveLibraryItemError').classList.add('hidden');
   document.getElementById('moveLibraryItemModal').classList.remove('hidden');
 }
@@ -21566,11 +21668,16 @@ function confirmMoveLibraryItem(){
   if(!newName) newName = item.name || 'Untitled';
   var brandSel = document.getElementById('moveLibraryItemBrand');
   var newBrand = brandSel ? (brandSel.value || null) : null;
+  // v345: save the manual shot date (or null to clear). Empty input → null → the effective-date
+  // filter falls back to created_at (upload date) via COALESCE, so clearing degrades gracefully.
+  var dateInp = document.getElementById('moveLibraryItemDate');
+  var newOrigDate = _dateInputToIso(dateInp ? dateInp.value : '');
   cloudUpdateLibraryItem(item.id, {
     name: newName,
     category_id: newCatId,
     brand: newBrand,
-    tags: newTags
+    tags: newTags,
+    original_created_at: newOrigDate
   }).then(function(){
     closeMoveLibraryItemModal();
     showToast('✓ Image updated');
