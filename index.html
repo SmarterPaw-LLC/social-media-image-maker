@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v341</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v342</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -897,20 +897,37 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
 <!-- v175: Upload brand picker — shown after files are chosen, before the upload loop runs. The
      chosen brand is stamped onto every image in this upload batch. z-index 1100 to sit above the
-     Image Library modal. -->
+     Image Library modal.
+     v342: added category selection alongside brand + inline "New category" flow so users can
+     tag on upload instead of setting the category filter first or editing each item afterward. -->
 <div class="modal-overlay hidden" id="uploadBrandModal" style="z-index:1100;">
-  <div class="modal" style="max-width:420px;">
-    <h2>Which brand?</h2>
-    <div id="uploadBrandCount" style="font-size:12px;color:var(--muted);margin-bottom:10px;"></div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Pick the brand these images belong to. You can change it later via Edit Image or Bulk Edit.</div>
-    <div style="display:flex;flex-direction:column;gap:8px;">
-      <button type="button" class="btn-primary" style="padding:10px;font-size:13px;" onclick="runLibraryUpload('meowi')">Meowijuana</button>
-      <button type="button" class="btn-primary" style="padding:10px;font-size:13px;" onclick="runLibraryUpload('doggi')">Doggijuana</button>
-      <button type="button" class="btn-primary" style="padding:10px;font-size:13px;" onclick="runLibraryUpload('kkz')">Kitty Ka-Zoom</button>
-      <button type="button" class="btn-cancel" style="padding:8px;font-size:12px;" onclick="runLibraryUpload('')">No brand / skip</button>
+  <div class="modal" style="max-width:460px;">
+    <h2>Add to library</h2>
+    <div id="uploadBrandCount" style="font-size:12px;color:var(--muted);margin-bottom:14px;"></div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div>
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">Brand</label>
+        <select id="uploadBrandSelect" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;">
+          <option value="meowi">Meowijuana</option>
+          <option value="doggi">Doggijuana</option>
+          <option value="kkz">Kitty Ka-Zoom</option>
+          <option value="">No brand</option>
+        </select>
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">Category</label>
+        <div style="display:flex;gap:6px;">
+          <select id="uploadCategorySelect" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;">
+            <option value="">— Uncategorized —</option>
+          </select>
+          <button type="button" class="btn-add" style="padding:8px 12px;font-size:12px;white-space:nowrap;" onclick="promptNewUploadCategory()" title="Create a new category and select it here">+ New</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.5;">Applied to every file in this batch. Edit later via Edit Image or Bulk Edit.</div>
     </div>
     <div class="modal-btns">
-      <button class="btn-cancel" onclick="cancelUploadBrand()">Cancel upload</button>
+      <button class="btn-cancel" onclick="cancelUploadBrand()">Cancel</button>
+      <button class="btn-primary" onclick="confirmUploadBrandCategory()" id="uploadBrandConfirmBtn">Upload</button>
     </div>
   </div>
 </div>
@@ -18218,7 +18235,83 @@ function handleLibraryUpload(event){
   if(imgCount) parts.push(imgCount + ' image' + (imgCount === 1 ? '' : 's'));
   if(vidCount) parts.push(vidCount + ' video' + (vidCount === 1 ? '' : 's'));
   document.getElementById('uploadBrandCount').textContent = parts.join(' + ') + ' selected';
+  // v342: populate the brand + category selects, preselecting whatever the library filter is
+  // currently set to. Users often filter to a specific brand/category before uploading precisely
+  // because they want the new items in that bucket.
+  var brandSel = document.getElementById('uploadBrandSelect');
+  if(brandSel){
+    var preBrand = _libraryCurrentBrandFilter;
+    if(preBrand === '__none__') preBrand = '';
+    if(preBrand === 'meowi' || preBrand === 'doggi' || preBrand === 'kkz' || preBrand === '') brandSel.value = preBrand;
+    else brandSel.value = 'meowi';
+  }
+  populateUploadCategorySelect();
   document.getElementById('uploadBrandModal').classList.remove('hidden');
+}
+
+// v342: rebuild the upload-modal category dropdown from _libraryCategoriesCache. Preselects the
+// current library filter's category if it points at a real (non-Uncategorized) row.
+function populateUploadCategorySelect(){
+  var sel = document.getElementById('uploadCategorySelect');
+  if(!sel) return;
+  var preId = null;
+  if(_libraryCurrentFilter && _libraryCurrentFilter !== '' && _libraryCurrentFilter !== '0'){
+    preId = parseInt(_libraryCurrentFilter, 10);
+    if(isNaN(preId)) preId = null;
+  }
+  sel.innerHTML = '';
+  var uncOpt = document.createElement('option');
+  uncOpt.value = '';
+  uncOpt.textContent = '— Uncategorized —';
+  sel.appendChild(uncOpt);
+  _libraryCategoriesCache.slice().sort(function(a,b){return a.name.localeCompare(b.name);}).forEach(function(c){
+    var opt = document.createElement('option');
+    opt.value = String(c.id);
+    opt.textContent = c.name;
+    if(preId != null && c.id === preId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+// v342: inline "create a new category" flow inside the upload modal. Prompts for a name, creates
+// the row in image_library_categories, refreshes both the upload dropdown AND the main library
+// filter dropdown, and selects the new category so the user's next click confirms with it.
+function promptNewUploadCategory(){
+  var name = prompt('New category name:');
+  if(name == null) return;
+  name = name.trim();
+  if(!name) return;
+  var btn = document.getElementById('uploadBrandConfirmBtn');
+  if(btn){ btn.disabled = true; }
+  cloudCreateLibraryCategory(name).then(function(cat){
+    _libraryCategoriesCache.push(cat);
+    _libraryCategoriesCache.sort(function(a,b){return a.name.localeCompare(b.name);});
+    populateUploadCategorySelect();
+    var sel = document.getElementById('uploadCategorySelect');
+    if(sel) sel.value = String(cat.id);
+    // Also refresh the main filter dropdown so the new category is visible everywhere.
+    if(typeof populateLibraryCategoryFilter === 'function') populateLibraryCategoryFilter();
+  }).catch(function(e){
+    alert('Could not create category: ' + (e.message || e));
+  }).then(function(){
+    if(btn) btn.disabled = false;
+  });
+}
+
+// v342: confirm handler — reads brand + category from the modal and kicks off the upload loop
+// with both. Replaces the old brand-only button row where each brand button also submitted the
+// batch.
+function confirmUploadBrandCategory(){
+  var brandSel = document.getElementById('uploadBrandSelect');
+  var catSel   = document.getElementById('uploadCategorySelect');
+  var brand = brandSel ? brandSel.value : '';
+  var catRaw = catSel ? catSel.value : '';
+  var categoryId = null;
+  if(catRaw !== ''){
+    var n = parseInt(catRaw, 10);
+    if(!isNaN(n)) categoryId = n;
+  }
+  runLibraryUpload(brand, categoryId);
 }
 
 function cancelUploadBrand(){
@@ -18228,16 +18321,20 @@ function cancelUploadBrand(){
   _pendingUploadInputEl = null;
 }
 
-function runLibraryUpload(brand){
+function runLibraryUpload(brand, categoryId){
   document.getElementById('uploadBrandModal').classList.add('hidden');
   var files = _pendingUploadFiles;
   var inputEl = _pendingUploadInputEl;
   _pendingUploadFiles = null;
   _pendingUploadInputEl = null;
   if(!files || !files.length) return;
-  // Upload target category: current filter if a real category; null otherwise
+  // v342: category comes from the upload modal now. Callers that pass a number use it directly;
+  // undefined/null falls back to the current library filter (preserves the pre-v342 behavior for
+  // any external caller — none in-tree, but keeps the API forgiving).
   var catId = null;
-  if(_libraryCurrentFilter && _libraryCurrentFilter !== '' && _libraryCurrentFilter !== '0'){
+  if(typeof categoryId === 'number' && !isNaN(categoryId)){
+    catId = categoryId;
+  } else if(_libraryCurrentFilter && _libraryCurrentFilter !== '' && _libraryCurrentFilter !== '0'){
     catId = parseInt(_libraryCurrentFilter, 10);
     if(isNaN(catId)) catId = null;
   }
