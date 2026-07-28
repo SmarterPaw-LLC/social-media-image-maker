@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v339</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v340</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -17271,20 +17271,57 @@ function cloudListLibraryItems(){
   // dependency. Solves the case where sb creation quietly failed but the user is otherwise
   // signed in and has a valid session in localStorage.
   if(!currentUser) return Promise.resolve([]);
-  // v338: include thumbnail_data_uri so video items can render their poster frame in the grid
-  // v339: include original_created_at so the date-range filter can prefer it over upload date
-  var selectCols = 'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, thumbnail_data_uri, original_created_at, created_at';
-  if(!sb) return _directFetchLibraryItems(selectCols);
+  // v338/v339: two columns that only exist after their respective SQL migrations have been run
+  // (thumbnail_data_uri from v338, original_created_at from v339). If either is missing, PostgREST
+  // returns a 400 with "column ... does not exist" — the retry chain below trims the failing
+  // column and tries again, so the library stays usable even when a migration hasn't landed yet.
+  var attempts = [
+    'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, thumbnail_data_uri, original_created_at, created_at',
+    'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, thumbnail_data_uri, created_at',
+    'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, created_at'
+  ];
+  return _cloudListLibraryItemsTryColumns(attempts, 0);
+}
+
+// v340: try each column-set in turn; on a "column does not exist" error, retry with the trimmed
+// version. Any other error surfaces immediately. Direct-fetch fallback runs at each level too.
+function _cloudListLibraryItemsTryColumns(attempts, idx){
+  if(idx >= attempts.length) return Promise.resolve([]);
+  var selectCols = attempts[idx];
+  var next = function(){ return _cloudListLibraryItemsTryColumns(attempts, idx + 1); };
+  var isMissingColumnError = function(e){
+    var m = (e && (e.message || e.toString()) || '').toLowerCase();
+    return m.indexOf('does not exist') >= 0
+        || m.indexOf('column ') === 0
+        || m.indexOf('undefined_column') >= 0
+        || m.indexOf('42703') >= 0;   // pg SQLSTATE for undefined column
+  };
+  if(!sb){
+    return _directFetchLibraryItems(selectCols).then(function(rows){
+      // Direct-fetch returns [] on any HTTP error (v315 behavior). If we got zero rows and
+      // there's a fallback to try, use it — the empty result could equally be a missing column
+      // as a legit empty library. The trimmed select is a proper superset so no data is lost.
+      if((!rows || !rows.length) && idx + 1 < attempts.length) return next();
+      return rows || [];
+    });
+  }
   return sb.from('image_library_items')
     .select(selectCols)
     .order('created_at', {ascending: false})
     .then(function(res){
-      if(res.error) throw new Error(res.error.message || 'Item list failed');
+      if(res.error) throw res.error;
       return res.data || [];
     })
     .catch(function(e){
-      console.warn('[library] sb path failed, falling back to direct fetch:', e && e.message);
-      return _directFetchLibraryItems(selectCols);
+      if(isMissingColumnError(e)){
+        console.warn('[library] column missing at attempt ' + idx + ' — trimming: ' + (e.message || e));
+        return next();
+      }
+      console.warn('[library] sb path failed at attempt ' + idx + ' — direct fetch:', e && e.message);
+      return _directFetchLibraryItems(selectCols).then(function(rows){
+        if((!rows || !rows.length) && idx + 1 < attempts.length) return next();
+        return rows || [];
+      });
     });
 }
 
