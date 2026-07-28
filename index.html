@@ -385,7 +385,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v338</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v339</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1112,6 +1112,16 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     <div id="imageLibraryModeHint" class="hidden" style="padding:6px 10px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;font-size:11px;color:#664d03;margin-bottom:8px;"></div>
     <!-- v141: search bar — filters items by name (within the current category filter) -->
     <input type="text" id="imageLibrarySearch" placeholder="🔍 Search images…" autocomplete="off" oninput="renderImageLibrary()" style="width:100%;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;margin-bottom:8px;">
+    <!-- v339: date-range filter. Filters by effective creation date = COALESCE(EXIF DateTimeOriginal
+         for images / mvhd creation_time for videos, upload date). Leave both blank to disable. -->
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;">
+      <span style="color:var(--muted);font-weight:600;">📅 Date:</span>
+      <label style="color:var(--muted);font-size:11px;">From</label>
+      <input type="date" id="imageLibraryDateFrom" onchange="renderImageLibrary()" style="padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;flex:1;min-width:0;">
+      <label style="color:var(--muted);font-size:11px;">To</label>
+      <input type="date" id="imageLibraryDateTo" onchange="renderImageLibrary()" style="padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;flex:1;min-width:0;">
+      <button type="button" onclick="clearImageLibraryDateFilter()" title="Clear date filter" style="padding:5px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:11px;background:#fff;cursor:pointer;">Clear</button>
+    </div>
     <div id="imageLibraryStatus" class="hidden" style="padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:12px;color:#3a5e10;margin-bottom:8px;"></div>
     <div id="imageLibraryGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:8px;max-height:480px;overflow-y:auto;padding:4px;">
       <!-- populated by renderImageLibrary() -->
@@ -16923,6 +16933,16 @@ function _formatMimeShort(mime){
   return m.replace('image/', '').replace('video/', '').replace('application/', '').toUpperCase();
 }
 
+// v339: reset the date-range filter and re-render. Called from the Clear button next to the
+// From / To inputs in the library modal.
+function clearImageLibraryDateFilter(){
+  var f = document.getElementById('imageLibraryDateFrom');
+  var t = document.getElementById('imageLibraryDateTo');
+  if(f) f.value = '';
+  if(t) t.value = '';
+  if(typeof renderImageLibrary === 'function') renderImageLibrary();
+}
+
 // v181: is this library item actually an image? Only images may be pointed at by an <img src>.
 // A non-image (a stray .mov, etc.) fetched into an <img> makes the browser log spurious canceled
 // downloads, because Supabase serves non-image objects with an attachment Content-Disposition.
@@ -16945,6 +16965,101 @@ function _libraryItemIsVideo(item){
   var match = (item && item.storage_path || '').toLowerCase().match(/\.([a-z0-9]+)(?:$|\?)/);
   var ext = match ? match[1] : '';
   return ['mp4','webm','mov','m4v','avi','qt','mkv'].indexOf(ext) >= 0;
+}
+
+// v339: original-creation-date extractors. Two source formats we can read client-side:
+//   EXIF DateTimeOriginal (JPEG) — the exact "YYYY:MM:DD HH:MM:SS" the camera/phone recorded.
+//   mvhd creation_time  (mp4/mov) — seconds since 1904 Mac epoch inside the movie header atom.
+// Both fall back to file.lastModified if unavailable. Result is either a Date or null.
+function _readFileHeadBuffer(file, bytes){
+  return file.slice(0, Math.min(file.size, bytes)).arrayBuffer();
+}
+
+// EXIF: rather than parse the full TIFF/IFD structure, scan the first 256 KB of the JPEG for
+// the ASCII "YYYY:MM:DD HH:MM:SS" pattern. This is EXIF's spec'd DateTime string format —
+// consumer cameras and phones all write it verbatim into DateTimeOriginal (0x9003). The first
+// hit is almost always the earliest of {DateTime, DateTimeOriginal, DateTimeDigitized}, which
+// for a straight-out-of-camera shot are usually identical.
+function _extractExifDate(file){
+  if(!file) return Promise.resolve(null);
+  var t = (file.type || '').toLowerCase();
+  var isImg = t.indexOf('image/') === 0 || /\.(jpe?g|png|heic|heif|webp|tiff?)$/i.test(file.name || '');
+  if(!isImg) return Promise.resolve(null);
+  return _readFileHeadBuffer(file, 262144).then(function(buf){
+    var bytes = new Uint8Array(buf);
+    // Latin-1 stringify — one byte per char, no encoding traps for ASCII patterns
+    var s = '';
+    for(var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    var m = s.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+    if(!m) return null;
+    // EXIF timestamps are wall-clock in the camera's local time — no zone info. Store as UTC
+    // literal so filter comparisons are stable; users comparing "images from June 2024" don't
+    // care about the timezone offset shift.
+    var d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+    if(isNaN(d.getTime())) return null;
+    if(d.getFullYear() < 1990 || d.getTime() > Date.now() + 86400000) return null;   // sanity
+    return d;
+  }).catch(function(){ return null; });
+}
+
+// mp4/mov mvhd: scan for the 'mvhd' fourcc in the first 4 MB, then read version + creation_time.
+// mvhd is inside the moov atom; some containers put moov at the file tail (streaming-optimized)
+// but 4 MB is enough for the vast majority of consumer clips + all mobile-recorded video.
+function _extractMovieDate(file){
+  if(!file) return Promise.resolve(null);
+  var t = (file.type || '').toLowerCase();
+  var isVid = t.indexOf('video/') === 0 || /\.(mp4|mov|m4v)$/i.test(file.name || '');
+  if(!isVid) return Promise.resolve(null);
+  return _readFileHeadBuffer(file, 4 * 1024 * 1024).then(function(buf){
+    var v = new DataView(buf);
+    var end = v.byteLength - 20;
+    for(var i = 0; i < end; i++){
+      // 'mvhd' = 0x6D 76 68 64
+      if(v.getUint8(i) === 0x6D && v.getUint8(i+1) === 0x76 &&
+         v.getUint8(i+2) === 0x68 && v.getUint8(i+3) === 0x64){
+        var version = v.getUint8(i + 4);
+        var epochSecs;
+        if(version === 1){
+          // 64-bit — safe up to 2^53, well beyond any realistic date
+          var hi = v.getUint32(i + 8);
+          var lo = v.getUint32(i + 12);
+          epochSecs = hi * 4294967296 + lo;
+        } else {
+          epochSecs = v.getUint32(i + 8);
+        }
+        // Mac epoch (1904-01-01) → Unix epoch (1970-01-01) offset = 2082844800 seconds
+        var unixSecs = epochSecs - 2082844800;
+        if(unixSecs <= 0) continue;   // some encoders write 0 — keep scanning in case there's a real one later
+        var d = new Date(unixSecs * 1000);
+        if(isNaN(d.getTime())) continue;
+        if(d.getFullYear() < 1990 || d.getTime() > Date.now() + 86400000) continue;   // sanity
+        return d;
+      }
+    }
+    return null;
+  }).catch(function(){ return null; });
+}
+
+// Top-level extractor. Tries EXIF (images) or mvhd (videos) first, falls back to lastModified.
+function _extractOriginalCreationDate(file){
+  if(!file) return Promise.resolve(null);
+  var t = (file.type || '').toLowerCase();
+  var p;
+  if(t.indexOf('video/') === 0 || /\.(mp4|mov|m4v)$/i.test(file.name || '')){
+    p = _extractMovieDate(file);
+  } else if(t.indexOf('image/') === 0 || /\.(jpe?g|png|heic|heif|webp)$/i.test(file.name || '')){
+    p = _extractExifDate(file);
+  } else {
+    p = Promise.resolve(null);
+  }
+  return p.then(function(d){
+    if(d) return d;
+    if(file.lastModified){
+      var lm = new Date(file.lastModified);
+      if(!isNaN(lm.getTime()) && lm.getFullYear() >= 1990 && lm.getTime() <= Date.now() + 86400000) return lm;
+    }
+    return null;
+  });
 }
 
 // v338: quick predicate for the upload filter — matches image-file OR video-file by mime or
@@ -17157,7 +17272,8 @@ function cloudListLibraryItems(){
   // signed in and has a valid session in localStorage.
   if(!currentUser) return Promise.resolve([]);
   // v338: include thumbnail_data_uri so video items can render their poster frame in the grid
-  var selectCols = 'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, thumbnail_data_uri, created_at';
+  // v339: include original_created_at so the date-range filter can prefer it over upload date
+  var selectCols = 'id, name, storage_path, category_id, tags, brand, mime, file_size_bytes, thumbnail_data_uri, original_created_at, created_at';
   if(!sb) return _directFetchLibraryItems(selectCols);
   return sb.from('image_library_items')
     .select(selectCols)
@@ -17327,8 +17443,16 @@ function cloudUploadLibraryItem(file, categoryId, displayName, brand, opts){
         // v338: attach the video's poster-frame thumbnail if the caller generated one. Column
         // is nullable so images can leave it blank.
         if(opts.thumbnailDataUri) row.thumbnail_data_uri = opts.thumbnailDataUri;
+        // v339: attach the original creation date extracted from EXIF / mvhd / lastModified.
+        // Nullable — historical rows filter by upload date (created_at) via COALESCE.
+        if(opts.originalCreatedAt){
+          var iso = (opts.originalCreatedAt instanceof Date)
+            ? opts.originalCreatedAt.toISOString()
+            : String(opts.originalCreatedAt);
+          row.original_created_at = iso;
+        }
         return sb.from('image_library_items').insert(row)
-          .select('id, name, storage_path, category_id, brand, mime, file_size_bytes, thumbnail_data_uri, created_at').single();
+          .select('id, name, storage_path, category_id, brand, mime, file_size_bytes, thumbnail_data_uri, original_created_at, created_at').single();
       }).then(function(res){
         if(res.error) throw new Error(res.error.message || 'Library row insert failed');
         return res.data;
@@ -17546,8 +17670,26 @@ function renderImageLibrary(){
       if((it.name || '').toLowerCase().indexOf(searchQ) >= 0) return true;
       return (it.tags || []).some(function(tg){ return (tg || '').toLowerCase().indexOf(searchQ) >= 0; });
     }
+    // v339: date-range filter. Uses effective date = original_created_at (extracted from EXIF /
+    // mvhd / lastModified at upload) falling back to created_at (upload date). Both bounds are
+    // optional — one or the other lets you filter "before / after" open-ended. The date input
+    // gives us YYYY-MM-DD; we widen "To" to end-of-day so an exact-date-both-bounds match works.
+    var dateFromEl = document.getElementById('imageLibraryDateFrom');
+    var dateToEl   = document.getElementById('imageLibraryDateTo');
+    var dateFromMs = (dateFromEl && dateFromEl.value) ? new Date(dateFromEl.value + 'T00:00:00Z').getTime() : null;
+    var dateToMs   = (dateToEl   && dateToEl.value)   ? new Date(dateToEl.value   + 'T23:59:59Z').getTime() : null;
+    function checkDate(it){
+      if(dateFromMs == null && dateToMs == null) return null;
+      var iso = it.original_created_at || it.created_at;
+      if(!iso) return false;
+      var t = new Date(iso).getTime();
+      if(isNaN(t)) return false;
+      if(dateFromMs != null && t < dateFromMs) return false;
+      if(dateToMs   != null && t > dateToMs)   return false;
+      return true;
+    }
     var visible = items.filter(function(it){
-      var results = [checkBrand(it), checkCategory(it), checkTag(it), checkSearch(it)];
+      var results = [checkBrand(it), checkCategory(it), checkTag(it), checkSearch(it), checkDate(it)];
       var active = results.filter(function(r){ return r !== null; });
       if(!active.length) return true;   // no filters set → everything passes
       if(_libraryMatchMode === 'OR') return active.some(function(r){ return r === true; });
@@ -17588,6 +17730,16 @@ function renderImageLibrary(){
       if(item.file_size_bytes) metaParts.push(_formatBytes(item.file_size_bytes));
       var typeShort = _formatMimeShort(item.mime || '');
       if(typeShort) metaParts.push(typeShort);
+      // v339: show the effective creation date (EXIF/mvhd/lastModified if extracted, else upload
+      // date) so users can eyeball when each item was made without opening a details panel.
+      var effIso = item.original_created_at || item.created_at;
+      if(effIso){
+        var d = new Date(effIso);
+        if(!isNaN(d.getTime())){
+          var m = d.getUTCMonth() + 1, day = d.getUTCDate(), y = d.getUTCFullYear();
+          metaParts.push((m < 10 ? '0'+m : m) + '/' + (day < 10 ? '0'+day : day) + '/' + String(y).slice(2));
+        }
+      }
       var metaLine = metaParts.length ? '<div class="lib-cat">' + escAttr(metaParts.join(' · ')) + '</div>' : '';
       var isChecked = !!_librarySelectedItemIds[item.id];
       // v181/v338: images use their public URL directly; videos use the stored poster-frame
@@ -18043,9 +18195,20 @@ function runLibraryUpload(brand){
     var displayName = (srcFile.name || 'Untitled').replace(/\.[^.]+$/, '');
     if(_isVideoFile(srcFile)){
       statusEl.textContent = 'Processing video ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + '…';
-      _generateVideoThumbnail(srcFile).then(function(thumbUri){
+      // v339: extract original creation date from mvhd (falls back to lastModified) in parallel
+      // with thumbnail generation. Both are best-effort — a missing date just leaves the field
+      // NULL and the filter falls back to upload date.
+      Promise.all([
+        _generateVideoThumbnail(srcFile),
+        _extractOriginalCreationDate(srcFile)
+      ]).then(function(results){
+        var thumbUri = results[0];
+        var origDate = results[1];
         statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + ' (' + _formatBytes(srcFile.size) + ')';
-        return cloudUploadLibraryItem(srcFile, catId, displayName, brand, { thumbnailDataUri: thumbUri });
+        return cloudUploadLibraryItem(srcFile, catId, displayName, brand, {
+          thumbnailDataUri: thumbUri,
+          originalCreatedAt: origDate
+        });
       }).then(function(){ ok++; }).catch(function(e){
         console.warn('[lib] video upload failed for ' + srcFile.name + ':', e);
         failed++;
@@ -18055,6 +18218,11 @@ function runLibraryUpload(brand){
     }
     statusEl.textContent = (_isHeicFile(srcFile) ? 'Converting HEIC ' : 'Compressing ')
       + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + '…';
+    // v339: extract EXIF DateTimeOriginal from the ORIGINAL file bytes before compression /
+    // HEIC-conversion. Both operations re-encode the pixels and strip EXIF metadata, so pulling
+    // the date late would always lose it. Extraction runs in parallel with the prepare/compress
+    // pipeline — best-effort, null on failure or missing tag.
+    var origDatePromise = _extractOriginalCreationDate(srcFile);
     prepareImageFileForLoad(srcFile).then(function(prepared){
       srcFile = prepared;   // use the converted file's name in the displayName below
       return compressImageForLibrary(prepared);
@@ -18064,7 +18232,11 @@ function runLibraryUpload(brand){
         : ' (' + _formatBytes(result.originalSize) + ' → ' + _formatBytes(result.compressedSize) + ')';
       statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + compressMsg;
       bytesSaved += Math.max(0, result.originalSize - result.compressedSize);
-      return cloudUploadLibraryItem(result.file, catId, displayName, brand);
+      return origDatePromise.then(function(origDate){
+        return cloudUploadLibraryItem(result.file, catId, displayName, brand, {
+          originalCreatedAt: origDate
+        });
+      });
     }).then(function(){
       ok++;
     }).catch(function(e){
