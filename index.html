@@ -215,6 +215,8 @@ html[data-authed] #signInModal{display:none!important;}
 .lib-item .lib-cat{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 /* v142: tag pill row on library thumbnails */
 .lib-item .lib-tags{font-size:9px;color:var(--green-dark);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.3;}
+/* v341: date gets its own line so long brand/category names in .lib-cat can't push it off */
+.lib-item .lib-date{font-size:9px;color:var(--muted);margin-top:2px;line-height:1.3;font-variant-numeric:tabular-nums;}
 /* v148: tag chips for the Edit Image modal (click to toggle selected/unselected) */
 .tag-chip{display:inline-flex;align-items:center;gap:3px;padding:3px 9px;font-size:11px;border:1.5px solid var(--border);border-radius:12px;background:#fafafa;cursor:pointer;color:var(--text);font-weight:600;transition:all 0.12s;user-select:none;}
 .tag-chip:hover{border-color:var(--green);color:var(--green-dark);}
@@ -385,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v340</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v341</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -17422,6 +17424,45 @@ function cloudDeleteTag(name){
     });
 }
 
+// v341: retry an image_library_items INSERT with progressively fewer optional columns. On a
+// "column does not exist" error (Postgres 42703), we identify which column the DB rejected,
+// drop it from the row, drop it from the select list, and retry. Non-column errors propagate.
+// Handles the case where a user is running a build that expects the v338/v339 schema before the
+// corresponding SQL migration has been applied.
+function _insertLibraryRowWithFallback(row, selectAttempts, idx){
+  if(idx >= selectAttempts.length){
+    return Promise.resolve({ error: { message: 'All INSERT attempts failed — schema is missing core columns.' } });
+  }
+  var selectCols = selectAttempts[idx];
+  return sb.from('image_library_items').insert(row)
+    .select(selectCols).single()
+    .then(function(res){
+      if(res.error){
+        var msg = (res.error.message || '').toLowerCase();
+        var isMissing = msg.indexOf('does not exist') >= 0 || msg.indexOf('42703') >= 0 || (res.error.code === '42703');
+        if(isMissing){
+          // Parse the offending column name out of "Could not find the 'X' column of ..." or
+          // "column image_library_items.X does not exist". Strip from BOTH the row and the
+          // subsequent select attempt so PostgREST doesn't complain about the same column twice.
+          var cm = msg.match(/'([a-z_][a-z0-9_]*)'/) || msg.match(/\.([a-z_][a-z0-9_]+) does not exist/);
+          var badCol = cm ? cm[1] : null;
+          if(badCol && Object.prototype.hasOwnProperty.call(row, badCol)){
+            console.warn('[lib-upload] column "' + badCol + '" missing — retrying without it');
+            var trimmedRow = {};
+            Object.keys(row).forEach(function(k){ if(k !== badCol) trimmedRow[k] = row[k]; });
+            return _insertLibraryRowWithFallback(trimmedRow, selectAttempts, idx + 1);
+          }
+          // Couldn't identify the column — just step down the select attempts and try again with
+          // the same row (whichever optional column errors next will get identified then).
+          return _insertLibraryRowWithFallback(row, selectAttempts, idx + 1);
+        }
+        // Non-column error — surface it
+        return res;
+      }
+      return res;
+    });
+}
+
 function cloudUploadLibraryItem(file, categoryId, displayName, brand, opts){
   if(!sb || !currentUser) return Promise.reject(new Error('Sign in to upload.'));
   if(!file) return Promise.reject(new Error('No file provided.'));
@@ -17488,8 +17529,18 @@ function cloudUploadLibraryItem(file, categoryId, displayName, brand, opts){
             : String(opts.originalCreatedAt);
           row.original_created_at = iso;
         }
-        return sb.from('image_library_items').insert(row)
-          .select('id, name, storage_path, category_id, brand, mime, file_size_bytes, thumbnail_data_uri, original_created_at, created_at').single();
+        // v341: retry the INSERT with a trimmed row if the DB rejects an optional column that
+        // doesn't exist yet (thumbnail_data_uri from v338, original_created_at from v339). Same
+        // graceful-degradation pattern as v340's SELECT. The core row (name, storage_path, etc.)
+        // is required; the optional metadata columns get dropped one at a time until the insert
+        // succeeds or we've stripped everything optional.
+        var selectAttempts = [
+          'id, name, storage_path, category_id, brand, mime, file_size_bytes, thumbnail_data_uri, original_created_at, created_at',
+          'id, name, storage_path, category_id, brand, mime, file_size_bytes, thumbnail_data_uri, created_at',
+          'id, name, storage_path, category_id, brand, mime, file_size_bytes, original_created_at, created_at',
+          'id, name, storage_path, category_id, brand, mime, file_size_bytes, created_at'
+        ];
+        return _insertLibraryRowWithFallback(row, selectAttempts, 0);
       }).then(function(res){
         if(res.error) throw new Error(res.error.message || 'Library row insert failed');
         return res.data;
@@ -17767,14 +17818,18 @@ function renderImageLibrary(){
       if(item.file_size_bytes) metaParts.push(_formatBytes(item.file_size_bytes));
       var typeShort = _formatMimeShort(item.mime || '');
       if(typeShort) metaParts.push(typeShort);
-      // v339: show the effective creation date (EXIF/mvhd/lastModified if extracted, else upload
-      // date) so users can eyeball when each item was made without opening a details panel.
+      // v339/v341: effective creation date (EXIF/mvhd/lastModified if extracted, else upload
+      // date) on its OWN line — packing it into metaParts pushes it off the end when brand /
+      // category names are long because .lib-cat is single-line ellipsis-truncated.
+      var dateLine = '';
       var effIso = item.original_created_at || item.created_at;
       if(effIso){
         var d = new Date(effIso);
         if(!isNaN(d.getTime())){
           var m = d.getUTCMonth() + 1, day = d.getUTCDate(), y = d.getUTCFullYear();
-          metaParts.push((m < 10 ? '0'+m : m) + '/' + (day < 10 ? '0'+day : day) + '/' + String(y).slice(2));
+          var label = (m < 10 ? '0'+m : m) + '/' + (day < 10 ? '0'+day : day) + '/' + String(y).slice(2);
+          var isExif = !!item.original_created_at;
+          dateLine = '<div class="lib-date" title="' + (isExif ? 'From EXIF / mvhd (capture date)' : 'Upload date (no capture date in file)') + '">📅 ' + escAttr(label) + '</div>';
         }
       }
       var metaLine = metaParts.length ? '<div class="lib-cat">' + escAttr(metaParts.join(' · ')) + '</div>' : '';
@@ -17807,6 +17862,7 @@ function renderImageLibrary(){
         + thumbHtml
         + '<div class="lib-name">' + escAttr(item.name) + '</div>'
         + metaLine
+        + dateLine
         + tagsLine;
       if(isChecked) div.classList.add('selected');
       // v134: attach handlers directly to each button instead of using event delegation on the
