@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v343</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v344</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1137,6 +1137,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="bulkSelectAllVisible()" title="Select every image currently visible in the grid">Select all visible</button>
       <button type="button" class="btn-cancel" style="padding:5px 12px;font-size:12px;" onclick="bulkClearSelection()" title="Clear the selection (stays in select mode)">Clear</button>
       <button type="button" class="btn-primary" style="padding:5px 12px;font-size:12px;" onclick="openBulkEditModal()" title="Set category and add/remove tags for the selected images">✎ Bulk Edit</button>
+      <!-- v343: bulk delete. Confirms with the exact count, fans out DELETEs in parallel and
+           surfaces a fail count if any row won't drop (RLS mismatch, network hiccup, etc.).
+           Designs that already used a deleted image keep their embedded copy — deletion only
+           affects the library grid + storage bytes. -->
+      <button type="button" style="padding:5px 12px;font-size:12px;font-weight:600;color:#fff;background:#c53030;border:1.5px solid #a52020;border-radius:6px;cursor:pointer;" onclick="confirmBulkDeleteLibraryItems()" title="Delete every selected image from the library">🗑 Delete</button>
     </div>
     <!-- v147: hint shown only in manage mode so the user knows clicks edit, not add to canvas -->
     <div id="imageLibraryModeHint" class="hidden" style="padding:6px 10px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;font-size:11px;color:#664d03;margin-bottom:8px;"></div>
@@ -21875,6 +21880,49 @@ function confirmDeleteLibraryItem(item){
     showToast('Deleted ' + item.name);
   }).catch(function(e){
     alert('Delete failed: ' + (e.message || e));
+  });
+}
+
+// v343: bulk delete for the current selection. Same disclaimer as single-delete — designs that
+// already used any of these images keep their embedded copy. Fans out the DELETEs in parallel,
+// tracks per-row success/failure, and rebuilds the grid once every request has settled.
+function confirmBulkDeleteLibraryItems(){
+  var ids = Object.keys(_librarySelectedItemIds).map(function(k){ return +k; }).filter(function(n){ return !isNaN(n); });
+  if(!ids.length){ alert('Select at least one image first.'); return; }
+  var msg = 'Delete ' + ids.length + ' image' + (ids.length === 1 ? '' : 's')
+          + ' from the library? This can\'t be undone. Designs that already used any of these keep their embedded copy.';
+  if(!confirm(msg)) return;
+  var statusEl = document.getElementById('imageLibraryStatus');
+  statusEl.classList.remove('hidden');
+  statusEl.style.background = '#f4faf4';
+  statusEl.style.borderColor = '#d5e8bc';
+  statusEl.style.color = '#3a5e10';
+  statusEl.textContent = 'Deleting ' + ids.length + ' image' + (ids.length === 1 ? '' : 's') + '…';
+  var ok = 0, failed = 0, lastError = '';
+  var jobs = ids.map(function(id){
+    var item = (_libraryItemsCache || []).find(function(x){ return x.id === id; });
+    var storagePath = item ? item.storage_path : null;
+    return cloudDeleteLibraryItem(id, storagePath).then(function(){
+      ok++;
+      delete _librarySelectedItemIds[id];
+    }).catch(function(e){
+      failed++;
+      lastError = e.message || String(e);
+    });
+  });
+  Promise.all(jobs).then(function(){
+    if(failed){
+      statusEl.style.background = '#fef2f0';
+      statusEl.style.borderColor = '#fbcaba';
+      statusEl.style.color = '#b3261e';
+      statusEl.textContent = '✗ Deleted ' + ok + ', ' + failed + ' failed. Last error: ' + lastError;
+      setTimeout(function(){ statusEl.classList.add('hidden'); }, 15000);
+    } else {
+      statusEl.textContent = '✓ Deleted ' + ok;
+      setTimeout(function(){ statusEl.classList.add('hidden'); }, 3000);
+    }
+    updateLibraryBulkActionBar();
+    renderImageLibrary();
   });
 }
 
