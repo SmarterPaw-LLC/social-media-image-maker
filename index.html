@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v342</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v343</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -917,10 +917,21 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <div>
         <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">Category</label>
         <div style="display:flex;gap:6px;">
-          <select id="uploadCategorySelect" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;">
+          <select id="uploadCategorySelect" style="flex:1;min-width:0;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;">
             <option value="">— Uncategorized —</option>
           </select>
-          <button type="button" class="btn-add" style="padding:8px 12px;font-size:12px;white-space:nowrap;" onclick="promptNewUploadCategory()" title="Create a new category and select it here">+ New</button>
+          <button type="button" style="flex:0 0 auto;width:auto;padding:8px 14px;font-size:12px;font-weight:600;color:var(--muted);background:none;border:1.5px dashed var(--border);border-radius:6px;cursor:pointer;white-space:nowrap;" onclick="promptNewUploadCategory()" title="Create a new category and select it here">+ New</button>
+        </div>
+      </div>
+      <!-- v343: tags on upload. Uses the same chip-picker pattern as the Edit Image modal but
+           namespaced with `upload*` ids so the two coexist. Empty tag set is fine — the row's
+           `tags` column stays null and the caller's tag filters keep working unchanged. -->
+      <div>
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">Tags <span style="font-weight:400;font-size:10px;">(applied to every file in the batch)</span></label>
+        <div id="uploadTagsChips" style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1.5px solid var(--border);border-radius:6px;min-height:38px;max-height:120px;overflow-y:auto;background:#fff;"></div>
+        <div style="display:flex;gap:4px;margin-top:4px;">
+          <input type="text" id="uploadNewTagInput" placeholder="new tag…" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();addNewUploadTagFromInput();}" style="flex:1;min-width:0;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;">
+          <button type="button" style="flex:0 0 auto;padding:5px 12px;font-size:12px;font-weight:600;color:var(--muted);background:none;border:1.5px dashed var(--border);border-radius:6px;cursor:pointer;" onclick="addNewUploadTagFromInput()">+ Add</button>
         </div>
       </div>
       <div style="font-size:11px;color:var(--muted);line-height:1.5;">Applied to every file in this batch. Edit later via Edit Image or Bulk Edit.</div>
@@ -16865,6 +16876,11 @@ var _libraryMode = 'pick';
 // open, mutated by chip clicks / + Add. Used at Save time instead of re-parsing the input.
 var _editingTags = [];
 
+// v343: working set of tags for the Upload modal — same shape and semantics as _editingTags,
+// but reset each time the upload modal opens so tags from a previous batch don't leak into
+// the next one. Applied to every file in the batch at insert time.
+var _uploadTags = [];
+
 function renderEditTagsChips(){
   var container = document.getElementById('editTagsChips');
   if(!container) return;
@@ -16908,6 +16924,51 @@ function addNewTagFromInput(){
   }
   inp.value = '';
   renderEditTagsChips();
+}
+
+// v343: upload-modal counterparts. Same chip picker, targeting #uploadTagsChips and mutating
+// _uploadTags. Kept parallel to the Edit versions rather than parameterized — the shared logic
+// is short enough that duplication is clearer than a shared function with mode branches.
+function renderUploadTagsChips(){
+  var container = document.getElementById('uploadTagsChips');
+  if(!container) return;
+  container.innerHTML = '';
+  var union = {};
+  _libraryAllTagsCache.forEach(function(t){ union[t] = true; });
+  _uploadTags.forEach(function(t){ union[t] = true; });
+  var allTags = Object.keys(union).sort();
+  if(!allTags.length){
+    container.innerHTML = '<span style="font-size:11px;color:var(--muted);padding:4px;">No tags yet — type one below and click + Add.</span>';
+    return;
+  }
+  allTags.forEach(function(t){
+    var selected = _uploadTags.indexOf(t) >= 0;
+    var chip = document.createElement('span');
+    chip.className = 'tag-chip' + (selected ? ' selected' : '');
+    chip.textContent = (selected ? '✓ ' : '') + t;
+    chip.title = selected ? 'Click to remove' : 'Click to add';
+    chip.onclick = function(){
+      var idx = _uploadTags.indexOf(t);
+      if(idx >= 0) _uploadTags.splice(idx, 1);
+      else _uploadTags.push(t);
+      renderUploadTagsChips();
+    };
+    container.appendChild(chip);
+  });
+}
+
+function addNewUploadTagFromInput(){
+  var inp = document.getElementById('uploadNewTagInput');
+  if(!inp) return;
+  var v = (inp.value || '').trim().toLowerCase();
+  if(!v) return;
+  if(_uploadTags.indexOf(v) < 0) _uploadTags.push(v);
+  if(_libraryAllTagsCache.indexOf(v) < 0){
+    _libraryAllTagsCache.push(v);
+    _libraryAllTagsCache.sort();
+  }
+  inp.value = '';
+  renderUploadTagsChips();
 }
 
 // v142: parse a comma-separated tags input into a deduped lowercase array
@@ -17059,20 +17120,122 @@ function _extractMovieDate(file){
   }).catch(function(){ return null; });
 }
 
-// Top-level extractor. Tries EXIF (images) or mvhd (videos) first, falls back to lastModified.
+// v343: additional date sources beyond EXIF DateTimeOriginal / mvhd. In practice most files
+// that hit the library have already been through a service that strips EXIF (Instagram,
+// Facebook, Messenger, WhatsApp, iMessage export) — for those v339's extractor returned null
+// and fell through to lastModified, which is the *download* date, not the shot date. These
+// sources recover the shot date where possible.
+
+// Filenames from phones/cameras/screenshots commonly embed the date. Cover the popular ones:
+//   IMG_20240315_143022.jpg   (Android camera / many messaging exports)
+//   PXL_20240315_143022123.jpg  (Google Pixel)
+//   Screenshot_20240315-143022.png / Screenshot 2024-03-15 at 14.30.22.png (iOS/macOS)
+//   20240315_143022.mp4  (older Android camera)
+//   VID_20240315_143022.mp4
+//   photo_2024-03-15_14-30-22.jpg (Telegram export)
+// Common pattern across all of them: an 8-digit YYYYMMDD run (with optional separators between
+// the components) that's not part of a longer number. Matching that pattern with lookahead
+// non-digit boundaries is enough. Time part is best-effort — many exports don't preserve it,
+// and a wrong-hour tag on a right-day file still filters correctly at day granularity.
+function _extractFilenameDate(file){
+  if(!file || !file.name) return null;
+  var name = file.name;
+  var re = /(?:^|[^0-9])((?:19|20)\d{2})[-_ .]?(0[1-9]|1[0-2])[-_ .]?(0[1-9]|[12]\d|3[01])(?:(?:[-_ T]|at )?(\d{2})[-_.:](\d{2})(?:[-_.:](\d{2}))?)?(?:[^0-9]|$)/i;
+  var m = name.match(re);
+  if(!m) return null;
+  var y = +m[1], mo = +m[2] - 1, dd = +m[3];
+  var hh = m[4] ? +m[4] : 12;   // noon UTC if no time — avoids day-boundary flips at filter edges
+  var mi = m[5] ? +m[5] : 0;
+  var ss = m[6] ? +m[6] : 0;
+  if(hh > 23 || mi > 59 || ss > 59) { hh = 12; mi = 0; ss = 0; }
+  var d = new Date(Date.UTC(y, mo, dd, hh, mi, ss));
+  if(isNaN(d.getTime())) return null;
+  if(d.getFullYear() < 1990 || d.getTime() > Date.now() + 86400000) return null;
+  return d;
+}
+
+// PNG stores creation time in a tEXt (or iTXt) chunk with the keyword "Creation Time". The
+// value is a free-form date string per PNG spec — usually ISO or RFC 822. tEXt is null-
+// terminated between keyword and value. Scan the head buffer for "Creation Time\0", read the
+// value until the next control byte, hand off to Date.parse.
+function _extractPngCreationTime(file){
+  if(!file) return Promise.resolve(null);
+  var t = (file.type || '').toLowerCase();
+  if(t !== 'image/png' && !/\.png$/i.test(file.name || '')) return Promise.resolve(null);
+  return _readFileHeadBuffer(file, 262144).then(function(buf){
+    var bytes = new Uint8Array(buf);
+    var s = '';
+    for(var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    var kw = 'Creation Time\x00';
+    var idx = s.indexOf(kw);
+    if(idx < 0) return null;
+    var raw = s.substr(idx + kw.length, 200);
+    var stop = raw.search(/[\x00-\x08\x0e-\x1f]/);
+    if(stop > 0) raw = raw.slice(0, stop);
+    var parsed = Date.parse(raw);
+    if(isNaN(parsed)) return null;
+    var d = new Date(parsed);
+    if(d.getFullYear() < 1990 || d.getTime() > Date.now() + 86400000) return null;
+    return d;
+  }).catch(function(){ return null; });
+}
+
+// XMP metadata is embedded as XML in JPEG APP1, PNG iTXt, WebP RIFF, etc. Photoshop, Lightroom,
+// and phone-camera pipelines all write it. The relevant fields (in preference order):
+//   photoshop:DateCreated  — original capture time, preserved through re-saves
+//   xmp:CreateDate         — creation time in the current file
+//   xmp:MetadataDate       — last metadata write; least reliable but sometimes the only survivor
+// Format is ISO 8601: "2024-03-15T14:30:22-07:00" or "2024-03-15T14:30:22". Same head-buffer
+// scan as EXIF — we already read 256 KB for that.
+function _extractXmpDate(file){
+  if(!file) return Promise.resolve(null);
+  var t = (file.type || '').toLowerCase();
+  var isImg = t.indexOf('image/') === 0 || /\.(jpe?g|png|heic|heif|webp|tiff?)$/i.test(file.name || '');
+  if(!isImg) return Promise.resolve(null);
+  return _readFileHeadBuffer(file, 262144).then(function(buf){
+    var bytes = new Uint8Array(buf);
+    var s = '';
+    for(var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    // Try each field name in preference order — first hit wins
+    var fields = ['photoshop:DateCreated', 'xmp:CreateDate', 'exif:DateTimeOriginal', 'xmp:MetadataDate'];
+    for(var fi = 0; fi < fields.length; fi++){
+      // Attribute form: xmp:CreateDate="2024-03-15T…" or element form: <xmp:CreateDate>2024-03-15T…</xmp:CreateDate>
+      var patt = new RegExp(fields[fi].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[>="\'\\s]+([\\d]{4}-[\\d]{2}-[\\d]{2}T[\\d]{2}:[\\d]{2}:[\\d]{2}(?:[.\\d]*)(?:[+-][\\d:]{4,5}|Z)?)');
+      var m = s.match(patt);
+      if(!m) continue;
+      var parsed = Date.parse(m[1]);
+      if(isNaN(parsed)) continue;
+      var d = new Date(parsed);
+      if(d.getFullYear() < 1990 || d.getTime() > Date.now() + 86400000) continue;
+      return d;
+    }
+    return null;
+  }).catch(function(){ return null; });
+}
+
+// Top-level extractor. Tries EXIF/mvhd, then XMP, then PNG Creation Time, then a filename-encoded
+// date, then falls back to lastModified. Filename is preferred over lastModified because on
+// downloads / iMessage saves lastModified is the copy time (today), whereas a filename like
+// IMG_20240315_143022.jpg still carries the shot date.
 function _extractOriginalCreationDate(file){
   if(!file) return Promise.resolve(null);
   var t = (file.type || '').toLowerCase();
-  var p;
-  if(t.indexOf('video/') === 0 || /\.(mp4|mov|m4v)$/i.test(file.name || '')){
-    p = _extractMovieDate(file);
-  } else if(t.indexOf('image/') === 0 || /\.(jpe?g|png|heic|heif|webp)$/i.test(file.name || '')){
-    p = _extractExifDate(file);
-  } else {
-    p = Promise.resolve(null);
-  }
-  return p.then(function(d){
+  var isVid = t.indexOf('video/') === 0 || /\.(mp4|mov|m4v)$/i.test(file.name || '');
+  var primary = isVid ? _extractMovieDate(file) : _extractExifDate(file);
+  return primary.then(function(d){
     if(d) return d;
+    // Images: try XMP + PNG tEXt in parallel — whichever fires first wins if both are present
+    if(!isVid){
+      return Promise.all([_extractXmpDate(file), _extractPngCreationTime(file)]).then(function(rs){
+        return rs[0] || rs[1] || null;
+      });
+    }
+    return null;
+  }).then(function(d){
+    if(d) return d;
+    // Filename check is synchronous + cheap; try before lastModified
+    var fn = _extractFilenameDate(file);
+    if(fn) return fn;
     if(file.lastModified){
       var lm = new Date(file.lastModified);
       if(!isNaN(lm.getTime()) && lm.getFullYear() >= 1990 && lm.getTime() <= Date.now() + 86400000) return lm;
@@ -17446,6 +17609,11 @@ function cloudDeleteTag(name){
 // drop it from the row, drop it from the select list, and retry. Non-column errors propagate.
 // Handles the case where a user is running a build that expects the v338/v339 schema before the
 // corresponding SQL migration has been applied.
+// v343: also detect PostgREST's schema-cache-miss variant ("Could not find the 'X' column of
+// 'Y' in the schema cache", error code PGRST204). That's what Supabase actually returns when
+// the column is genuinely missing from its schema cache — v341's check only matched the raw
+// Postgres 42703 phrasing, so a video upload with an unmigrated thumbnail_data_uri column
+// slipped straight through to the user as a hard error.
 function _insertLibraryRowWithFallback(row, selectAttempts, idx){
   if(idx >= selectAttempts.length){
     return Promise.resolve({ error: { message: 'All INSERT attempts failed — schema is missing core columns.' } });
@@ -17456,7 +17624,12 @@ function _insertLibraryRowWithFallback(row, selectAttempts, idx){
     .then(function(res){
       if(res.error){
         var msg = (res.error.message || '').toLowerCase();
-        var isMissing = msg.indexOf('does not exist') >= 0 || msg.indexOf('42703') >= 0 || (res.error.code === '42703');
+        var code = res.error.code || '';
+        var isMissing = msg.indexOf('does not exist') >= 0
+                     || msg.indexOf('42703') >= 0
+                     || code === '42703'
+                     || code === 'PGRST204'
+                     || (msg.indexOf('could not find') >= 0 && msg.indexOf('column') >= 0);
         if(isMissing){
           // Parse the offending column name out of "Could not find the 'X' column of ..." or
           // "column image_library_items.X does not exist". Strip from BOTH the row and the
@@ -17538,6 +17711,17 @@ function cloudUploadLibraryItem(file, categoryId, displayName, brand, opts){
         // v338: attach the video's poster-frame thumbnail if the caller generated one. Column
         // is nullable so images can leave it blank.
         if(opts.thumbnailDataUri) row.thumbnail_data_uri = opts.thumbnailDataUri;
+        // v343: batch tags stamped on every row in the upload. Empty array = leave column null.
+        // Column exists since v142 so no fallback branch needed; if a caller passes non-strings
+        // we drop them so PostgREST doesn't reject on a type mismatch.
+        if(Array.isArray(opts.tags) && opts.tags.length){
+          var cleanTags = [];
+          for(var ti = 0; ti < opts.tags.length; ti++){
+            var tv = opts.tags[ti];
+            if(typeof tv === 'string' && tv.trim()) cleanTags.push(tv.trim().toLowerCase());
+          }
+          if(cleanTags.length) row.tags = cleanTags;
+        }
         // v339: attach the original creation date extracted from EXIF / mvhd / lastModified.
         // Nullable — historical rows filter by upload date (created_at) via COALESCE.
         if(opts.originalCreatedAt){
@@ -18246,6 +18430,11 @@ function handleLibraryUpload(event){
     else brandSel.value = 'meowi';
   }
   populateUploadCategorySelect();
+  // v343: reset the upload-modal tag set each open so tags from a previous batch don't leak in
+  _uploadTags = [];
+  renderUploadTagsChips();
+  var newTagInp = document.getElementById('uploadNewTagInput');
+  if(newTagInp) newTagInp.value = '';
   document.getElementById('uploadBrandModal').classList.remove('hidden');
 }
 
@@ -18311,7 +18500,10 @@ function confirmUploadBrandCategory(){
     var n = parseInt(catRaw, 10);
     if(!isNaN(n)) categoryId = n;
   }
-  runLibraryUpload(brand, categoryId);
+  // v343: snapshot the current upload-modal tag set so it's stable through the async loop even
+  // if the user reopens the modal later. Empty array = no tags applied (row.tags stays null).
+  var batchTags = _uploadTags.slice();
+  runLibraryUpload(brand, categoryId, batchTags);
 }
 
 function cancelUploadBrand(){
@@ -18321,7 +18513,7 @@ function cancelUploadBrand(){
   _pendingUploadInputEl = null;
 }
 
-function runLibraryUpload(brand, categoryId){
+function runLibraryUpload(brand, categoryId, batchTags){
   document.getElementById('uploadBrandModal').classList.add('hidden');
   var files = _pendingUploadFiles;
   var inputEl = _pendingUploadInputEl;
@@ -18338,6 +18530,8 @@ function runLibraryUpload(brand, categoryId){
     catId = parseInt(_libraryCurrentFilter, 10);
     if(isNaN(catId)) catId = null;
   }
+  // v343: batchTags is the tag set to stamp on every row in the batch. undefined/null → no tags.
+  var uploadTags = Array.isArray(batchTags) ? batchTags.slice() : [];
   var statusEl = document.getElementById('imageLibraryStatus');
   // v130: reset to success-styling each upload so a previous error's red doesn't bleed through
   statusEl.classList.remove('hidden');
@@ -18397,7 +18591,8 @@ function runLibraryUpload(brand, categoryId){
         statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + ' (' + _formatBytes(srcFile.size) + ')';
         return cloudUploadLibraryItem(srcFile, catId, displayName, brand, {
           thumbnailDataUri: thumbUri,
-          originalCreatedAt: origDate
+          originalCreatedAt: origDate,
+          tags: uploadTags
         });
       }).then(function(){ ok++; }).catch(function(e){
         console.warn('[lib] video upload failed for ' + srcFile.name + ':', e);
@@ -18424,7 +18619,8 @@ function runLibraryUpload(brand, categoryId){
       bytesSaved += Math.max(0, result.originalSize - result.compressedSize);
       return origDatePromise.then(function(origDate){
         return cloudUploadLibraryItem(result.file, catId, displayName, brand, {
-          originalCreatedAt: origDate
+          originalCreatedAt: origDate,
+          tags: uploadTags
         });
       });
     }).then(function(){
