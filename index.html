@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v345</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v346</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -570,15 +570,31 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <div style="font-weight:700;font-size:13px;">⚡ Performance</div>
       <button onclick="togglePerfPanel()" style="background:none;border:none;font-size:16px;cursor:pointer;color:var(--muted);padding:0 4px;line-height:1;">✕</button>
     </div>
+    <!-- v346: expanded diagnostics — heap alone isn't enough to spot what's actually big.
+         Image bytes across boards, library-cache row count, and DOM size cover the three
+         hotspots that make "everything is slow" happen: layer images, the library grid, and
+         DOM node accumulation from repeated modal opens. -->
     <div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.7;background:#fafafa;border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
       <div>JS heap: <b id="perfHeap" style="color:var(--text);">—</b></div>
-      <div>Undo history: <b id="perfUndo" style="color:var(--text);">—</b> snapshots</div>
       <div>Boards: <b id="perfBoards" style="color:var(--text);">—</b></div>
+      <div>Layer images: <b id="perfImgBytes" style="color:var(--text);">—</b></div>
+      <div>Undo history: <b id="perfUndo" style="color:var(--text);">—</b> snapshots</div>
+      <div>Library cache: <b id="perfLibCache" style="color:var(--text);">—</b></div>
+      <div>DOM nodes: <b id="perfDom" style="color:var(--text);">—</b></div>
     </div>
-    <button class="btn-add" style="width:100%;margin-bottom:6px;" onclick="perfClearUndo()" title="Drop every undo/redo snapshot across all boards. Frees the biggest single memory hog in long sessions.">🧹 Clear undo history</button>
+    <!-- v346: relief actions ordered by leverage. Close-other-boards is the biggest single win
+         when the user has been jumping between designs — each open board carries its layers'
+         base64 images. Purging the library cache reclaims the metadata array + the modal grid's
+         DOM if it's still around. Hard reload keeps only the current board across the reload,
+         so the memory drop actually sticks instead of restoring the same bloat. -->
+    <button class="btn-add" style="width:100%;margin-bottom:6px;" onclick="perfCloseOtherBoards()" title="Close every open board except the current one. Frees each closed board's layer images from memory.">✂ Close other boards</button>
+    <button class="btn-add" style="width:100%;margin-bottom:6px;" onclick="perfPurgeLibraryCache()" title="Drop the in-memory library items array and empty the library grid DOM. Next open re-fetches from Supabase.">📚 Purge library cache</button>
+    <button class="btn-add" style="width:100%;margin-bottom:6px;" onclick="perfClearUndo()" title="Drop every undo/redo snapshot across all boards.">🧹 Clear undo history</button>
     <button class="btn-add" style="width:100%;margin-bottom:6px;" onclick="perfReloadKeepSession()" title="Save every board's state to browser storage, then reload the page. Every closure, handler, and cached blob is released. Boards + selection restore automatically.">↻ Reload &amp; keep session</button>
+    <button class="btn-add" style="width:100%;margin-bottom:6px;" onclick="perfReloadCurrentBoardOnly()" title="Same as Reload & keep session, but preserves ONLY the current board. Every other board is dropped for good — the biggest single memory reclaim if you've had many designs open.">↻⚡ Reload w/ current board only</button>
+    <button class="btn-add" style="width:100%;" onclick="perfDumpDiagnostics()" title="Log a rich diagnostic dump to the console so you (or a bug report) can see exactly what's big.">🔍 Console dump (for bug reports)</button>
     <div style="font-size:10px;color:var(--muted);margin-top:8px;line-height:1.4;">
-      Closing unused boards also frees memory (× on the board tab). Autosave restores your current design if the page crashes.
+      Slowness usually comes from too many open boards, a giant library grid still in the DOM, or a runaway undo stack. Autosave preserves your current design across reloads.
     </div>
   </div>
   <div class="zoom-controls">
@@ -2784,6 +2800,9 @@ function updatePerfPanel(){
   var heapEl = document.getElementById('perfHeap');
   var undoEl = document.getElementById('perfUndo');
   var boardsEl = document.getElementById('perfBoards');
+  var imgBytesEl = document.getElementById('perfImgBytes');
+  var libCacheEl = document.getElementById('perfLibCache');
+  var domEl = document.getElementById('perfDom');
   if(heapEl){
     // performance.memory is Chromium-only. Firefox/Safari get "(not available)" — still safe to show.
     if(performance && performance.memory && performance.memory.usedJSHeapSize){
@@ -2804,6 +2823,34 @@ function updatePerfPanel(){
   if(boardsEl){
     boardsEl.textContent = boards.length + ' · total layers: '
       + boards.reduce(function(t, b){ return t + (b.layers ? b.layers.length : 0); }, 0);
+  }
+  // v346: estimated decoded-image bytes across every board. Uses naturalWidth×naturalHeight×4
+  // for each loaded HTMLImageElement — this is what the browser holds in decoded form, not the
+  // encoded file size. A single 3000×3000 photo = ~36 MB decoded, so 5 boards × 4 photos each
+  // = ~700 MB. That's typically the reason "everything is slow" — GC pressure per redraw.
+  if(imgBytesEl){
+    var count = 0, bytes = 0;
+    boards.forEach(function(b){
+      (b.layers || []).forEach(function(l){
+        var img = null;
+        if(l.type === 'image' && l.img) img = l.img;
+        else if(l.type === 'framedImage' && l._img) img = l._img;
+        else if(l.type === 'svg' && l.img) img = l.img;
+        if(img && img.naturalWidth){
+          count++;
+          bytes += img.naturalWidth * img.naturalHeight * 4;
+        }
+      });
+    });
+    var mb2 = Math.round(bytes / 1024 / 1024);
+    imgBytesEl.textContent = count + ' image' + (count === 1 ? '' : 's') + ' · ~' + mb2 + ' MB decoded';
+  }
+  if(libCacheEl){
+    var n = (_libraryItemsCache || []).length;
+    libCacheEl.textContent = n + ' row' + (n === 1 ? '' : 's');
+  }
+  if(domEl){
+    domEl.textContent = document.getElementsByTagName('*').length + ' nodes';
   }
 }
 
@@ -2834,6 +2881,128 @@ function perfClearUndo(){
   } else {
     updatePerfPanel();
   }
+}
+
+// v346: close every board except the current one. Typically the biggest single memory drop —
+// each closed board's layer array (and its images' _imgSrc base64) becomes unreachable and GC
+// collects it. Confirms first because unsaved changes on the other boards will vanish.
+function perfCloseOtherBoards(){
+  if(boards.length <= 1){ alert('Only one board is open — nothing to close.'); return; }
+  var otherCount = boards.length - 1;
+  if(!confirm('Close ' + otherCount + ' other board' + (otherCount === 1 ? '' : 's') + '? Any unsaved changes on those boards will be lost.\n\nThe current board stays open.')) return;
+  var keepId = currentBoardId;
+  boards = boards.filter(function(b){ return b.id === keepId; });
+  // Force redraw + tab rebuild so the UI reflects the pruned set
+  renderBoardTabs();
+  renderLayerList();
+  renderProps();
+  renderPresets();
+  applyZoom();
+  redraw();
+  updateExportInfo();
+  updatePerfPanel();
+  showToast('✓ Closed ' + otherCount + ' board' + (otherCount === 1 ? '' : 's'));
+}
+
+// v346: drop the in-memory library-items cache and empty the modal grid's DOM if it's still
+// mounted. `_libraryItemsCache` can hold hundreds of rows with base64 thumbnails for videos;
+// the grid DOM adds another node-per-tile. Safe to purge — next modal open re-fetches.
+function perfPurgeLibraryCache(){
+  var cacheN = (_libraryItemsCache || []).length;
+  _libraryItemsCache = [];
+  _libraryVisibleItems = [];
+  _libraryAllTagsCache = [];
+  _librarySelectedItemIds = {};
+  var grid = document.getElementById('imageLibraryGrid');
+  if(grid) grid.innerHTML = '';
+  // If the modal is open, close it — its state is now stale
+  var modal = document.getElementById('imageLibraryModal');
+  if(modal && !modal.classList.contains('hidden')){
+    closeImageLibraryModal();
+  }
+  updatePerfPanel();
+  showToast('✓ Purged ' + cacheN + ' library row' + (cacheN === 1 ? '' : 's'));
+}
+
+// v346: like perfReloadKeepSession, but preserves ONLY the current board. Every other board is
+// dropped for good. Use when the heap is dominated by boards you no longer need — this is the
+// nuclear option that actually stays freed across the reload (perfReloadKeepSession restores
+// everything and you're back where you started).
+function perfReloadCurrentBoardOnly(){
+  if(!confirm('Reload with ONLY the current board?\n\n' +
+              'Every other open board will be dropped. Unsaved work on those boards will be lost. ' +
+              'Undo history will be cleared (that\'s the point).\n\n' +
+              'The current board is saved and restored after reload.')){
+    return;
+  }
+  var b = getBoard();
+  var state = gatherDesignState();
+  state.name = b.name;
+  var bundle = {
+    kind: 'session-restore',
+    version: 1,
+    savedAt: new Date().toISOString(),
+    activeBoardIdx: 0,
+    boards: [{ name: b.name, state: state }]
+  };
+  idbSaveDesign(SESSION_RESTORE_ID, bundle).then(function(){
+    location.reload();
+  }).catch(function(e){
+    alert('Could not save session bundle before reload: ' + (e.message || e));
+  });
+}
+
+// v346: rich diagnostic dump to the console. When "everything is slow" is vague, this gives you
+// (and me, in a bug report) hard numbers per subsystem to spot the actual hotspot. Deliberately
+// verbose — copy/paste-friendly.
+function perfDumpDiagnostics(){
+  var out = {
+    at: new Date().toISOString(),
+    ua: navigator.userAgent,
+    heap: (performance && performance.memory) ? {
+      usedMB: Math.round(performance.memory.usedJSHeapSize / 1048576),
+      totalMB: Math.round(performance.memory.totalJSHeapSize / 1048576),
+      limitMB: Math.round(performance.memory.jsHeapSizeLimit / 1048576)
+    } : 'unavailable',
+    boards: boards.map(function(b){
+      var imgCount = 0, imgBytes = 0, videoCount = 0, svgCount = 0;
+      (b.layers || []).forEach(function(l){
+        var img = null;
+        if(l.type === 'image' && l.img) img = l.img;
+        else if(l.type === 'framedImage' && l._img) img = l._img;
+        else if(l.type === 'svg' && l.img){ img = l.img; svgCount++; }
+        if(img && img.naturalWidth){
+          imgCount++;
+          imgBytes += img.naturalWidth * img.naturalHeight * 4;
+        }
+        if(l.type === 'video') videoCount++;
+      });
+      return {
+        id: b.id, name: b.name, active: b.id === currentBoardId,
+        canvas: b.canvasW + '×' + b.canvasH,
+        layers: (b.layers || []).length,
+        undo: (b.undoStack || []).length, redo: (b.redoStack || []).length,
+        images: imgCount, imageMBDecoded: Math.round(imgBytes / 1048576),
+        videos: videoCount, svgs: svgCount
+      };
+    }),
+    library: {
+      cachedRows: (_libraryItemsCache || []).length,
+      visibleRows: (_libraryVisibleItems || []).length,
+      cachedTags: (_libraryAllTagsCache || []).length,
+      selected: Object.keys(_librarySelectedItemIds || {}).length,
+      modalOpen: !document.getElementById('imageLibraryModal').classList.contains('hidden')
+    },
+    dom: {
+      totalNodes: document.getElementsByTagName('*').length,
+      imgTags: document.getElementsByTagName('img').length,
+      canvasTags: document.getElementsByTagName('canvas').length,
+      videoTags: document.getElementsByTagName('video').length
+    }
+  };
+  console.log('%c[perf-dump]', 'color:#3a5e10;font-weight:bold;background:#f4faf4;padding:2px 6px;border-radius:3px;', out);
+  console.log('[perf-dump JSON]\n' + JSON.stringify(out, null, 2));
+  showToast('Diagnostic dump logged — open DevTools console (F12) to view');
 }
 
 function perfReloadKeepSession(){
