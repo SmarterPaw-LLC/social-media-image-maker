@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v346</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v347</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2675,8 +2675,64 @@ function renderCarouselView(){
 // v320/v322: drag handlers on a carousel-view slide canvas. v322 delegates hit-testing to the
 // real `getLayerAt` (rotation-aware, per-type bounds via getLayerBounds, returns group when a
 // child is clicked). Groups are moved by shifting every child's x/y by the drag delta.
+//
+// v347 (perf): the previous version added a fresh window.mousemove + window.mouseup listener
+// PER board PER carousel-open, with no matching removeEventListener anywhere. Each closure
+// pinned its `board`, `canvas`, and `displayScale`, so opening carousel + align a few times
+// across a session left hundreds of dead listeners on `window`, each firing on every pixel of
+// mouse movement and each holding refs to already-closed board objects. This was the real
+// reason the app felt slower and slower over a day AND why the ⚡ Perf panel (which pruned
+// `boards[]` but never touched the window listeners or their retained closures) did nothing.
+//
+// The refactor: ONE shared window listener pair installed lazily at first use. The per-slide
+// mousedown handler writes the active drag into `_carouselDragState`; the shared listeners
+// read it. No per-slide window listener, no closure retention, no accumulation. Slide-scoped
+// mousedown handlers still get added, but those live on the canvas element itself and die
+// with the slide DOM when the carousel closes / re-renders.
+var _carouselDragState = null;
+var _carouselWindowHandlersBound = false;
+
+function _ensureCarouselWindowHandlers(){
+  if(_carouselWindowHandlersBound) return;
+  _carouselWindowHandlersBound = true;
+  window.addEventListener('mousemove', function(e){
+    var s = _carouselDragState;
+    if(!s) return;
+    var dx = (e.clientX - s.startX) / s.displayScale;
+    var dy = (e.clientY - s.startY) / s.displayScale;
+    if(s.origChildren){
+      s.origChildren.forEach(function(orig){
+        var child = s.board.layers.find(function(l){ return l.id === orig.id; });
+        if(child){
+          child.x = Math.round(orig.x + dx);
+          child.y = Math.round(orig.y + dy);
+        }
+      });
+    }
+    s.layer.x = Math.round(s.origX + dx);
+    s.layer.y = Math.round(s.origY + dy);
+    s.moved = true;
+    var origBoardId = currentBoardId;
+    currentBoardId = s.board.id;
+    try {
+      var ctx = s.canvas.getContext('2d');
+      ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
+      _renderCurrentBoardInto(ctx);
+    } finally {
+      currentBoardId = origBoardId;
+    }
+  });
+  window.addEventListener('mouseup', function(){
+    var s = _carouselDragState;
+    if(!s) return;
+    var wasActiveBoard = (s.board.id === currentBoardId);
+    _carouselDragState = null;
+    if(wasActiveBoard && typeof redraw === 'function') redraw();
+  });
+}
+
 function _bindCarouselSlideDrag(canvas, board, displayScale){
-  var dragState = null;
+  _ensureCarouselWindowHandlers();
   canvas.addEventListener('mousedown', function(e){
     if(e.button !== 0) return;   // left-click only
     var rect = canvas.getBoundingClientRect();
@@ -2686,7 +2742,10 @@ function _bindCarouselSlideDrag(canvas, board, displayScale){
     if(!hit) return;
     e.preventDefault();
     e.stopPropagation();
-    dragState = {
+    _carouselDragState = {
+      board: board,
+      canvas: canvas,
+      displayScale: displayScale,
       layer: hit,
       startX: e.clientX,
       startY: e.clientY,
@@ -2708,45 +2767,6 @@ function _bindCarouselSlideDrag(canvas, board, displayScale){
     try { if(typeof snapshotState === 'function') snapshotState(); }
     catch(_){}
     currentBoardId = origBoardId;
-  });
-
-  // mousemove and mouseup on the WINDOW so drags survive the mouse leaving the canvas
-  window.addEventListener('mousemove', function(e){
-    if(!dragState) return;
-    var dx = (e.clientX - dragState.startX) / displayScale;
-    var dy = (e.clientY - dragState.startY) / displayScale;
-    if(dragState.origChildren){
-      // Group drag — shift every child by the delta from ITS original position
-      dragState.origChildren.forEach(function(orig){
-        var child = board.layers.find(function(l){ return l.id === orig.id; });
-        if(child){
-          child.x = Math.round(orig.x + dx);
-          child.y = Math.round(orig.y + dy);
-        }
-      });
-    }
-    dragState.layer.x = Math.round(dragState.origX + dx);
-    dragState.layer.y = Math.round(dragState.origY + dy);
-    dragState.moved = true;
-    // Re-render THIS slide only (cheap — one board, no full page redraw)
-    var origBoardId = currentBoardId;
-    currentBoardId = board.id;
-    try {
-      var ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      _renderCurrentBoardInto(ctx);
-    } finally {
-      currentBoardId = origBoardId;
-    }
-  });
-
-  window.addEventListener('mouseup', function(){
-    if(!dragState) return;
-    var wasActiveBoard = (board.id === currentBoardId);
-    dragState = null;
-    // If this board is the one currently open in the main editor, sync the main canvas so the
-    // move is visible when the user closes the carousel.
-    if(wasActiveBoard && typeof redraw === 'function') redraw();
   });
 }
 
