@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v351</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v350</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -2267,15 +2267,7 @@ var zoomLevel = 0.5;
 // when assets have been left "outside the frame." Export logic uses canvasW × canvasH directly,
 // so off-canvas content never leaks into output regardless of this flag.
 var _overscanOn = false;
-// v351: `_overscanPx` used to be a hard 300. If a selected image extended more than 300px past
-// the canvas edge, its resize/rotate handles sat past the visible overscan margin and the user
-// couldn't grab them without shrinking the layer first (a real workflow blocker). Now it's a
-// floor: `ensureChromeVisible` bumps it UP as needed to fit the current selection's handles,
-// capped by _OVERSCAN_MAX so a wildly-off-screen layer can't blow up the canvas element. Turning
-// overscan OFF resets it back to the base, so an off/on toggle is a clean reset.
-var _OVERSCAN_BASE_PX = 300;
-var _OVERSCAN_MAX_PX = 5000;
-var _overscanPx = _OVERSCAN_BASE_PX;
+var _overscanPx = 300;          // pixels of off-canvas margin shown on each side, in canvas coords
 var nextId = 1;           // global layer id counter — unique across ALL boards so paste is safe
 var dragState = null, resizeState = null, cropState = null, rotateState = null, marqueeState = null, eraseState = null;
 // v247: click-click-edit candidate. Set in canvas mousedown when an already-selected text or
@@ -5079,16 +5071,12 @@ function setCanvasSize(w,h){
 // Toggle the off-canvas viewport. Visual only — exports are unaffected.
 function toggleOverscan(){
   _overscanOn = !_overscanOn;
-  // v351: turning overscan OFF resets the floor back to base so a subsequent turn-on doesn't
-  // inherit a bloated margin from an earlier selection. Overscan ON with an oversized layer
-  // grows the floor as needed via ensureChromeVisible; toggling off is the user's "reset."
-  if(!_overscanOn) _overscanPx = _OVERSCAN_BASE_PX;
   var btn = document.getElementById('overscanBtn');
   var wrap = document.getElementById('canvasWrap');
   if(btn){
     btn.style.background = _overscanOn ? 'var(--green)' : 'var(--panel)';
     btn.style.color = _overscanOn ? '#fff' : '';
-    btn.title = _overscanOn ? 'Hide off-canvas content (also resets the overscan margin)' : 'Show off-canvas content (auto-grows to fit an oversized selection\'s handles). Doesn\'t affect export.';
+    btn.title = _overscanOn ? 'Hide off-canvas content' : 'Show off-canvas content (so you can drag stray layers back). Doesn\'t affect export.';
   }
   if(wrap) wrap.classList.toggle('overscan', _overscanOn);
   // Re-apply canvas sizing with new overscan amount
@@ -9661,6 +9649,7 @@ function _scheduleRenderProps(){
 // overscan so the user can see and grab the handles. We don't auto-DISABLE it when the layer comes
 // back in-bounds (would feel jumpy); user can toggle off manually.
 function ensureChromeVisible(){
+  if(_overscanOn) return;          // already on, nothing to do
   if(selectedId == null) return;
   var l = layers.find(function(x){return x.id === selectedId;});
   if(!l) return;
@@ -9671,25 +9660,14 @@ function ensureChromeVisible(){
   // generous enough to compensate.
   var ROT_MARGIN = (typeof ROTATE_HANDLE_DIST !== 'undefined' ? ROTATE_HANDLE_DIST : 28) + 8;
   var SIDE_MARGIN = (typeof HANDLE_SIZE !== 'undefined' ? HANDLE_SIZE : 12) / 2 + 2;
-  // How far past each canvas edge does the chrome reach? Positive number = past the edge.
-  var overLeft   = -(l.x - SIDE_MARGIN);
-  var overRight  = (l.x + l.w + SIDE_MARGIN) - canvasW;
-  var overTop    = -(l.y - ROT_MARGIN);
-  var overBottom = (l.y + l.h + SIDE_MARGIN) - canvasH;
-  var overRequired = Math.max(0, overLeft, overRight, overTop, overBottom);
-  if(overRequired <= 0) return;   // chrome fully inside canvas — nothing to do
-  // v351: base 300 handles most cases; when the selection needs more, grow to fit + a small
-  // margin so the handles land visibly INSIDE the overscan, not right at the edge.
-  var needed = Math.min(_OVERSCAN_MAX_PX, Math.ceil(overRequired) + 20);
-  if(!_overscanOn){
-    if(needed > _overscanPx) _overscanPx = needed;
-    toggleOverscan();   // enables + resizes canvas + redraws
-    return;
-  }
-  // Already on but too small for this selection — grow the floor and rerun the canvas sizing.
-  if(needed > _overscanPx){
-    _overscanPx = needed;
-    setCanvasSize(canvasW, canvasH);
+  var top = l.y - ROT_MARGIN;
+  var bot = l.y + l.h + SIDE_MARGIN;
+  var lft = l.x - SIDE_MARGIN;
+  var rgt = l.x + l.w + SIDE_MARGIN;
+  var outside = (top < 0) || (lft < 0) || (bot > canvasH) || (rgt > canvasW);
+  if(outside){
+    // Auto-enable. toggleOverscan handles the canvas resize, button styling, and redraw.
+    toggleOverscan();
   }
 }
 // v150: confirm-before-delete wrapper for user-initiated X clicks. Keyboard-shortcut deletes
