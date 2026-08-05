@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v352</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v353</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -487,9 +487,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openClipArtBrowser();">🎨 Clip art (open source)…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openStockPhotoBrowser();">📷 Stock photo (Pixabay)…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); addEmojiPatternLayer();" title="Drop one emoji tiled in a grid or scattered randomly across the canvas with a chosen count">🎉 Emoji tile / scatter…</button>
-          <!-- v352: same shape as the emoji tile/scatter but takes an uploaded image. Useful
-               for repeated logos, product shots, catnip pieces, brand marks. -->
-          <button class="add-image-popup-item" onclick="closeAddImageMenu(); addImagePatternLayer();" title="Drop one uploaded image tiled in a grid or scattered randomly across the canvas with a chosen count">🖼 Image tile / scatter…</button>
+          <!-- v353: image tile/scatter used to be its own standalone item (v352). Rolled it into
+               the regular image layer as a Pattern mode toggle in the property panel — same
+               capability, but discoverable from any uploaded image so you don't need to decide
+               up-front whether an image is going to be tiled. -->
+
         </div>
       </div>
       <button class="btn-add" id="addStickerBtn" onclick="addStickerLayer()">+ Sticker</button>
@@ -2879,7 +2881,6 @@ function updatePerfPanel(){
         if(l.type === 'image' && l.img) img = l.img;
         else if(l.type === 'framedImage' && l._img) img = l._img;
         else if(l.type === 'svg' && l.img) img = l.img;
-        else if(l.type === 'imagePattern' && l._img) img = l._img;   // v352
         if(img && img.naturalWidth){
           count++;
           bytes += img.naturalWidth * img.naturalHeight * 4;
@@ -3015,7 +3016,6 @@ function perfDumpDiagnostics(){
         if(l.type === 'image' && l.img) img = l.img;
         else if(l.type === 'framedImage' && l._img) img = l._img;
         else if(l.type === 'svg' && l.img){ img = l.img; svgCount++; }
-        else if(l.type === 'imagePattern' && l._img) img = l._img;   // v352
         if(img && img.naturalWidth){
           imgCount++;
           imgBytes += img.naturalWidth * img.naturalHeight * 4;
@@ -3212,7 +3212,7 @@ function duplicateBoard(id){
       simg.onload = function(){ redraw(); };
       simg.src = copy.url;
       copy.img = simg;
-    } else if(copy._imgSrc && copy.type !== 'framedImage' && copy.type !== 'imagePattern'){
+    } else if(copy._imgSrc && copy.type !== 'framedImage'){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){ redraw(); };
@@ -3226,15 +3226,6 @@ function duplicateBoard(id){
       fimg.onload = function(){ redraw(); };
       _assignImgSrc(fimg, copy._imgSrc, 'framed image "' + (copy.name || copy.id) + '"');
       copy._img = fimg;
-    }
-    // v352: imagePattern in duplicateBoard — same shape as framedImage. _imgSrc stays as the
-    // persisted field; _img is the fresh HTMLImageElement.
-    if(copy.type === 'imagePattern' && copy._imgSrc){
-      var pimg = new Image();
-      pimg.crossOrigin = 'anonymous';
-      pimg.onload = function(){ redraw(); };
-      _assignImgSrc(pimg, copy._imgSrc, 'imagePattern "' + (copy.name || copy.id) + '"');
-      copy._img = pimg;
     }
     if(copy.type === 'video' && copy.videoSrc){
       var v = document.createElement('video');
@@ -3362,8 +3353,8 @@ function pasteClipboard(){
       copy.img = simg;
     }
     // Regular image rehydration: _imgSrc → img, then strip _imgSrc
-    // (skip framedImage + imagePattern which both use _img + keep _imgSrc on the layer; svg handled above)
-    else if(copy._imgSrc && copy.type !== 'framedImage' && copy.type !== 'imagePattern'){
+    // (skip framedImage which uses _img + keeps _imgSrc on the layer; svg handled above)
+    else if(copy._imgSrc && copy.type !== 'framedImage'){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){ redraw(); };
@@ -3378,15 +3369,6 @@ function pasteClipboard(){
       fimg.onload = function(){ redraw(); };
       _assignImgSrc(fimg, copy._imgSrc, 'framed image "' + (copy.name || copy.id) + '"');
       copy._img = fimg;
-    }
-    // v352: imagePattern paste — same shape. Fresh HTMLImageElement built from the persisted
-    // _imgSrc; each pasted copy gets its own image element so they can be independently swapped.
-    if(copy.type === 'imagePattern' && copy._imgSrc){
-      var pimg = new Image();
-      pimg.crossOrigin = 'anonymous';
-      pimg.onload = function(){ redraw(); };
-      _assignImgSrc(pimg, copy._imgSrc, 'imagePattern "' + (copy.name || copy.id) + '"');
-      copy._img = pimg;
     }
     // Video rehydration
     if(copy.type === 'video' && copy.videoSrc){
@@ -3563,6 +3545,27 @@ function deserializeLayers(json){
   var restored = [];
   raw.forEach(function(o){
     var live = liveById[o.id];   // matching live layer, if this is an undo restore
+    // v353: legacy imagePattern layer type (v352 only) → upgrade in place to a regular image
+    // layer with pattern:true. Field names were renamed to a pattern* prefix so they don't
+    // collide with other image-layer fields (e.g. `mode` would clash with reserved slots).
+    // Migration happens BEFORE the type-specific rehydration branches so the migrated row
+    // lands in the correct `type === 'image'` path below.
+    if(o.type === 'imagePattern'){
+      o.type = 'image';
+      o.pattern = true;
+      if(o.mode           != null){ o.patternMode           = o.mode;           delete o.mode; }
+      if(o.count          != null){ o.patternCount          = o.count;          delete o.count; }
+      if(o.size           != null){ o.patternSize           = o.size;           delete o.size; }
+      if(o.spacing        != null){ o.patternSpacing        = o.spacing;        delete o.spacing; }
+      if(o.randomRotation != null){ o.patternRandomRotation = o.randomRotation; delete o.randomRotation; }
+      if(o.randomScale    != null){ o.patternRandomScale    = o.randomScale;    delete o.randomScale; }
+      if(o.scatterSeed    != null){ o.patternSeed           = o.scatterSeed;    delete o.scatterSeed; }
+      // The persisted _imgSrc + runtime _img fields — image layers use `img`, not `_img`. Move it
+      // over so the image-rehydration branch below finds the src at `_imgSrc` and hangs the fresh
+      // HTMLImageElement on `img`.
+      if(o._img && !o.img) o.img = o._img;
+      delete o._img;
+    }
     // SVG rehydration: rebuild the blob URL from svgText so rendering works after a save/load
     // round-trip. The previous blob URL (if any) is gone, so always regenerate.
     // We re-run normalizeSvgDimensions defensively so designs saved before v58 (which may contain
@@ -3617,24 +3620,6 @@ function deserializeLayers(json){
           fimg.onload = function(){ redraw(); };
           _assignImgSrc(fimg, o._imgSrc, 'framed image "' + (o.name || o.id) + '"');
           o._img = fimg;
-        }
-      }
-    }
-    // v352: imagePattern rehydration — same shape as framedImage since both persist `_imgSrc`
-    // as the source of truth and recreate `_img` at load / undo time. Undo path copies live
-    // refs by id (serializeForUndo strips `_imgSrc` for memory efficiency, so on undo we won't
-    // have it in the snapshot).
-    if(o.type === 'imagePattern'){
-      if(!o._imgSrc && live && live._imgSrc) o._imgSrc = live._imgSrc;
-      if(o._imgSrc){
-        if(live && live._img && live._imgSrc === o._imgSrc){
-          o._img = live._img;
-        } else {
-          var pimg = new Image();
-          pimg.crossOrigin = 'anonymous';
-          pimg.onload = function(){ redraw(); };
-          _assignImgSrc(pimg, o._imgSrc, 'imagePattern "' + (o.name || o.id) + '"');
-          o._img = pimg;
         }
       }
     }
@@ -8550,117 +8535,9 @@ function drawEmojiPatternLayer(ctx, layer){
   ctx.restore();
 }
 
-// v352: image-pattern layer — same "one source, N copies, tile or scatter" shape as
-// emojiPattern, but the source is an uploaded image instead of a glyph. Follows the framedImage
-// convention for the image handle: `_imgSrc` is the persisted data URI (source of truth),
-// `_img` is the runtime HTMLImageElement. serializeForUndo already strips `_imgSrc` so undo
-// snapshots stay light (v111 memory pattern); deserializeLayers/pasteClipboard rehydrate below.
-function addImagePatternLayer(){
-  var inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = 'image/*';
-  inp.onchange = function(e){
-    var f = e.target.files && e.target.files[0];
-    if(!f) return;
-    var reader = new FileReader();
-    reader.onload = function(){
-      var img = new Image();
-      img.onload = function(){
-        snapshotState();
-        var id = nextId++;
-        layers.push({
-          id: id, type: 'imagePattern', name: 'Image tile ' + id,
-          _img: img,
-          _imgSrc: reader.result,
-          mode: 'scatter',       // 'tile' | 'scatter'
-          count: 15,
-          size: 120,             // max-dimension per copy in canvas px; aspect preserved
-          spacing: 20,           // tile mode: gap between images
-          randomRotation: 30,    // scatter: max ± rotation jitter (deg)
-          randomScale: 0,        // scatter: ± scale jitter (%). 0 = uniform size
-          scatterSeed: Math.floor(Math.random() * 1e6),
-          x: 0, y: 0, w: canvasW, h: canvasH,
-          opacity: 100, rotation: 0
-        });
-        selectLayer(id); renderLayerList(); redraw();
-      };
-      img.onerror = function(){ alert('Could not load that image.'); };
-      img.src = reader.result;
-    };
-    reader.onerror = function(){ alert('Could not read that file.'); };
-    reader.readAsDataURL(f);
-  };
-  inp.click();
-}
-
-// Same seeded RNG as the emoji-pattern version — parkmiller LCG. Two independent draws per
-// copy (position, rotation, scale) — advance the seed twice per axis so consecutive layers
-// with the same base seed still get different placements.
-function _imagePatternRng(seed){
-  var s = (seed | 0) || 1;
-  return function(){
-    s = (s * 48271) % 0x7fffffff;
-    return s / 0x7fffffff;
-  };
-}
-
-function drawImagePatternLayer(ctx, layer){
-  var img = layer._img;
-  if(!img || !img.complete || !img.naturalWidth) return;
-  var maxDim = Math.max(4, layer.size || 120);
-  // Aspect-preserved per-copy dimensions
-  var natW = img.naturalWidth, natH = img.naturalHeight;
-  var s = Math.min(maxDim / natW, maxDim / natH);
-  var baseW = natW * s, baseH = natH * s;
-  var count = Math.max(1, layer.count || 1);
-  var x = layer.x || 0, y = layer.y || 0;
-  var w = Math.max(1, layer.w || canvasW), h = Math.max(1, layer.h || canvasH);
-  var mode = layer.mode || 'scatter';
-  ctx.save();
-  // Same withRotation-equivalent as the emoji-pattern version — rotate the whole pattern
-  // around its bbox center.
-  if(layer.rotation){
-    var ccx = x + w/2, ccy = y + h/2;
-    ctx.translate(ccx, ccy);
-    ctx.rotate(layer.rotation * Math.PI / 180);
-    ctx.translate(-ccx, -ccy);
-  }
-  if(mode === 'tile'){
-    var cellsPerRow = Math.max(1, Math.round(Math.sqrt(count * (w / Math.max(h, 1)))));
-    var rows = Math.ceil(count / cellsPerRow);
-    var cellW = w / cellsPerRow;
-    var cellH = h / rows;
-    for(var i = 0; i < count; i++){
-      var col = i % cellsPerRow;
-      var row = Math.floor(i / cellsPerRow);
-      var cx = x + cellW * (col + 0.5);
-      var cy = y + cellH * (row + 0.5);
-      ctx.drawImage(img, cx - baseW/2, cy - baseH/2, baseW, baseH);
-    }
-  } else {
-    var rng = _imagePatternRng(layer.scatterSeed);
-    var jitter = Math.max(0, layer.randomRotation || 0);
-    var sJitter = Math.max(0, Math.min(100, layer.randomScale || 0)) / 100;
-    for(var j = 0; j < count; j++){
-      var jx = x + rng() * w;
-      var jy = y + rng() * h;
-      var jrot = jitter ? ((rng() - 0.5) * 2 * jitter) : 0;
-      // Scale factor in [1 - sJitter/2, 1 + sJitter/2]. Centered on 1.0 so mean size = layer.size.
-      var jscale = sJitter ? (1 + (rng() - 0.5) * sJitter) : 1;
-      var dw = baseW * jscale, dh = baseH * jscale;
-      if(jrot){
-        ctx.save();
-        ctx.translate(jx, jy);
-        ctx.rotate(jrot * Math.PI / 180);
-        ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
-        ctx.restore();
-      } else {
-        ctx.drawImage(img, jx - dw/2, jy - dh/2, dw, dh);
-      }
-    }
-  }
-  ctx.restore();
-}
+// v352→v353: the standalone imagePattern layer type was rolled into the regular image layer
+// as a Pattern-mode toggle. See _drawImagePattern + _imagePatternControlsHtml. Any historical
+// designs saved with type:'imagePattern' get migrated at load time in deserializeLayers.
 
 function addRatingLayer(){
   snapshotState();
@@ -10119,7 +9996,7 @@ function _renderLayerRow(list, layer, depth, parentGroup, ctx){
     item.style.borderLeft = '2px solid var(--border)';
     item.style.paddingLeft = '4px';
   }
-  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾',emojiPattern:'🎉',imagePattern:'🖼'};
+  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾',emojiPattern:'🎉'};
   var eyeIcon = layer.hidden ? '⊘' : '●';
   var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
   var lockIcon = layer.locked ? '🔒' : '🔓';
@@ -10325,7 +10202,6 @@ function renderProps(){
   else if(layer.type==='group')   innerHtml=buildGroupProps(layer);    // v285
   else if(layer.type==='rating')  innerHtml=buildRatingProps(layer);   // v293
   else if(layer.type==='emojiPattern') innerHtml=buildEmojiPatternProps(layer);   // v335
-  else if(layer.type==='imagePattern') innerHtml=buildImagePatternProps(layer);   // v352
   // v257: append a shared blend-mode dropdown to every layer panel. Applied in
   // _drawSingleLayerInto via globalCompositeOperation so it composes with whatever
   // pixels the layer below has already rendered. Works for any layer type.
@@ -10829,6 +10705,36 @@ function applyEffectStrokePreset(layerId, presetId){
   renderProps(); redraw();
 }
 
+// v353: Pattern-mode sub-panel for an image layer. Rendered inline in buildImageProps when
+// the layer has a source image. Shape mirrors the emoji-pattern controls (count / size / mode /
+// spacing OR random rotation+scale+seed) so the two feel like siblings. Scatter has an extra
+// "Random scale ±%" slider — size variation reads much better for photos than for glyphs.
+function _imagePatternControlsHtml(l){
+  var on = !!l.pattern;
+  var toggle = '<label style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;margin-top:8px;margin-bottom:6px;padding:6px 8px;background:'
+    + (on ? 'linear-gradient(135deg,#e8f3d8 0%,#d4e8b8 100%);border:1.5px solid var(--green)' : '#fafafa;border:1.5px solid var(--border)')
+    + ';border-radius:6px;cursor:pointer;">'
+    + '<input type="checkbox" id="pimg_pattern"' + (on ? ' checked' : '') + '>'
+    + '<span>🎉 Pattern mode <span style="font-weight:400;color:var(--muted);font-size:10px;">(tile or scatter N copies)</span></span>'
+    + '</label>';
+  if(!on) return toggle;
+  var isScatter = (l.patternMode || 'scatter') === 'scatter';
+  return toggle
+    + SEL('Layout', 'pimg_patternMode', [['scatter','Scatter (random)'],['tile','Tile (grid)']], l.patternMode || 'scatter')
+    + R('Number of copies', 'pimg_patternCount', l.patternCount || 15, 1, 300, 1)
+    + R('Copy size',        'pimg_patternSize',  l.patternSize  || 120, 8, 800, 1)
+    + (isScatter
+        ? R('Random rotation ±°', 'pimg_patternRandomRotation', l.patternRandomRotation || 0, 0, 180, 1)
+          + R('Random scale ±%',   'pimg_patternRandomScale',    l.patternRandomScale    || 0, 0, 100, 1)
+          + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
+            + '<label style="font-size:10px;color:var(--muted);flex:1;">Scatter seed</label>'
+            + '<input type="number" id="pimg_patternSeed" value="'+(l.patternSeed||0)+'" style="width:110px;padding:5px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;">'
+            + '<button type="button" class="btn-sm" id="pimg_patternReroll" title="New random layout">🎲</button>'
+          + '</div>'
+        : R('Spacing', 'pimg_patternSpacing', l.patternSpacing || 20, 0, 200, 1)
+      );
+}
+
 function buildImageProps(l){
   ensureImageBaseline(l);
   var hasCrop=(l.cropX!=null&&(l.cropX>0||l.cropY>0||(l.img&&(l.cropW<l.img.naturalWidth||l.cropH<l.img.naturalHeight))));
@@ -10911,9 +10817,14 @@ function buildImageProps(l){
     // when the layer actually has image content (a fresh placeholder layer has nothing to upload).
     +(l.img ? '<button class="btn-add" style="width:100%;margin-top:4px;" onclick="addImageLayerToLibrary('+l.id+')" title="Save this image to the shared team library">⬆ Add this image to library</button>' : '')
     +'<input type="file" id="fi_'+l.id+'" accept="image/*" style="display:none" onchange="handleFileInput(event,'+l.id+')">'
+    // v353: Pattern mode toggle. When on, this image is drawn N times inside the layer's
+    // bbox — either tiled in a grid or scattered with a seeded RNG. Rolled in from what was
+    // a standalone imagePattern layer type in v352. Only shows the sub-controls when on so
+    // the property panel stays scannable for a plain-image layer.
+    +(l.img ? _imagePatternControlsHtml(l) : '')
     +'<div class="col2" style="gap:5px;margin-top:5px;">'
-    +'<button class="btn-add" onclick="enterCropMode('+l.id+')">✂ Crop</button>'
-    +(hasCrop?'<button class="btn-add" onclick="clearCrop('+l.id+')">Reset Crop</button>':'<button class="btn-add" disabled style="opacity:0.4;">No crop</button>')
+    +'<button class="btn-add" onclick="enterCropMode('+l.id+')"'+(l.pattern?' disabled style="opacity:0.4;" title="Cropping applies to the source image, not the tile/scatter — turn Pattern mode off first"':'')+'>✂ Crop</button>'
+    +(hasCrop?'<button class="btn-add" onclick="clearCrop('+l.id+')"'+(l.pattern?' disabled style="opacity:0.4;"':'')+'>Reset Crop</button>':'<button class="btn-add" disabled style="opacity:0.4;">No crop</button>')
     +'</div>'
     // v194: AI background removal. Only shown when the layer actually has an image (a fresh
     // placeholder has nothing to process yet). Undo restores the pre-removal image via
@@ -11232,47 +11143,6 @@ function buildEmojiPatternProps(l){
     + NUMPAIR('W (px)', 'nepw', l.w, 'H (px)', 'neph', l.h)
     + R('Rotation', 'pep_rotation', l.rotation || 0, -180, 180, 1)
     + R('Opacity',  'pep_opacity',  l.opacity  || 100, 0, 100, 1)
-    + moveBtns(l.id) + '</div>';
-}
-
-// v352: property panel for the image-pattern layer. Same control set as the emoji-pattern
-// panel with two changes: source is an image preview + "Replace image…" button (no glyph
-// picker), and scatter mode adds a "Random scale ±%" slider since size variation reads better
-// for images than for emojis (real product photos benefit from the "some big, some small"
-// look). Field id prefix `pip_` mirrors `pep_` for the emoji version.
-function buildImagePatternProps(l){
-  var isScatter = (l.mode || 'scatter') === 'scatter';
-  var previewSrc = l._imgSrc || (l._img && l._img.src) || '';
-  return '<div class="prop-section">'
-    + '<label style="font-size:10px;color:var(--muted);">Image</label>'
-    + '<div style="display:flex;gap:8px;align-items:stretch;margin-bottom:6px;">'
-      + '<div style="width:72px;height:72px;flex-shrink:0;border:2px solid var(--border);border-radius:8px;background:#fafafa;display:flex;align-items:center;justify-content:center;overflow:hidden;">'
-        + (previewSrc
-            ? '<img src="' + escAttr(previewSrc) + '" alt="" style="max-width:100%;max-height:100%;object-fit:contain;">'
-            : '<span style="font-size:11px;color:var(--muted);">no image</span>')
-      + '</div>'
-      + '<div style="flex:1;display:flex;flex-direction:column;gap:4px;justify-content:center;">'
-        + '<button type="button" class="btn-add" id="pip_replaceImg" style="width:100%;">📁 Replace image…</button>'
-        + '<div style="font-size:10px;color:var(--muted);line-height:1.3;">One source, N copies. Aspect is preserved.</div>'
-      + '</div>'
-    + '</div>'
-    + SEL('Mode', 'pip_mode', [['scatter','Scatter (random)'],['tile','Tile (grid)']], l.mode || 'scatter')
-    + R('Number of copies', 'pip_count', l.count || 15, 1, 300, 1)
-    + R('Image size',       'pip_size',  l.size  || 120, 8, 800, 1)
-    + (isScatter
-        ? R('Random rotation ±°', 'pip_randomRotation', l.randomRotation || 0, 0, 180, 1)
-          + R('Random scale ±%',   'pip_randomScale',    l.randomScale    || 0, 0, 100, 1)
-          + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
-            + '<label style="font-size:10px;color:var(--muted);flex:1;">Scatter seed</label>'
-            + '<input type="number" id="pip_scatterSeed" value="'+(l.scatterSeed||0)+'" style="width:110px;padding:5px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;">'
-            + '<button type="button" class="btn-sm" id="pip_reroll" title="New random layout">🎲</button>'
-          + '</div>'
-        : R('Spacing', 'pip_spacing', l.spacing || 20, 0, 200, 1)
-      )
-    + NUMPAIR('X (px)', 'nipx', l.x, 'Y (px)', 'nipy', l.y)
-    + NUMPAIR('W (px)', 'nipw', l.w, 'H (px)', 'niph', l.h)
-    + R('Rotation', 'pip_rotation', l.rotation || 0, -180, 180, 1)
-    + R('Opacity',  'pip_opacity',  l.opacity  || 100, 0, 100, 1)
     + moveBtns(l.id) + '</div>';
 }
 
@@ -11834,6 +11704,32 @@ function bindPropEvents(layer){
     rng('pimg_cornerRadius',function(v){layer.cornerRadius=v;redraw();});
     on('pflipH','change',function(e){layer.flipH=e.target.checked;redraw();});
     on('pflipV','change',function(e){layer.flipV=e.target.checked;redraw();});
+    // v353: pattern-mode bindings. Toggling on/off rebuilds the panel (crop/flip get disabled
+    // when on, and the mode-specific sub-controls appear). Seeded scatter uses the same LCG
+    // helper that emojiPattern uses so the two feel consistent.
+    on('pimg_pattern', 'change', function(e){
+      layer.pattern = e.target.checked;
+      if(layer.pattern && !layer.patternSeed){
+        // Fresh pattern gets a random seed so re-opening the panel doesn't collapse every layer
+        // onto the same layout when the user hasn't touched the seed yet.
+        layer.patternSeed = Math.floor(Math.random() * 1e6);
+      }
+      renderProps();
+      redraw();
+    });
+    on('pimg_patternMode', 'change', function(e){ layer.patternMode = e.target.value; renderProps(); redraw(); });
+    rng('pimg_patternCount',          function(v){ layer.patternCount = Math.max(1, Math.round(+v)); redraw(); });
+    rng('pimg_patternSize',           function(v){ layer.patternSize  = +v; redraw(); });
+    rng('pimg_patternSpacing',        function(v){ layer.patternSpacing = +v; redraw(); });
+    rng('pimg_patternRandomRotation', function(v){ layer.patternRandomRotation = +v; redraw(); });
+    rng('pimg_patternRandomScale',    function(v){ layer.patternRandomScale = +v; redraw(); });
+    on('pimg_patternSeed', 'input', function(e){ layer.patternSeed = parseInt(e.target.value, 10) || 0; redraw(); });
+    on('pimg_patternReroll', 'click', function(){
+      layer.patternSeed = Math.floor(Math.random() * 1e6);
+      var seedEl = document.getElementById('pimg_patternSeed');
+      if(seedEl) seedEl.value = layer.patternSeed;
+      redraw();
+    });
     bindShadowEvents('pimg_', layer);
     bindExtraShadowsEvents('pimg_', layer);
     // v214: wire the mesh-effects sliders. They mutate layer._meshEffects directly, then
@@ -12154,52 +12050,6 @@ function bindPropEvents(layer){
     num('neph', function(v){ layer.h = v; redraw(); });
     rng('pep_rotation', function(v){ layer.rotation = +v; redraw(); });
     rng('pep_opacity',  function(v){ layer.opacity  = +v; redraw(); });
-  } else if(layer.type==='imagePattern'){
-    // v352: image-pattern bindings. Mode toggle rebuilds the panel (scatter/tile expose
-    // different secondary controls, mirroring the emoji-pattern flow).
-    on('pip_replaceImg', 'click', function(){
-      var inp = document.createElement('input');
-      inp.type = 'file';
-      inp.accept = 'image/*';
-      inp.onchange = function(e){
-        var f = e.target.files && e.target.files[0];
-        if(!f) return;
-        var reader = new FileReader();
-        reader.onload = function(){
-          var img = new Image();
-          img.onload = function(){
-            snapshotState();
-            layer._img = img;
-            layer._imgSrc = reader.result;
-            renderProps();
-            redraw();
-          };
-          img.onerror = function(){ alert('Could not load that image.'); };
-          img.src = reader.result;
-        };
-        reader.readAsDataURL(f);
-      };
-      inp.click();
-    });
-    on('pip_mode', 'change', function(e){ layer.mode = e.target.value; renderProps(); redraw(); });
-    rng('pip_count',          function(v){ layer.count = Math.max(1, Math.round(+v)); redraw(); });
-    rng('pip_size',           function(v){ layer.size  = +v; redraw(); });
-    rng('pip_spacing',        function(v){ layer.spacing = +v; redraw(); });
-    rng('pip_randomRotation', function(v){ layer.randomRotation = +v; redraw(); });
-    rng('pip_randomScale',    function(v){ layer.randomScale = +v; redraw(); });
-    on('pip_scatterSeed', 'input', function(e){ layer.scatterSeed = parseInt(e.target.value, 10) || 0; redraw(); });
-    on('pip_reroll', 'click', function(){
-      layer.scatterSeed = Math.floor(Math.random() * 1e6);
-      var seedEl = document.getElementById('pip_scatterSeed');
-      if(seedEl) seedEl.value = layer.scatterSeed;
-      redraw();
-    });
-    num('nipx', function(v){ layer.x = v; redraw(); });
-    num('nipy', function(v){ layer.y = v; redraw(); });
-    num('nipw', function(v){ layer.w = v; redraw(); });
-    num('niph', function(v){ layer.h = v; redraw(); });
-    rng('pip_rotation', function(v){ layer.rotation = +v; redraw(); });
-    rng('pip_opacity',  function(v){ layer.opacity  = +v; redraw(); });
   } else if(layer.type==='sprinkle'){
     // Position / size — number inputs only (no sliders). Users drag on-canvas for visual positioning.
     num('nsprx', function(v){ layer.x = v; redraw(); });
@@ -13740,7 +13590,6 @@ function _drawSingleLayerInto(ctx, layer){
   else if(layer.type==='button')drawButtonLayer(ctx,layer);  // v282
   else if(layer.type==='rating')drawRatingLayer(ctx,layer);  // v293
   else if(layer.type==='emojiPattern')drawEmojiPatternLayer(ctx,layer);  // v335
-  else if(layer.type==='imagePattern')drawImagePatternLayer(ctx,layer);  // v352
   ctx.restore();
 }
 
@@ -14795,6 +14644,15 @@ function drawTextWithLetterSpacing(ctx, text, x, y, letterSpacing, align, boxW){
 
 function drawImageLayer(ctx,layer){
   if(!layer.img)return;
+  // v353: pattern mode — treat the layer's bbox as a container and draw the image N times
+  // inside it (tile grid or seeded scatter). Bypasses the crop / fit / flip / rounded-corner
+  // path since those are per-source properties, not per-copy. Effects like drop shadow are
+  // also skipped in pattern mode — shadowing individual copies looks noisy; if the user wants
+  // an overall shadow they can add a shape behind the pattern.
+  if(layer.pattern){
+    _drawImagePattern(ctx, layer);
+    return;
+  }
   withRotation(ctx,layer,function(){
     // v205: while in erase mode, draw from the in-progress working canvas instead of layer.img
     // so each stroke is visible immediately. The canvas's .width/.height stand in for naturalWidth.
@@ -14835,6 +14693,66 @@ function drawImageLayer(ctx,layer){
     }
     ctx.restore();
   });
+}
+
+// v353: pattern-mode renderer for image layers. Same math as the (removed) drawImagePatternLayer
+// but reads pattern* fields from a plain image layer. Aspect is preserved: `patternSize` is the
+// max-dimension per copy; actual w/h derive from the source aspect ratio so a portrait product
+// photo stays portrait at every copy size.
+function _drawImagePattern(ctx, layer){
+  var img = layer.img;
+  if(!img || !img.complete || !img.naturalWidth) return;
+  var maxDim = Math.max(4, layer.patternSize || 120);
+  var natW = img.naturalWidth, natH = img.naturalHeight;
+  var s = Math.min(maxDim / natW, maxDim / natH);
+  var baseW = natW * s, baseH = natH * s;
+  var count = Math.max(1, layer.patternCount || 1);
+  var x = layer.x || 0, y = layer.y || 0;
+  var w = Math.max(1, layer.w || canvasW), h = Math.max(1, layer.h || canvasH);
+  var mode = layer.patternMode || 'scatter';
+  ctx.save();
+  if(layer.rotation){
+    var ccx = x + w/2, ccy = y + h/2;
+    ctx.translate(ccx, ccy);
+    ctx.rotate(layer.rotation * Math.PI / 180);
+    ctx.translate(-ccx, -ccy);
+  }
+  if(mode === 'tile'){
+    var cellsPerRow = Math.max(1, Math.round(Math.sqrt(count * (w / Math.max(h, 1)))));
+    var rows = Math.ceil(count / cellsPerRow);
+    var cellW = w / cellsPerRow;
+    var cellH = h / rows;
+    for(var i = 0; i < count; i++){
+      var col = i % cellsPerRow;
+      var row = Math.floor(i / cellsPerRow);
+      var cx = x + cellW * (col + 0.5);
+      var cy = y + cellH * (row + 0.5);
+      ctx.drawImage(img, cx - baseW/2, cy - baseH/2, baseW, baseH);
+    }
+  } else {
+    // Reuse the emoji-pattern seeded LCG — same math, same guarantees (stable across renders
+    // until the seed changes, different results for different seeds).
+    var rng = _emojiPatternRng(layer.patternSeed);
+    var jitter = Math.max(0, layer.patternRandomRotation || 0);
+    var sJitter = Math.max(0, Math.min(100, layer.patternRandomScale || 0)) / 100;
+    for(var j = 0; j < count; j++){
+      var jx = x + rng() * w;
+      var jy = y + rng() * h;
+      var jrot = jitter ? ((rng() - 0.5) * 2 * jitter) : 0;
+      var jscale = sJitter ? (1 + (rng() - 0.5) * sJitter) : 1;
+      var dw = baseW * jscale, dh = baseH * jscale;
+      if(jrot){
+        ctx.save();
+        ctx.translate(jx, jy);
+        ctx.rotate(jrot * Math.PI / 180);
+        ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, jx - dw/2, jy - dh/2, dw, dh);
+      }
+    }
+  }
+  ctx.restore();
 }
 
 function drawSvgLayer(ctx,layer){
