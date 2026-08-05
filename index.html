@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v351</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v352</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -487,6 +487,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openClipArtBrowser();">🎨 Clip art (open source)…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); openStockPhotoBrowser();">📷 Stock photo (Pixabay)…</button>
           <button class="add-image-popup-item" onclick="closeAddImageMenu(); addEmojiPatternLayer();" title="Drop one emoji tiled in a grid or scattered randomly across the canvas with a chosen count">🎉 Emoji tile / scatter…</button>
+          <!-- v352: same shape as the emoji tile/scatter but takes an uploaded image. Useful
+               for repeated logos, product shots, catnip pieces, brand marks. -->
+          <button class="add-image-popup-item" onclick="closeAddImageMenu(); addImagePatternLayer();" title="Drop one uploaded image tiled in a grid or scattered randomly across the canvas with a chosen count">🖼 Image tile / scatter…</button>
         </div>
       </div>
       <button class="btn-add" id="addStickerBtn" onclick="addStickerLayer()">+ Sticker</button>
@@ -2876,6 +2879,7 @@ function updatePerfPanel(){
         if(l.type === 'image' && l.img) img = l.img;
         else if(l.type === 'framedImage' && l._img) img = l._img;
         else if(l.type === 'svg' && l.img) img = l.img;
+        else if(l.type === 'imagePattern' && l._img) img = l._img;   // v352
         if(img && img.naturalWidth){
           count++;
           bytes += img.naturalWidth * img.naturalHeight * 4;
@@ -3011,6 +3015,7 @@ function perfDumpDiagnostics(){
         if(l.type === 'image' && l.img) img = l.img;
         else if(l.type === 'framedImage' && l._img) img = l._img;
         else if(l.type === 'svg' && l.img){ img = l.img; svgCount++; }
+        else if(l.type === 'imagePattern' && l._img) img = l._img;   // v352
         if(img && img.naturalWidth){
           imgCount++;
           imgBytes += img.naturalWidth * img.naturalHeight * 4;
@@ -3207,7 +3212,7 @@ function duplicateBoard(id){
       simg.onload = function(){ redraw(); };
       simg.src = copy.url;
       copy.img = simg;
-    } else if(copy._imgSrc && copy.type !== 'framedImage'){
+    } else if(copy._imgSrc && copy.type !== 'framedImage' && copy.type !== 'imagePattern'){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){ redraw(); };
@@ -3221,6 +3226,15 @@ function duplicateBoard(id){
       fimg.onload = function(){ redraw(); };
       _assignImgSrc(fimg, copy._imgSrc, 'framed image "' + (copy.name || copy.id) + '"');
       copy._img = fimg;
+    }
+    // v352: imagePattern in duplicateBoard — same shape as framedImage. _imgSrc stays as the
+    // persisted field; _img is the fresh HTMLImageElement.
+    if(copy.type === 'imagePattern' && copy._imgSrc){
+      var pimg = new Image();
+      pimg.crossOrigin = 'anonymous';
+      pimg.onload = function(){ redraw(); };
+      _assignImgSrc(pimg, copy._imgSrc, 'imagePattern "' + (copy.name || copy.id) + '"');
+      copy._img = pimg;
     }
     if(copy.type === 'video' && copy.videoSrc){
       var v = document.createElement('video');
@@ -3348,8 +3362,8 @@ function pasteClipboard(){
       copy.img = simg;
     }
     // Regular image rehydration: _imgSrc → img, then strip _imgSrc
-    // (skip framedImage which uses _img + keeps _imgSrc on the layer; svg handled above)
-    else if(copy._imgSrc && copy.type !== 'framedImage'){
+    // (skip framedImage + imagePattern which both use _img + keep _imgSrc on the layer; svg handled above)
+    else if(copy._imgSrc && copy.type !== 'framedImage' && copy.type !== 'imagePattern'){
       var img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = function(){ redraw(); };
@@ -3364,6 +3378,15 @@ function pasteClipboard(){
       fimg.onload = function(){ redraw(); };
       _assignImgSrc(fimg, copy._imgSrc, 'framed image "' + (copy.name || copy.id) + '"');
       copy._img = fimg;
+    }
+    // v352: imagePattern paste — same shape. Fresh HTMLImageElement built from the persisted
+    // _imgSrc; each pasted copy gets its own image element so they can be independently swapped.
+    if(copy.type === 'imagePattern' && copy._imgSrc){
+      var pimg = new Image();
+      pimg.crossOrigin = 'anonymous';
+      pimg.onload = function(){ redraw(); };
+      _assignImgSrc(pimg, copy._imgSrc, 'imagePattern "' + (copy.name || copy.id) + '"');
+      copy._img = pimg;
     }
     // Video rehydration
     if(copy.type === 'video' && copy.videoSrc){
@@ -3594,6 +3617,24 @@ function deserializeLayers(json){
           fimg.onload = function(){ redraw(); };
           _assignImgSrc(fimg, o._imgSrc, 'framed image "' + (o.name || o.id) + '"');
           o._img = fimg;
+        }
+      }
+    }
+    // v352: imagePattern rehydration — same shape as framedImage since both persist `_imgSrc`
+    // as the source of truth and recreate `_img` at load / undo time. Undo path copies live
+    // refs by id (serializeForUndo strips `_imgSrc` for memory efficiency, so on undo we won't
+    // have it in the snapshot).
+    if(o.type === 'imagePattern'){
+      if(!o._imgSrc && live && live._imgSrc) o._imgSrc = live._imgSrc;
+      if(o._imgSrc){
+        if(live && live._img && live._imgSrc === o._imgSrc){
+          o._img = live._img;
+        } else {
+          var pimg = new Image();
+          pimg.crossOrigin = 'anonymous';
+          pimg.onload = function(){ redraw(); };
+          _assignImgSrc(pimg, o._imgSrc, 'imagePattern "' + (o.name || o.id) + '"');
+          o._img = pimg;
         }
       }
     }
@@ -8509,6 +8550,118 @@ function drawEmojiPatternLayer(ctx, layer){
   ctx.restore();
 }
 
+// v352: image-pattern layer — same "one source, N copies, tile or scatter" shape as
+// emojiPattern, but the source is an uploaded image instead of a glyph. Follows the framedImage
+// convention for the image handle: `_imgSrc` is the persisted data URI (source of truth),
+// `_img` is the runtime HTMLImageElement. serializeForUndo already strips `_imgSrc` so undo
+// snapshots stay light (v111 memory pattern); deserializeLayers/pasteClipboard rehydrate below.
+function addImagePatternLayer(){
+  var inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.onchange = function(e){
+    var f = e.target.files && e.target.files[0];
+    if(!f) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      var img = new Image();
+      img.onload = function(){
+        snapshotState();
+        var id = nextId++;
+        layers.push({
+          id: id, type: 'imagePattern', name: 'Image tile ' + id,
+          _img: img,
+          _imgSrc: reader.result,
+          mode: 'scatter',       // 'tile' | 'scatter'
+          count: 15,
+          size: 120,             // max-dimension per copy in canvas px; aspect preserved
+          spacing: 20,           // tile mode: gap between images
+          randomRotation: 30,    // scatter: max ± rotation jitter (deg)
+          randomScale: 0,        // scatter: ± scale jitter (%). 0 = uniform size
+          scatterSeed: Math.floor(Math.random() * 1e6),
+          x: 0, y: 0, w: canvasW, h: canvasH,
+          opacity: 100, rotation: 0
+        });
+        selectLayer(id); renderLayerList(); redraw();
+      };
+      img.onerror = function(){ alert('Could not load that image.'); };
+      img.src = reader.result;
+    };
+    reader.onerror = function(){ alert('Could not read that file.'); };
+    reader.readAsDataURL(f);
+  };
+  inp.click();
+}
+
+// Same seeded RNG as the emoji-pattern version — parkmiller LCG. Two independent draws per
+// copy (position, rotation, scale) — advance the seed twice per axis so consecutive layers
+// with the same base seed still get different placements.
+function _imagePatternRng(seed){
+  var s = (seed | 0) || 1;
+  return function(){
+    s = (s * 48271) % 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
+function drawImagePatternLayer(ctx, layer){
+  var img = layer._img;
+  if(!img || !img.complete || !img.naturalWidth) return;
+  var maxDim = Math.max(4, layer.size || 120);
+  // Aspect-preserved per-copy dimensions
+  var natW = img.naturalWidth, natH = img.naturalHeight;
+  var s = Math.min(maxDim / natW, maxDim / natH);
+  var baseW = natW * s, baseH = natH * s;
+  var count = Math.max(1, layer.count || 1);
+  var x = layer.x || 0, y = layer.y || 0;
+  var w = Math.max(1, layer.w || canvasW), h = Math.max(1, layer.h || canvasH);
+  var mode = layer.mode || 'scatter';
+  ctx.save();
+  // Same withRotation-equivalent as the emoji-pattern version — rotate the whole pattern
+  // around its bbox center.
+  if(layer.rotation){
+    var ccx = x + w/2, ccy = y + h/2;
+    ctx.translate(ccx, ccy);
+    ctx.rotate(layer.rotation * Math.PI / 180);
+    ctx.translate(-ccx, -ccy);
+  }
+  if(mode === 'tile'){
+    var cellsPerRow = Math.max(1, Math.round(Math.sqrt(count * (w / Math.max(h, 1)))));
+    var rows = Math.ceil(count / cellsPerRow);
+    var cellW = w / cellsPerRow;
+    var cellH = h / rows;
+    for(var i = 0; i < count; i++){
+      var col = i % cellsPerRow;
+      var row = Math.floor(i / cellsPerRow);
+      var cx = x + cellW * (col + 0.5);
+      var cy = y + cellH * (row + 0.5);
+      ctx.drawImage(img, cx - baseW/2, cy - baseH/2, baseW, baseH);
+    }
+  } else {
+    var rng = _imagePatternRng(layer.scatterSeed);
+    var jitter = Math.max(0, layer.randomRotation || 0);
+    var sJitter = Math.max(0, Math.min(100, layer.randomScale || 0)) / 100;
+    for(var j = 0; j < count; j++){
+      var jx = x + rng() * w;
+      var jy = y + rng() * h;
+      var jrot = jitter ? ((rng() - 0.5) * 2 * jitter) : 0;
+      // Scale factor in [1 - sJitter/2, 1 + sJitter/2]. Centered on 1.0 so mean size = layer.size.
+      var jscale = sJitter ? (1 + (rng() - 0.5) * sJitter) : 1;
+      var dw = baseW * jscale, dh = baseH * jscale;
+      if(jrot){
+        ctx.save();
+        ctx.translate(jx, jy);
+        ctx.rotate(jrot * Math.PI / 180);
+        ctx.drawImage(img, -dw/2, -dh/2, dw, dh);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, jx - dw/2, jy - dh/2, dw, dh);
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function addRatingLayer(){
   snapshotState();
   var id = nextId++;
@@ -9966,7 +10119,7 @@ function _renderLayerRow(list, layer, depth, parentGroup, ctx){
     item.style.borderLeft = '2px solid var(--border)';
     item.style.paddingLeft = '4px';
   }
-  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾',emojiPattern:'🎉'};
+  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾',emojiPattern:'🎉',imagePattern:'🖼'};
   var eyeIcon = layer.hidden ? '⊘' : '●';
   var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
   var lockIcon = layer.locked ? '🔒' : '🔓';
@@ -10172,6 +10325,7 @@ function renderProps(){
   else if(layer.type==='group')   innerHtml=buildGroupProps(layer);    // v285
   else if(layer.type==='rating')  innerHtml=buildRatingProps(layer);   // v293
   else if(layer.type==='emojiPattern') innerHtml=buildEmojiPatternProps(layer);   // v335
+  else if(layer.type==='imagePattern') innerHtml=buildImagePatternProps(layer);   // v352
   // v257: append a shared blend-mode dropdown to every layer panel. Applied in
   // _drawSingleLayerInto via globalCompositeOperation so it composes with whatever
   // pixels the layer below has already rendered. Works for any layer type.
@@ -11081,6 +11235,47 @@ function buildEmojiPatternProps(l){
     + moveBtns(l.id) + '</div>';
 }
 
+// v352: property panel for the image-pattern layer. Same control set as the emoji-pattern
+// panel with two changes: source is an image preview + "Replace image…" button (no glyph
+// picker), and scatter mode adds a "Random scale ±%" slider since size variation reads better
+// for images than for emojis (real product photos benefit from the "some big, some small"
+// look). Field id prefix `pip_` mirrors `pep_` for the emoji version.
+function buildImagePatternProps(l){
+  var isScatter = (l.mode || 'scatter') === 'scatter';
+  var previewSrc = l._imgSrc || (l._img && l._img.src) || '';
+  return '<div class="prop-section">'
+    + '<label style="font-size:10px;color:var(--muted);">Image</label>'
+    + '<div style="display:flex;gap:8px;align-items:stretch;margin-bottom:6px;">'
+      + '<div style="width:72px;height:72px;flex-shrink:0;border:2px solid var(--border);border-radius:8px;background:#fafafa;display:flex;align-items:center;justify-content:center;overflow:hidden;">'
+        + (previewSrc
+            ? '<img src="' + escAttr(previewSrc) + '" alt="" style="max-width:100%;max-height:100%;object-fit:contain;">'
+            : '<span style="font-size:11px;color:var(--muted);">no image</span>')
+      + '</div>'
+      + '<div style="flex:1;display:flex;flex-direction:column;gap:4px;justify-content:center;">'
+        + '<button type="button" class="btn-add" id="pip_replaceImg" style="width:100%;">📁 Replace image…</button>'
+        + '<div style="font-size:10px;color:var(--muted);line-height:1.3;">One source, N copies. Aspect is preserved.</div>'
+      + '</div>'
+    + '</div>'
+    + SEL('Mode', 'pip_mode', [['scatter','Scatter (random)'],['tile','Tile (grid)']], l.mode || 'scatter')
+    + R('Number of copies', 'pip_count', l.count || 15, 1, 300, 1)
+    + R('Image size',       'pip_size',  l.size  || 120, 8, 800, 1)
+    + (isScatter
+        ? R('Random rotation ±°', 'pip_randomRotation', l.randomRotation || 0, 0, 180, 1)
+          + R('Random scale ±%',   'pip_randomScale',    l.randomScale    || 0, 0, 100, 1)
+          + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">'
+            + '<label style="font-size:10px;color:var(--muted);flex:1;">Scatter seed</label>'
+            + '<input type="number" id="pip_scatterSeed" value="'+(l.scatterSeed||0)+'" style="width:110px;padding:5px 7px;border:1px solid var(--border);border-radius:5px;font-size:11px;">'
+            + '<button type="button" class="btn-sm" id="pip_reroll" title="New random layout">🎲</button>'
+          + '</div>'
+        : R('Spacing', 'pip_spacing', l.spacing || 20, 0, 200, 1)
+      )
+    + NUMPAIR('X (px)', 'nipx', l.x, 'Y (px)', 'nipy', l.y)
+    + NUMPAIR('W (px)', 'nipw', l.w, 'H (px)', 'niph', l.h)
+    + R('Rotation', 'pip_rotation', l.rotation || 0, -180, 180, 1)
+    + R('Opacity',  'pip_opacity',  l.opacity  || 100, 0, 100, 1)
+    + moveBtns(l.id) + '</div>';
+}
+
 function buildRatingProps(l){
   var isEmoji = l.iconType === 'emoji';
   var iconOpts = [
@@ -11959,6 +12154,52 @@ function bindPropEvents(layer){
     num('neph', function(v){ layer.h = v; redraw(); });
     rng('pep_rotation', function(v){ layer.rotation = +v; redraw(); });
     rng('pep_opacity',  function(v){ layer.opacity  = +v; redraw(); });
+  } else if(layer.type==='imagePattern'){
+    // v352: image-pattern bindings. Mode toggle rebuilds the panel (scatter/tile expose
+    // different secondary controls, mirroring the emoji-pattern flow).
+    on('pip_replaceImg', 'click', function(){
+      var inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'image/*';
+      inp.onchange = function(e){
+        var f = e.target.files && e.target.files[0];
+        if(!f) return;
+        var reader = new FileReader();
+        reader.onload = function(){
+          var img = new Image();
+          img.onload = function(){
+            snapshotState();
+            layer._img = img;
+            layer._imgSrc = reader.result;
+            renderProps();
+            redraw();
+          };
+          img.onerror = function(){ alert('Could not load that image.'); };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(f);
+      };
+      inp.click();
+    });
+    on('pip_mode', 'change', function(e){ layer.mode = e.target.value; renderProps(); redraw(); });
+    rng('pip_count',          function(v){ layer.count = Math.max(1, Math.round(+v)); redraw(); });
+    rng('pip_size',           function(v){ layer.size  = +v; redraw(); });
+    rng('pip_spacing',        function(v){ layer.spacing = +v; redraw(); });
+    rng('pip_randomRotation', function(v){ layer.randomRotation = +v; redraw(); });
+    rng('pip_randomScale',    function(v){ layer.randomScale = +v; redraw(); });
+    on('pip_scatterSeed', 'input', function(e){ layer.scatterSeed = parseInt(e.target.value, 10) || 0; redraw(); });
+    on('pip_reroll', 'click', function(){
+      layer.scatterSeed = Math.floor(Math.random() * 1e6);
+      var seedEl = document.getElementById('pip_scatterSeed');
+      if(seedEl) seedEl.value = layer.scatterSeed;
+      redraw();
+    });
+    num('nipx', function(v){ layer.x = v; redraw(); });
+    num('nipy', function(v){ layer.y = v; redraw(); });
+    num('nipw', function(v){ layer.w = v; redraw(); });
+    num('niph', function(v){ layer.h = v; redraw(); });
+    rng('pip_rotation', function(v){ layer.rotation = +v; redraw(); });
+    rng('pip_opacity',  function(v){ layer.opacity  = +v; redraw(); });
   } else if(layer.type==='sprinkle'){
     // Position / size — number inputs only (no sliders). Users drag on-canvas for visual positioning.
     num('nsprx', function(v){ layer.x = v; redraw(); });
@@ -13499,6 +13740,7 @@ function _drawSingleLayerInto(ctx, layer){
   else if(layer.type==='button')drawButtonLayer(ctx,layer);  // v282
   else if(layer.type==='rating')drawRatingLayer(ctx,layer);  // v293
   else if(layer.type==='emojiPattern')drawEmojiPatternLayer(ctx,layer);  // v335
+  else if(layer.type==='imagePattern')drawImagePatternLayer(ctx,layer);  // v352
   ctx.restore();
 }
 
