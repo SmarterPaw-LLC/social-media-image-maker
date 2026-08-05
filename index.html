@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v347</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v348</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -456,6 +456,17 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   <div class="divider"></div>
 
+  <!-- v348: Templates section promoted from the bottom of the "add layer" stack up to the top
+       with the other preset-style controls. Rationale: templates ARE presets (saved reusable
+       starting points, same conceptual role as gradient presets) and burying them mid-way
+       through the layer buttons made them hard to find. -->
+  <div class="panel-section">
+    <h3>Templates</h3>
+    <button class="btn-add" onclick="openTemplateBrowser()" title="Reusable layer sets. Save the current design as a template, or drop in a saved template's layers." style="width:100%;">+ Template 📐</button>
+  </div>
+
+  <div class="divider"></div>
+
   <!-- Layers -->
   <div class="panel-section">
     <h3>Layers</h3>
@@ -515,7 +526,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       </div>
       <button class="btn-add" onclick="openMemeBrowser()" title="Pick a popular meme template (live from Imgflip) and drop it on the canvas with caption layers ready to edit">+ Meme 🤣</button>
     </div>
-    <button class="btn-add" onclick="openTemplateBrowser()" title="Reusable layer sets. Save the current design as a template, or drop in a saved template's layers.">+ Template 📐</button>
+    <!-- v348: + Template moved to a Templates section up top, next to Gradient Presets. -->
     <button class="btn-add" onclick="openBackgroundPicker()" title="Pick a brand gradient, mood gradient, or solid color background that fills the canvas — slides to the bottom of your layers">+ Background 🎨</button>
     <div id="logoButtonGroup" style="display:flex;flex-direction:column;gap:5px;"></div>
     <!-- Shape picker (hidden by default) -->
@@ -6583,8 +6594,13 @@ function renderTemplateGrid(){
       + '<div onclick="loadTemplate(\'' + escAttr(t.id) + '\')" style="aspect-ratio:1/1;background:#f4f4f0 ' + (thumb ? "url('" + thumb + "') center/cover no-repeat" : '') + ';"></div>'
       + '<div style="padding:8px 10px;">'
         + '<div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escAttr(t.name) + '</div>'
-        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">'
-          + '<div style="font-size:10px;color:var(--muted);">' + when + ' · ' + (t.layers ? t.layers.length : 0) + ' layers</div>'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:4px;">'
+          + '<div style="font-size:10px;color:var(--muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + when + ' · ' + (t.layers ? t.layers.length : 0) + ' layers</div>'
+          // v348: ↻ Update overwrites this template with the current design's layers +
+          // regenerates the thumbnail. Preserves id + name so any prior references stay valid.
+          // event.stopPropagation() on both action buttons so clicking them doesn't also
+          // fire the card's loadTemplate handler.
+          + '<button class="btn-sm" onclick="event.stopPropagation(); updateTemplate(\'' + escAttr(t.id) + '\')" title="Overwrite this template with the current design (keeps the template name, refreshes the thumbnail)" style="font-size:10px;padding:2px 6px;">↻</button>'
           + '<button class="btn-sm danger" onclick="event.stopPropagation(); deleteTemplate(\'' + escAttr(t.id) + '\')" title="Delete this template" style="font-size:10px;">✕</button>'
         + '</div>'
       + '</div>'
@@ -6621,6 +6637,43 @@ function promptSaveCurrentAsTemplate(){
   if(_writeTemplates(list)){
     renderTemplateGrid();
     if(typeof showToast === 'function') showToast('📐 Template saved: ' + name);
+  }
+}
+
+// v348: Overwrite an existing template with the current design's layers + a fresh thumbnail.
+// Keeps the template's id + name + createdAt (so the "when" label reflects the original save
+// date, not the update date — feels more honest as a "when did I first make this" signal).
+// Adds `updatedAt` so downstream code can distinguish. Same serializer + thumbnail path as
+// promptSaveCurrentAsTemplate — this is deliberately a small variant, not a shared helper,
+// because the two flows have different confirm UX + different toast copy.
+function updateTemplate(id){
+  var list = _readTemplates();
+  var idx = list.findIndex(function(t){ return t.id === id; });
+  if(idx < 0){ alert('Template not found.'); return; }
+  var tpl = list[idx];
+  if(!layers || !layers.length){
+    alert('Add some layers first, then click Update to overwrite this template.');
+    return;
+  }
+  if(!confirm('Overwrite the "' + tpl.name + '" template with the current design?\n\nThe old template contents will be replaced. Name + creation date are kept.')) return;
+  var serializedJson;
+  try { serializedJson = serializeLayers(); }
+  catch(e){ alert('Could not serialize layers: ' + (e.message || e)); return; }
+  var serialized = JSON.parse(serializedJson);
+  var thumbnail = tpl.thumbnail || '';
+  try { thumbnail = _generateTemplateThumbnail(200); }
+  catch(e){ console.warn('[templates] thumbnail failed:', e); }
+  list[idx] = {
+    id: tpl.id,
+    name: tpl.name,
+    thumbnail: thumbnail,
+    createdAt: tpl.createdAt,
+    updatedAt: new Date().toISOString(),
+    layers: serialized
+  };
+  if(_writeTemplates(list)){
+    renderTemplateGrid();
+    if(typeof showToast === 'function') showToast('↻ Template updated: ' + tpl.name);
   }
 }
 
