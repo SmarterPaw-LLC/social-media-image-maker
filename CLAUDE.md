@@ -1,6 +1,8 @@
 # SmarterPaw Social Image Tool — Claude Code Handoff
 
-Single-file HTML canvas-based social media image generator for SmarterPaw LLC (Meowijuana, Doggijuana, Kitty Ka-Zoom). Currently **v111**.
+Single-file HTML canvas-based social media image generator for SmarterPaw LLC (Meowijuana, Doggijuana, Kitty Ka-Zoom). Currently **v348**.
+
+> **Doc note (2026-08-03):** the intro used to say "v111" — this file's version-by-version change log stopped being maintained around then. The recent-work table at the bottom is still stale (last entry = v111); the live app shipped ~236 iterations since. Only v348 has a fresh entry. Future sessions: bump the version but don't feel obligated to backfill the middle unless the user asks for it.
 
 **Repo:** `SmarterPaw-LLC/social-media-image-maker`
 **Hosted:** `https://smarterpaw-llc.github.io/social-media-image-maker/`
@@ -275,10 +277,11 @@ Classification (typographically forced regardless of source photo):
 
 ---
 
-## Recent work (v85 → v111, most recent first)
+## Recent work (v85 → v111 + v348, most recent first — middle skipped, see doc note at top)
 
 | Version | Summary |
 |---|---|
+| **v348** | Templates promoted from mid-stack `+ Template` button to its own `Templates` panel-section at the top of the sidebar, right under `Gradient Presets`. Rationale: templates ARE presets (saved reusable starting points) and were hard to find buried between `+ Meme` and `+ Background`. New `↻ Update` button on every card in the templates browser overwrites that template with the current design's layers + a fresh thumbnail, preserving id + name + `createdAt` and adding `updatedAt`. Handler is `updateTemplate(id)` — deliberately a small variant of `promptSaveCurrentAsTemplate`, not a shared helper, since the flows have different confirm UX + different toast copy. |
 | **v111** | Memory fix: lightweight undo snapshots (no base64 src), blob URL revoke on delete. Save dialog ↔ board name sync. |
 | **v110** | Multi-select via Ctrl/Shift+click on canvas. Group resize (all selected scale proportionally around top-left). `switchBoard` uses `setCanvasSize` so overscan state honored. |
 | **v109** | SVG color swatch remap — color picker per direct fill + per gradient stop. |
@@ -304,6 +307,21 @@ Classification (typographically forced regardless of source photo):
 | **v85–v88** | Catnip Photo CBDT/CBLC font built and integrated. |
 
 ---
+
+## Pending work (open asks not yet shipped)
+
+### SVGs in the image library (asked 2026-08-03, deferred mid-turn)
+Jason: *"i want to be able to add svgs to the library. and if an svg is already in a design, i want the ability to add it to the library (similar to how other images work)."*
+
+The image library modal (`openImageLibraryModal`, line ~18106; markup line ~1133) is the primary shared assets store. It currently accepts uploaded raster images (PNG/JPG/WebP) and lets you drop them into designs via `📚 From library…` in the `+ Image ▾` dropdown. **SVGs are a separate first-class layer type** (`type='svg'`, added via `+ SVG` button; `createSvgLayerFromText` handles normalization + inlining CSS-defined fills — see the SVG processing section above). But SVGs and the library don't currently talk to each other.
+
+**Two pieces to ship:**
+1. **Library accepts .svg on upload.** Whatever the library's upload path is (file picker + Supabase Storage upload — likely wired into `social_designs`-style plumbing but for images), make it accept `image/svg+xml` and store the raw SVG text, not a rasterized PNG. Grid render needs to serve SVG source (either inline `<svg>` or an `<img>` with data URI so the modal preview looks right). Category/tag filters should treat SVGs like any other library item.
+2. **Per-layer "Save to library" affordance.** Check whether image layers already have this (search for `saveToLibrary` / `addToLibrary` / similar). If yes, mirror it for SVG layers using `layer.svgText` as the source. If no, this becomes a two-part feature — add the affordance to both image and SVG layer property panels (`buildSvgProps` ~line ~2900+ per CLAUDE.md's key locations table, and the equivalent for image layers).
+
+**Investigation notes** (from the tail end of the v348 session before Jason pivoted): confirmed the library is Supabase-backed (mentioned in the Supabase section — social_designs table + storage bucket). Never got to check whether there's a separate `library_images` table or if library items live in `social_designs` filtered somehow. **Start there** — read the library render + upload flow to understand where SVG bytes need to land. Grep candidates: `imageLibraryGrid` (line 2947), `imageLibraryModal` markup (1133-1226), functions around `openImageLibraryModal` (18106+).
+
+Don't rasterize SVGs on ingest — Jason picked them for their scalability and per-swatch color remap (v109). Storing the raw SVG text preserves both.
 
 ## Known issues / pitfalls
 
