@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v348</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v349</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3079,6 +3079,11 @@ function perfReloadKeepSession(){
 // Called from DOMContentLoaded. If a session-restore bundle exists (from a prior "Reload & keep
 // session" click), rebuild the boards and restore each. The bundle is deleted after restore so a
 // subsequent normal reload starts fresh.
+// v349: gates the per-board render burst inside restoreDesignState so bulk callers
+// (session-bundle restore on boot) can do one final render pass at the end instead of
+// paying N×5-renders on the main thread before the first paint.
+var _bulkRestoreInFlight = false;
+
 function tryRestoreSessionBundle(){
   if(typeof idbGetDesign !== 'function') return Promise.resolve(false);
   return idbGetDesign(SESSION_RESTORE_ID).then(function(bundle){
@@ -3093,22 +3098,27 @@ function tryRestoreSessionBundle(){
     // Wipe the default seeded board(s) and build fresh ones from the bundle
     boards = [];
     var newIds = [];
-    bundle.boards.forEach(function(entry, idx){
-      var st = entry.state || {};
-      var name = entry.name || ('Board ' + (idx + 1));
-      var w = st.canvasW || 1080;
-      var h = st.canvasH || 1080;
-      var b = makeBoard(name, w, h);
-      newIds.push(b.id);
-      boards.push(b);
-      // Route accessor getters to this board and populate it via restoreDesignState.
-      currentBoardId = b.id;
-      try {
-        restoreDesignState(st);
-      } catch(e){
-        console.error('[perf] failed to restore board', name, ':', e);
-      }
-    });
+    _bulkRestoreInFlight = true;
+    try {
+      bundle.boards.forEach(function(entry, idx){
+        var st = entry.state || {};
+        var name = entry.name || ('Board ' + (idx + 1));
+        var w = st.canvasW || 1080;
+        var h = st.canvasH || 1080;
+        var b = makeBoard(name, w, h);
+        newIds.push(b.id);
+        boards.push(b);
+        // Route accessor getters to this board and populate it via restoreDesignState.
+        currentBoardId = b.id;
+        try {
+          restoreDesignState(st);
+        } catch(e){
+          console.error('[perf] failed to restore board', name, ':', e);
+        }
+      });
+    } finally {
+      _bulkRestoreInFlight = false;
+    }
     var restoredActive = newIds[bundle.activeBoardIdx] || newIds[0];
     currentBoardId = restoredActive;
     var active = getBoard();
@@ -3787,7 +3797,13 @@ function restoreDesignState(state){
     redoStack = [];
     // If the design had a name, adopt it as the board's name
     if(state.name){ getBoard().name = state.name; }
-    renderBoardTabs(); renderLayerList(); renderProps(); renderPresets(); redraw();
+    // v349: skip the 5-way render burst when the caller is doing a bulk restore (e.g.
+    // tryRestoreSessionBundle looping through N boards on boot). The bulk caller does one
+    // final render pass after every board is seeded — a fresh tab restoring 5 boards was
+    // paying 5× (tabs+list+props+presets+redraw) on the main thread before the first paint.
+    if(!_bulkRestoreInFlight){
+      renderBoardTabs(); renderLayerList(); renderProps(); renderPresets(); redraw();
+    }
     // v185: a freshly loaded design has no un-synced edits yet. The cloud-sync pill then reflects
     // _currentCloudId (set by the loader) — synced if it came from the cloud, "not saved" if local.
     _cloudDirty = false;
@@ -9887,9 +9903,14 @@ function renderLayerList(){
   var list = document.getElementById('layerList');
   list.innerHTML = '';
   // Render top of stack first (reversed array order), recursing into expanded groups.
+  // v349: compute topLevel + a positional context ONCE and thread it into _renderLayerRow.
+  // Previously each row rebuilt topLevel and did a findIndex against it — O(N²) per rebuild
+  // (40 layers = 1600 findIndex hops). renderLayerList runs on almost every canvas op, so
+  // that was a real bar-per-mousemove in complex designs.
   var topLevel = _topLevelLayers();
-  for(var i = topLevel.length - 1; i >= 0; i--){
-    _renderLayerRow(list, topLevel[i], 0, null);
+  var topLen = topLevel.length;
+  for(var i = topLen - 1; i >= 0; i--){
+    _renderLayerRow(list, topLevel[i], 0, null, { posInTop: i, topLen: topLen });
   }
   // Reflect group/ungroup button enabled state based on current selection.
   var grpBtn = document.getElementById('groupLayersBtn');
@@ -9910,7 +9931,7 @@ function renderLayerList(){
 // Render ONE row for a layer, plus (if it's an expanded group) its children indented underneath.
 // `depth` is the nesting level (0 = top-level), `parentGroup` is the enclosing group object (null
 // at top-level). Both inform how the mask icon and indentation behave.
-function _renderLayerRow(list, layer, depth, parentGroup){
+function _renderLayerRow(list, layer, depth, parentGroup, ctx){
   var item = document.createElement('div');
   var isSelected = layer.id === selectedId || (selectedIds && selectedIds.indexOf(layer.id) >= 0);
   item.className = 'layer-item' + (isSelected ? ' active' : '');
@@ -9949,11 +9970,21 @@ function _renderLayerRow(list, layer, depth, parentGroup){
   }
   // Up/down arrows only meaningful for top-level layers in v270 (children's z-order is
   // controlled inside the group; surface that in v271).
+  // v349: caller (renderLayerList) now threads in {posInTop, topLen} via ctx so we don't
+  // re-derive them per row (O(N²) → O(N) across the whole list). Fallback for legacy callers
+  // that pass no ctx: recompute exactly as before so behavior stays identical.
   var canMoveUp   = false, canMoveDown = false;
   if(depth === 0){
-    var topLevel = _topLevelLayers();
-    var posInTop = topLevel.findIndex(function(l){ return l.id === layer.id; });
-    canMoveUp   = posInTop < topLevel.length - 1;
+    var posInTop, topLen;
+    if(ctx && typeof ctx.posInTop === 'number'){
+      posInTop = ctx.posInTop;
+      topLen = ctx.topLen;
+    } else {
+      var topLevel = _topLevelLayers();
+      topLen = topLevel.length;
+      posInTop = topLevel.findIndex(function(l){ return l.id === layer.id; });
+    }
+    canMoveUp   = posInTop < topLen - 1;
     canMoveDown = posInTop > 0;
   }
   item.innerHTML = chevron
@@ -18354,17 +18385,24 @@ function renderImageLibrary(){
       // thumbnail_data_uri with a ▶ overlay so they're distinguishable at a glance. Non-image /
       // non-video items (legacy uploads from other tooling) still get a placeholder.
       var thumbHtml;
+      // v349: loading="lazy" + decoding="async" on both tile <img> tags. Opening the library
+      // used to fire N concurrent HTTPS fetches + synchronous decodes for every tile in the
+      // grid regardless of viewport; a filtered set of 300+ items would stall the modal open
+      // for a couple of seconds and hitch the main thread while the browser decoded off-screen
+      // images. Lazy defers fetch until the tile scrolls near the viewport; async decode moves
+      // the decode off the main thread. Same visible behavior for what's on screen; N-2× less
+      // work for everything else.
       if(_libraryItemIsVideo(item)){
         var thumbSrc = item.thumbnail_data_uri || '';
         thumbHtml = thumbSrc
-          ? '<img src="' + escAttr(thumbSrc) + '" alt="' + escAttr(item.name) + '">'
+          ? '<img src="' + escAttr(thumbSrc) + '" alt="' + escAttr(item.name) + '" loading="lazy" decoding="async">'
           : '<div class="lib-noimg" style="background:#000;color:#fff;">'
               + '<div style="font-size:22px;line-height:1;">🎬</div>'
               + '<div style="font-size:9px;margin-top:3px;font-weight:600;">VIDEO</div>'
             + '</div>';
         thumbHtml += '<div class="lib-vid-badge" title="Video — click to add as a video layer" style="position:absolute;left:6px;top:6px;background:rgba(0,0,0,0.65);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;line-height:1.2;pointer-events:none;">▶ VIDEO</div>';
       } else if(_libraryItemIsImage(item)){
-        thumbHtml = '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '">';
+        thumbHtml = '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '" loading="lazy" decoding="async">';
       } else {
         thumbHtml = '<div class="lib-noimg" title="Not an image or video — can\'t be used on the canvas. Use ✕ to remove it.">'
           + '<div style="font-size:22px;line-height:1;">📄</div>'
