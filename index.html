@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v349</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v350</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1156,6 +1156,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <select id="imageLibraryMediaFilter" onchange="renderImageLibrary()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;">
         <option value="">All</option>
         <option value="image">📷 Images</option>
+        <option value="svg">◇ SVGs</option>
         <option value="video">🎬 Videos</option>
       </select>
     </div>
@@ -1189,7 +1190,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="downloadLibraryCsv()" title="Download a CSV of every image's name, brand, category, and tags — edit it in Excel/Sheets, then re-upload to apply changes in bulk">⬇ CSV</button>
       <button type="button" class="btn-cancel" style="padding:6px 12px;font-size:12px;" onclick="document.getElementById('libraryCsvInput').click()" title="Upload an edited CSV to bulk-update brand, category, and tags (matched by the id column)">⬆ CSV</button>
       <input type="file" id="libraryCsvInput" accept=".csv,text/csv" style="display:none;" onchange="handleLibraryCsvUpload(event)">
-      <input type="file" id="libraryUploadInput" accept="image/*,.heic,.heif,video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm" multiple style="display:none;" onchange="handleLibraryUpload(event)">
+      <input type="file" id="libraryUploadInput" accept="image/*,image/svg+xml,.svg,.heic,.heif,video/mp4,video/webm,video/quicktime,.mp4,.mov,.webm" multiple style="display:none;" onchange="handleLibraryUpload(event)">
       <!-- v147: bulk folder upload. webkitdirectory is non-standard but supported in Chrome, Edge,
            Safari, and Firefox — covers all browsers SmarterPaw uses. Non-image files in the folder
            are filtered out in handleLibraryUpload before the upload loop. -->
@@ -11286,6 +11287,10 @@ function buildSvgProps(l){
   }
   return '<div class="prop-section">'
     +'<button class="btn-add" onclick="addSvgLayer()">📁 Replace SVG…</button>'
+    // v350: save this SVG to the shared library — mirrors the image-layer counterpart. Only
+    // enabled when the layer has svgText (the source of truth); a live SVG layer without
+    // svgText would be a broken restore that we don't want to upload.
+    +(l.svgText ? '<button class="btn-add" style="width:100%;margin-top:4px;" onclick="addSvgLayerToLibrary('+l.id+')" title="Save this SVG to the shared team library (uploads the raw XML — stays scalable, keeps swatches)">⬆ Add this SVG to library</button>' : '')
     +'<div class="col2" style="gap:5px;margin-top:5px;">'
     +'<button class="btn-add" onclick="enterCropMode('+l.id+')">✂ Crop</button>'
     +(hasCrop?'<button class="btn-add" onclick="clearCrop('+l.id+')">Reset Crop</button>':'<button class="btn-add" disabled style="opacity:0.4;">No crop</button>')
@@ -17383,6 +17388,18 @@ function _libraryItemIsVideo(item){
   return ['mp4','webm','mov','m4v','avi','qt','mkv'].indexOf(ext) >= 0;
 }
 
+// v350: SVG predicate. Vectors are first-class in this tool (own layer type with color-swatch
+// remap and shadows) so they need to round-trip through the library as raw XML — rasterizing
+// would destroy exactly the properties users pick them for. _libraryItemIsImage already returns
+// true for SVGs (they're still images) so this is an OR-refinement — the pick handler branches
+// on isSvg BEFORE isImage so a library SVG lands as a real svg layer.
+function _libraryItemIsSvg(item){
+  var m = (item && item.mime || '').toLowerCase();
+  if(m === 'image/svg+xml' || m === 'image/svg') return true;
+  var match = (item && item.storage_path || '').toLowerCase().match(/\.([a-z0-9]+)(?:$|\?)/);
+  return match && match[1] === 'svg';
+}
+
 // v339: original-creation-date extractors. Two source formats we can read client-side:
 //   EXIF DateTimeOriginal (JPEG) — the exact "YYYY:MM:DD HH:MM:SS" the camera/phone recorded.
 //   mvhd creation_time  (mp4/mov) — seconds since 1904 Mac epoch inside the movie header atom.
@@ -17589,6 +17606,18 @@ function _isVideoFile(file){
   var m = (file.name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
   var ext = m ? m[1] : '';
   return ['mp4','webm','mov','m4v'].indexOf(ext) >= 0;
+}
+
+// v350: SVG file predicate. Used to bypass the WebP compression path in the upload loop —
+// running a vector through canvas-based image compression would rasterize it and destroy
+// exactly the scalability + swatch-remap that made SVG the right layer type in the first
+// place. Extension-first because some browsers hand .svg drops over with empty file.type.
+function _isSvgFile(file){
+  if(!file) return false;
+  var t = (file.type || '').toLowerCase();
+  if(t === 'image/svg+xml' || t === 'image/svg') return true;
+  var m = (file.name || '').toLowerCase().match(/\.([a-z0-9]+)$/);
+  return !!(m && m[1] === 'svg');
 }
 
 // v338: extract a poster-frame thumbnail from a video file client-side. Loads the file into a
@@ -18132,6 +18161,19 @@ function cloudFetchLibraryItemAsDataUri(path){
   });
 }
 
+// v350: fetch raw text bytes for an SVG library item so we can hand its XML source to
+// createSvgLayerFromText (which needs raw text, not a data URI). Same public-CDN path as
+// the data-URI fetcher — hitting the auth'd Supabase Storage API burns a DB connection per
+// fetch and there's no reason to when the bucket is public-readable.
+function cloudFetchLibraryItemAsText(path){
+  var url = cloudGetLibraryItemPublicUrl(path);
+  if(!url) return Promise.reject(new Error('Could not resolve public URL for ' + path));
+  return fetch(url, {cache: 'default'}).then(function(resp){
+    if(!resp.ok) throw new Error('SVG fetch HTTP ' + resp.status);
+    return resp.text();
+  });
+}
+
 // ── IMAGE LIBRARY UI ──
 
 function openImageLibraryModal(arg){
@@ -18290,15 +18332,18 @@ function renderImageLibrary(){
       if(_libraryCurrentBrandFilter === '__none__') return !it.brand;        // (No brand)
       return it.brand === _libraryCurrentBrandFilter;
     }
-    // v345: media-type filter. '' = inactive (both kinds pass); 'image' = only non-videos;
-    // 'video' = only videos. Uses the existing _libraryItemIsVideo predicate for consistency
-    // with how the picker and thumb rendering already classify each row.
+    // v345: media-type filter. '' = inactive (all kinds pass).
+    // v350: 'svg' added as a third bucket. 'image' now means raster only (excludes SVGs) so
+    // the three options are cleanly disjoint — otherwise picking 'image' would still include
+    // vectors and there'd be no way to see only rasters.
     var mediaSel = document.getElementById('imageLibraryMediaFilter');
     var mediaVal = mediaSel ? mediaSel.value : '';
     function checkMedia(it){
       if(!mediaVal) return null;
-      var isVid = _libraryItemIsVideo(it);
-      return mediaVal === 'video' ? isVid : !isVid;
+      if(mediaVal === 'video') return _libraryItemIsVideo(it);
+      if(mediaVal === 'svg')   return _libraryItemIsSvg(it);
+      // 'image' — raster only: not a video AND not an SVG
+      return !_libraryItemIsVideo(it) && !_libraryItemIsSvg(it);
     }
     function checkSearch(it){
       if(!searchQ) return null;
@@ -18403,6 +18448,11 @@ function renderImageLibrary(){
         thumbHtml += '<div class="lib-vid-badge" title="Video — click to add as a video layer" style="position:absolute;left:6px;top:6px;background:rgba(0,0,0,0.65);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;line-height:1.2;pointer-events:none;">▶ VIDEO</div>';
       } else if(_libraryItemIsImage(item)){
         thumbHtml = '<img src="' + escAttr(url) + '" alt="' + escAttr(item.name) + '" loading="lazy" decoding="async">';
+        // v350: SVG badge — same corner treatment as the video badge. isSvg is a refinement
+        // of isImage, so this only fires for vector library items and won't touch rasters.
+        if(_libraryItemIsSvg(item)){
+          thumbHtml += '<div class="lib-svg-badge" title="Vector SVG — click to add as a scalable SVG layer with per-swatch color remap" style="position:absolute;left:6px;top:6px;background:rgba(60,120,60,0.85);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;line-height:1.2;pointer-events:none;">◇ SVG</div>';
+        }
       } else {
         thumbHtml = '<div class="lib-noimg" title="Not an image or video — can\'t be used on the canvas. Use ✕ to remove it.">'
           + '<div style="font-size:22px;line-height:1;">📄</div>'
@@ -18771,12 +18821,15 @@ function handleLibraryUpload(event){
   // with empty MIME type — _isHeicFile checks the filename as a fallback.
   // v338: also accept video/* + common video extensions so drag-and-drop of mixed media works.
   files = Array.prototype.slice.call(files).filter(function(f){
-    return (f.type || '').indexOf('image/') === 0 || _isHeicFile(f) || _isVideoFile(f);
+    // v350: SVG is a first-class layer type — include it here so folder drops with mixed
+    // .svg files don't silently drop them. _isSvgFile matches ext even when file.type is
+    // empty (some browsers/OS combos drop the mime on .svg drops from Explorer).
+    return (f.type || '').indexOf('image/') === 0 || _isHeicFile(f) || _isVideoFile(f) || _isSvgFile(f);
   });
   if(!files.length){
     var statusEl0 = document.getElementById('imageLibraryStatus');
     statusEl0.classList.remove('hidden');
-    statusEl0.textContent = 'No image or video files found in that selection.';
+    statusEl0.textContent = 'No image, SVG, or video files found in that selection.';
     setTimeout(function(){ statusEl0.classList.add('hidden'); }, 4000);
     event.target.value = '';
     return;
@@ -18784,10 +18837,13 @@ function handleLibraryUpload(event){
   _pendingUploadFiles = files;
   _pendingUploadInputEl = event.target;  // cleared (.value='') once the upload finishes
   // v338: count reflects mixed image + video selection
+  // v350: SVGs get their own count so the picker heading is honest about the batch mix
   var vidCount = files.filter(_isVideoFile).length;
-  var imgCount = files.length - vidCount;
+  var svgCount = files.filter(_isSvgFile).length;
+  var imgCount = files.length - vidCount - svgCount;
   var parts = [];
   if(imgCount) parts.push(imgCount + ' image' + (imgCount === 1 ? '' : 's'));
+  if(svgCount) parts.push(svgCount + ' SVG' + (svgCount === 1 ? '' : 's'));
   if(vidCount) parts.push(vidCount + ' video' + (vidCount === 1 ? '' : 's'));
   document.getElementById('uploadBrandCount').textContent = parts.join(' + ') + ' selected';
   // v342: populate the brand + category selects, preselecting whatever the library filter is
@@ -18982,6 +19038,31 @@ function runLibraryUpload(brand, categoryId, batchTags, batchDateIso){
       }).then(function(){ uploadNext(i + 1); });
       return;
     }
+    // v350: SVGs bypass the raster compression pipeline entirely — the compress step decodes
+    // via <img> and re-encodes as WebP, which would flatten a scalable vector into a fixed-size
+    // bitmap and drop the swatch/gradient IDs the SVG layer type relies on. Upload the raw XML
+    // bytes unchanged; the file already has type image/svg+xml and a .svg storage_path so the
+    // grid + pick handler both recognize it.
+    if(_isSvgFile(srcFile)){
+      statusEl.textContent = 'Uploading ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + ' (' + _formatBytes(srcFile.size) + ')';
+      // Ensure the File carries an explicit image/svg+xml type so cloudUploadLibraryItem stamps
+      // it correctly on the storage row (some OS/browser combos deliver .svg with empty type)
+      var svgFile = (srcFile.type === 'image/svg+xml')
+        ? srcFile
+        : new File([srcFile], srcFile.name, {type: 'image/svg+xml', lastModified: srcFile.lastModified});
+      var svgDatePromise = uploadDateOverride ? Promise.resolve(uploadDateOverride) : _extractOriginalCreationDate(srcFile);
+      svgDatePromise.then(function(origDate){
+        return cloudUploadLibraryItem(svgFile, catId, displayName, brand, {
+          originalCreatedAt: origDate,
+          tags: uploadTags
+        });
+      }).then(function(){ ok++; }).catch(function(e){
+        console.warn('[lib] SVG upload failed for ' + srcFile.name + ':', e);
+        failed++;
+        lastError = e.message || String(e);
+      }).then(function(){ uploadNext(i + 1); });
+      return;
+    }
     statusEl.textContent = (_isHeicFile(srcFile) ? 'Converting HEIC ' : 'Compressing ')
       + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + '…';
     // v339: extract EXIF DateTimeOriginal from the ORIGINAL file bytes before compression /
@@ -19048,6 +19129,30 @@ function pickLibraryItem(item){
     showToast('📚 Added video: ' + item.name);
     return;
   }
+  // v350: SVGs land as real vector layers (createSvgLayerFromText handles normalization,
+  // CSS-fill inlining, blob URL, and the swatch/gradient discovery for the color remapper).
+  // Fetching as text (not a data URI) is deliberate: the layer stores raw XML as its source
+  // of truth (`svgText`), and passing a data URI would force a base64 decode + parse hop we
+  // don't need. Checked BEFORE the generic image branch since _libraryItemIsImage returns
+  // true for SVGs too.
+  if(_libraryItemIsSvg(item)){
+    cloudFetchLibraryItemAsText(item.storage_path).then(function(svgText){
+      if(_libraryPickCallback){
+        var cb = _libraryPickCallback;
+        _libraryPickCallback = null;
+        try { cb({ svgText: svgText, name: item.name, item: item }, item); }
+        catch(e){ console.error('[lib] svg pick callback failed:', e); alert('Could not use this SVG: ' + (e.message || e)); }
+        closeImageLibraryModal();
+        return;
+      }
+      createSvgLayerFromText(svgText, item.name || 'library.svg');
+      closeImageLibraryModal();
+      showToast('📚 Added SVG: ' + item.name);
+    }).catch(function(e){
+      alert('Failed to load SVG from library: ' + (e.message || e));
+    });
+    return;
+  }
   // v181: a non-image / non-video item can't be placed on the canvas — don't even fetch it.
   if(!_libraryItemIsImage(item)){
     alert('"' + (item.name || 'This item') + '" is not an image or video (' + (_formatMimeShort(item.mime) || 'unknown type') + ') and can\'t be added to the canvas. Use the ✕ button to remove it from the library.');
@@ -19086,6 +19191,41 @@ function pickLibraryItem(item){
 // the brand picker modal opens first, then runLibraryUpload() compresses + uploads (it tolerates
 // the library modal being closed; its post-upload renderImageLibrary() call just refreshes the
 // internal cache and updates the (hidden) grid for next time).
+// v350: SVG counterpart to addImageLayerToLibrary. Reuses the same upload-modal pipeline —
+// stashes a synthesized SVG File as _pendingUploadFiles and opens the brand/category/tags
+// modal. runLibraryUpload's SVG branch handles the rest (no compression, raw XML preserved).
+// Distinct from the image version because SVGs source from layer.svgText (raw XML), not
+// layer.img.src (which for an SVG layer is a throwaway blob URL that would double-encode).
+function addSvgLayerToLibrary(layerId){
+  var l = layers.find(function(x){return x.id===layerId;});
+  if(!l || l.type !== 'svg' || !l.svgText){ alert('No SVG on this layer to add to the library yet.'); return; }
+  if(!currentUser){ alert('Sign in to add SVGs to the library.'); return; }
+  var baseName = (l.name || 'svg').replace(/[^\w\-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,80) || 'svg';
+  var blob = new Blob([l.svgText], {type: 'image/svg+xml'});
+  var file = new File([blob], baseName + '.svg', {type: 'image/svg+xml'});
+  _pendingUploadFiles = [file];
+  _pendingUploadInputEl = null;   // no <input> to clear — synthesized File
+  var cnt = document.getElementById('uploadBrandCount');
+  if(cnt) cnt.textContent = '1 SVG · "' + (l.name || baseName) + '"';
+  // Preselect brand + category + reset tags/date the same way handleLibraryUpload does so the
+  // modal opens in a sensible state whether the user came here from the library filter or not.
+  var brandSel = document.getElementById('uploadBrandSelect');
+  if(brandSel){
+    var preBrand = _libraryCurrentBrandFilter;
+    if(preBrand === '__none__') preBrand = '';
+    if(preBrand === 'meowi' || preBrand === 'doggi' || preBrand === 'kkz' || preBrand === '') brandSel.value = preBrand;
+    else brandSel.value = 'meowi';
+  }
+  populateUploadCategorySelect();
+  _uploadTags = [];
+  renderUploadTagsChips();
+  var newTagInp = document.getElementById('uploadNewTagInput');
+  if(newTagInp) newTagInp.value = '';
+  var dateInp = document.getElementById('uploadDateInput');
+  if(dateInp) dateInp.value = '';
+  document.getElementById('uploadBrandModal').classList.remove('hidden');
+}
+
 function addImageLayerToLibrary(layerId){
   var l = layers.find(function(x){return x.id===layerId;});
   if(!l || !l.img){ alert('No image on this layer to add to the library yet.'); return; }
