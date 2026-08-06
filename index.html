@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v354</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v355</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4779,12 +4779,29 @@ function bindKeyboardShortcuts(){
 
     // Arrow keys — nudge the selected layer(s). Shift = 10px, plain = 1px.
     if(e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown'){
-      var ids = (selectedIds && selectedIds.length) ? selectedIds.slice() : (selectedId != null ? [selectedId] : []);
-      if(!ids.length) return;
+      var rawIds = (selectedIds && selectedIds.length) ? selectedIds.slice() : (selectedId != null ? [selectedId] : []);
+      if(!rawIds.length) return;
       e.preventDefault();
       var step = e.shiftKey ? 10 : 1;
       var dx = (e.key === 'ArrowLeft') ? -step : (e.key === 'ArrowRight') ? step : 0;
       var dy = (e.key === 'ArrowUp')   ? -step : (e.key === 'ArrowDown')  ? step : 0;
+      // v355: expand groups into their children so nudging a mixed selection (group + other
+      // layer) shifts every actual child by dx/dy, matching what the mouse-drag path does at
+      // line ~12895. Previously the loop tried to shift the group's own nominal x/y (which
+      // doesn't render — children carry their own positions), so a group + text selection
+      // moved nothing visible. Also dedupes so a child individually selected AND pulled in
+      // via its parent group doesn't get double-shifted.
+      var idSet = {};
+      rawIds.forEach(function(id){
+        var l = layers.find(function(x){return x.id===id;});
+        if(!l) return;
+        if(l.type === 'group' && l.childIds){
+          l.childIds.forEach(function(cid){ idSet[cid] = true; });
+        } else {
+          idSet[id] = true;
+        }
+      });
+      var ids = Object.keys(idSet).map(function(k){ return isNaN(+k) ? k : +k; });
       // Snapshot only if this is a "new" nudge (>1s since last). Holding the key creates one
       // undo entry for the whole continuous move, not one per repeat event.
       var moved = false;
