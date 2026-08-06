@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v355</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v356</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -6638,35 +6638,136 @@ function closeMemeBrowser(){
   document.getElementById('memeBrowserModal').classList.add('hidden');
 }
 
-// ── TEMPLATES (v326) ──
-// A "template" = a saved snapshot of layers you can drop into any future design. Stored as
-// JSON in localStorage under a single key (`smarterimage_templates`). Each template has:
-//   { id, name, thumbnail (data URL), createdAt, layers (serialized) }
-// On load, layers are added ON TOP of the current board with fresh IDs (never replacing).
+// ── TEMPLATES (v326 → v356 team-shared) ──
+// A "template" = a saved snapshot of layers you can drop into any future design.
+//
+// v326-v355 storage: localStorage under `smarterimage_templates`, per-browser per-user.
+// v356: templates are TEAM-SHARED via Supabase. Metadata (name, thumbnail, storage_path,
+// layers_count, uploaded_by, timestamps) lives in `template_items`; the actual serialized
+// layers JSON lives in the `template-states` public Storage bucket as `{uuid}.json`. Same
+// pattern used for social_designs + design-states — a template can be multi-MB with image
+// base64, and PostgREST doesn't do well with huge jsonb payloads. The localStorage key is
+// still read for the one-time "Migrate local templates" flow but never written to anymore.
+//
+// Client-side template shape:
+//   { id, name, thumbnail, storage_path, layers_count, uploaded_by, created_at, updated_at }
+// Note: `layers` is NOT held in the cache. Fetched lazily from Storage in loadTemplate.
 
-var _TEMPLATES_STORAGE_KEY = 'smarterimage_templates';
+var _TEMPLATES_STORAGE_KEY = 'smarterimage_templates';   // legacy — read only for migration
+var _templatesCache = null;   // null = needs fetch; otherwise Array<template row>
 
-function _readTemplates(){
+// Legacy local reader — used only for the "Migrate to team library" button and to detect
+// stragglers on modal open. All writes are cloud-only from v356 onward.
+function _readLocalTemplates(){
   try {
     var raw = localStorage.getItem(_TEMPLATES_STORAGE_KEY);
     if(!raw) return [];
     var parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch(e){
-    console.warn('[templates] parse failed:', e);
+    console.warn('[templates] local parse failed:', e);
     return [];
   }
 }
 
-function _writeTemplates(list){
-  try {
-    localStorage.setItem(_TEMPLATES_STORAGE_KEY, JSON.stringify(list));
-    return true;
-  } catch(e){
-    // Most likely QuotaExceededError — localStorage is ~5-10MB and image data URLs can be huge
-    alert('Could not save template: ' + (e.message || e) + '\n\nBrowser storage is likely full. Delete some older templates first.');
-    return false;
+function _makeTemplateStoragePath(){
+  // Prefer crypto.randomUUID (all modern browsers); fall back to a Math.random hex string.
+  if(window.crypto && typeof window.crypto.randomUUID === 'function'){
+    return window.crypto.randomUUID() + '.json';
   }
+  return 'tpl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10) + '.json';
+}
+
+// v356: list every team template, freshest first. `layers` is NOT included — that's fetched
+// lazily by loadTemplate when the user actually picks a card. Keeps the modal open snappy.
+function cloudListTemplates(){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in to see templates.'));
+  return sb.from('template_items')
+    .select('id, name, thumbnail, storage_path, layers_count, uploaded_by, created_at, updated_at')
+    .order('updated_at', {ascending: false, nullsFirst: false})
+    .order('created_at', {ascending: false})
+    .then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Template list failed');
+      return res.data || [];
+    });
+}
+
+// Upload the raw layers JSON to the template-states bucket. Uses upsert:true so updateTemplate
+// can reuse the same storage_path without a race.
+function cloudUploadTemplatePayload(storagePath, jsonStr){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  var blob = new Blob([jsonStr], {type: 'application/json'});
+  return sb.storage.from('template-states').upload(storagePath, blob, {
+    upsert: true,
+    contentType: 'application/json',
+    cacheControl: '0'   // updates must invalidate — no long CDN cache
+  }).then(function(res){
+    if(res.error){
+      var status = res.error.statusCode ? ' (HTTP ' + res.error.statusCode + ')' : '';
+      throw new Error('Template payload upload failed' + status + ': ' + (res.error.message || 'unknown'));
+    }
+    return storagePath;
+  });
+}
+
+function cloudInsertTemplate(row){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  return sb.from('template_items').insert(row)
+    .select('id, name, thumbnail, storage_path, layers_count, uploaded_by, created_at, updated_at')
+    .single().then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Template insert failed');
+      return res.data;
+    });
+}
+
+function cloudUpdateTemplate(id, patch){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  patch = patch || {};
+  patch.updated_at = new Date().toISOString();
+  return sb.from('template_items').update(patch).eq('id', id)
+    .select('id, name, thumbnail, storage_path, layers_count, uploaded_by, created_at, updated_at')
+    .single().then(function(res){
+      if(res.error) throw new Error(res.error.message || 'Template update failed');
+      return res.data;
+    });
+}
+
+function cloudDeleteTemplate(id, storagePath){
+  if(!sb || !currentUser) return Promise.reject(new Error('Sign in.'));
+  return sb.from('template_items').delete().eq('id', id).then(function(res){
+    if(res.error) throw new Error(res.error.message || 'Template delete failed');
+    // Best-effort storage cleanup — don't fail the delete on a storage error
+    if(storagePath){
+      sb.storage.from('template-states').remove([storagePath]).catch(function(e){
+        console.warn('[templates] storage cleanup failed for', storagePath, ':', e);
+      });
+    }
+  });
+}
+
+// Fetch the layers JSON for a specific template from Storage's public CDN. Bypasses the auth'd
+// storage API for the same reason cloudFetchLibraryItemAsDataUri does — public read + no DB
+// connection burn per fetch.
+function cloudFetchTemplateLayers(storagePath){
+  if(!sb) return Promise.reject(new Error('Cloud not ready.'));
+  var res = sb.storage.from('template-states').getPublicUrl(storagePath);
+  var url = res && res.data && res.data.publicUrl;
+  if(!url) return Promise.reject(new Error('Could not resolve template URL for ' + storagePath));
+  return fetch(url, {cache: 'no-store'}).then(function(resp){
+    if(!resp.ok) throw new Error('Template payload fetch HTTP ' + resp.status);
+    return resp.text();
+  }).then(function(txt){
+    return JSON.parse(txt);
+  });
+}
+
+// Legacy shim so any lingering caller that expected sync doesn't crash. Nothing in-tree calls
+// this — every path went through the refactor — but leaving it as a defensive guard: reject
+// synchronously by returning an empty list so a stale caller shows an empty state instead of
+// blowing up.
+function _writeTemplates(){
+  console.warn('[templates] _writeTemplates is a no-op in v356+ — templates are cloud-only');
+  return false;
 }
 
 function openTemplateBrowser(){
@@ -6678,65 +6779,109 @@ function closeTemplateBrowser(){
   document.getElementById('templateModal').classList.add('hidden');
 }
 
+// v356: async render. Fetches the team template list from Supabase on open and caches it.
+// Cache is invalidated (set to null) on any successful save/update/delete so the next open
+// re-fetches. During the in-flight fetch, show a Loading… placeholder in the grid.
 function renderTemplateGrid(){
   var grid = document.getElementById('templateGrid');
   if(!grid) return;
-  var list = _readTemplates();
-  if(!list.length){
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px 12px;color:var(--muted);font-size:12px;line-height:1.6;">No templates yet.<br>Design something you\'d like to reuse, then click <b>💾 Save current design as template</b> above.</div>';
+  if(!currentUser){
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px 12px;color:var(--muted);font-size:12px;">Sign in to see team templates.</div>';
     return;
   }
-  grid.innerHTML = list.map(function(t){
+  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px 12px;color:var(--muted);font-size:12px;">Loading team templates…</div>';
+  var fetch = (_templatesCache != null) ? Promise.resolve(_templatesCache) : cloudListTemplates();
+  fetch.then(function(list){
+    _templatesCache = list;
+    _renderTemplateGridFromCache();
+  }).catch(function(e){
+    console.error('[templates] load failed:', e);
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px 12px;color:#a00;font-size:12px;">Could not load templates: ' + escAttr(e.message || String(e)) + '</div>';
+  });
+}
+
+function _renderTemplateGridFromCache(){
+  var grid = document.getElementById('templateGrid');
+  if(!grid) return;
+  var list = _templatesCache || [];
+  // Migration banner: if the user has legacy local-only templates, offer a one-click move to
+  // the team library. Shown ABOVE the grid cards; goes away after a successful migration or
+  // if the user clears their local set some other way.
+  var localCount = _readLocalTemplates().length;
+  var migrationBanner = '';
+  if(localCount > 0){
+    migrationBanner = '<div style="grid-column:1/-1;padding:10px 12px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;font-size:11px;color:#664d03;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+      + '<span style="flex:1;line-height:1.5;">You have <b>' + localCount + ' local template' + (localCount === 1 ? '' : 's') + '</b> saved on this browser from before templates were team-shared. Move them to the team library so everyone can use them?</span>'
+      + '<button class="btn-primary" style="padding:5px 12px;font-size:11px;white-space:nowrap;" onclick="migrateLocalTemplatesToCloud()">⬆ Move to team library</button>'
+      + '</div>';
+  }
+  if(!list.length && !localCount){
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px 12px;color:var(--muted);font-size:12px;line-height:1.6;">No team templates yet.<br>Design something you\'d like to reuse, then click <b>💾 Save current design as template</b> above.</div>';
+    return;
+  }
+  grid.innerHTML = migrationBanner + list.map(function(t){
     var thumb = t.thumbnail || '';
-    var when = t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '';
+    // Prefer updated_at when present so a recent overwrite bubbles the label; fall back to created_at
+    var whenIso = t.updated_at || t.created_at;
+    var when = whenIso ? new Date(whenIso).toLocaleDateString() : '';
+    var layersLabel = (t.layers_count != null) ? (t.layers_count + ' layer' + (t.layers_count === 1 ? '' : 's')) : '';
+    var meta = when + (layersLabel ? ' · ' + layersLabel : '');
     return '<div class="template-card" style="border:1.5px solid var(--border);border-radius:8px;overflow:hidden;background:#fff;display:flex;flex-direction:column;cursor:pointer;transition:transform .12s, border-color .12s;" onmouseover="this.style.borderColor=\'var(--green)\';this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'\'">'
-      + '<div onclick="loadTemplate(\'' + escAttr(t.id) + '\')" style="aspect-ratio:1/1;background:#f4f4f0 ' + (thumb ? "url('" + thumb + "') center/cover no-repeat" : '') + ';"></div>'
+      + '<div onclick="loadTemplate(' + t.id + ')" style="aspect-ratio:1/1;background:#f4f4f0 ' + (thumb ? "url('" + thumb + "') center/cover no-repeat" : '') + ';"></div>'
       + '<div style="padding:8px 10px;">'
         + '<div style="font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escAttr(t.name) + '</div>'
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:4px;">'
-          + '<div style="font-size:10px;color:var(--muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + when + ' · ' + (t.layers ? t.layers.length : 0) + ' layers</div>'
-          // v348: ↻ Update overwrites this template with the current design's layers +
-          // regenerates the thumbnail. Preserves id + name so any prior references stay valid.
-          // event.stopPropagation() on both action buttons so clicking them doesn't also
-          // fire the card's loadTemplate handler.
-          + '<button class="btn-sm" onclick="event.stopPropagation(); updateTemplate(\'' + escAttr(t.id) + '\')" title="Overwrite this template with the current design (keeps the template name, refreshes the thumbnail)" style="font-size:10px;padding:2px 6px;">↻</button>'
-          + '<button class="btn-sm danger" onclick="event.stopPropagation(); deleteTemplate(\'' + escAttr(t.id) + '\')" title="Delete this template" style="font-size:10px;">✕</button>'
+          + '<div style="font-size:10px;color:var(--muted);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escAttr(meta) + '</div>'
+          // ↻ Update overwrites this template with the current design's layers + thumbnail;
+          // ✕ deletes. Both stopPropagation so they don't also fire the card's load handler.
+          + '<button class="btn-sm" onclick="event.stopPropagation(); updateTemplate(' + t.id + ')" title="Overwrite this template with the current design (keeps the template name, refreshes the thumbnail)" style="font-size:10px;padding:2px 6px;">↻</button>'
+          + '<button class="btn-sm danger" onclick="event.stopPropagation(); deleteTemplate(' + t.id + ')" title="Delete this template from the team library" style="font-size:10px;">✕</button>'
         + '</div>'
       + '</div>'
     + '</div>';
   }).join('');
 }
 
+// v356: cloud save. Uploads the serialized layers JSON to the template-states bucket first,
+// then inserts the metadata row. If the row insert fails, the storage upload is left behind —
+// a low-cost orphan the user will never notice. The reverse (row-first) would leave a broken
+// card in the grid pointing at a nonexistent file, which is worse.
 function promptSaveCurrentAsTemplate(){
+  if(!currentUser){ alert('Sign in to save templates to the team library.'); return; }
   if(!layers || !layers.length){
     alert('Add some layers first, then save them as a template.');
     return;
   }
-  var name = prompt('Template name:', 'Template ' + (new Date()).toLocaleDateString());
+  var name = prompt('Template name (visible to everyone on the team):', 'Template ' + (new Date()).toLocaleDateString());
   if(!name || !name.trim()) return;
   name = name.trim().slice(0, 80);
-  // Snapshot the layers using the same serializer used for save-to-file / cloud
   var serializedJson;
   try { serializedJson = serializeLayers(); }
   catch(e){ alert('Could not serialize layers: ' + (e.message || e)); return; }
-  var serialized = JSON.parse(serializedJson);
-  // Build a small thumbnail. Render the current board content to a small canvas, JPEG at ~60%
-  // quality to keep localStorage happy. Skip on error — thumbnail is nice-to-have.
   var thumbnail = '';
   try { thumbnail = _generateTemplateThumbnail(200); }
   catch(e){ console.warn('[templates] thumbnail failed:', e); }
-  var list = _readTemplates();
-  list.unshift({
-    id: 'tpl_' + Math.random().toString(36).slice(2, 10) + '_' + list.length,
-    name: name,
-    thumbnail: thumbnail,
-    createdAt: new Date().toISOString(),
-    layers: serialized
-  });
-  if(_writeTemplates(list)){
+  var layersArr;
+  try { layersArr = JSON.parse(serializedJson); }
+  catch(e){ alert('Layers payload was not valid JSON: ' + (e.message || e)); return; }
+  var storagePath = _makeTemplateStoragePath();
+  if(typeof showToast === 'function') showToast('☁ Uploading template…');
+  cloudUploadTemplatePayload(storagePath, serializedJson).then(function(){
+    return cloudInsertTemplate({
+      name: name,
+      thumbnail: thumbnail,
+      storage_path: storagePath,
+      layers_count: layersArr.length,
+      uploaded_by: currentUser.id
+    });
+  }).then(function(row){
+    _templatesCache = null;   // invalidate; next render fetches fresh
     renderTemplateGrid();
-    if(typeof showToast === 'function') showToast('📐 Template saved: ' + name);
-  }
+    if(typeof showToast === 'function') showToast('📐 Template saved to team library: ' + row.name);
+  }).catch(function(e){
+    console.error('[templates] save failed:', e);
+    alert('Could not save template: ' + (e.message || e));
+  });
 }
 
 // v348: Overwrite an existing template with the current design's layers + a fresh thumbnail.
@@ -6745,35 +6890,41 @@ function promptSaveCurrentAsTemplate(){
 // Adds `updatedAt` so downstream code can distinguish. Same serializer + thumbnail path as
 // promptSaveCurrentAsTemplate — this is deliberately a small variant, not a shared helper,
 // because the two flows have different confirm UX + different toast copy.
+// v356: cloud update. Uploads the new payload to the SAME storage_path with upsert:true so
+// there's no dangling old file, then patches the row. Name + created_at are preserved so the
+// "when was this first made" signal stays honest — updated_at gets the new timestamp.
 function updateTemplate(id){
-  var list = _readTemplates();
-  var idx = list.findIndex(function(t){ return t.id === id; });
-  if(idx < 0){ alert('Template not found.'); return; }
-  var tpl = list[idx];
+  if(!currentUser){ alert('Sign in to update team templates.'); return; }
+  var tpl = (_templatesCache || []).find(function(t){ return t.id === id; });
+  if(!tpl){ alert('Template not found in the current list. Reopen the browser and try again.'); return; }
   if(!layers || !layers.length){
     alert('Add some layers first, then click Update to overwrite this template.');
     return;
   }
-  if(!confirm('Overwrite the "' + tpl.name + '" template with the current design?\n\nThe old template contents will be replaced. Name + creation date are kept.')) return;
+  if(!confirm('Overwrite the team template "' + tpl.name + '" with the current design?\n\nThe old template contents will be replaced. Everyone on the team will see the new version.')) return;
   var serializedJson;
   try { serializedJson = serializeLayers(); }
   catch(e){ alert('Could not serialize layers: ' + (e.message || e)); return; }
-  var serialized = JSON.parse(serializedJson);
   var thumbnail = tpl.thumbnail || '';
   try { thumbnail = _generateTemplateThumbnail(200); }
   catch(e){ console.warn('[templates] thumbnail failed:', e); }
-  list[idx] = {
-    id: tpl.id,
-    name: tpl.name,
-    thumbnail: thumbnail,
-    createdAt: tpl.createdAt,
-    updatedAt: new Date().toISOString(),
-    layers: serialized
-  };
-  if(_writeTemplates(list)){
+  var layersArr;
+  try { layersArr = JSON.parse(serializedJson); }
+  catch(e){ alert('Layers payload was not valid JSON: ' + (e.message || e)); return; }
+  if(typeof showToast === 'function') showToast('☁ Updating template…');
+  cloudUploadTemplatePayload(tpl.storage_path, serializedJson).then(function(){
+    return cloudUpdateTemplate(id, {
+      thumbnail: thumbnail,
+      layers_count: layersArr.length
+    });
+  }).then(function(row){
+    _templatesCache = null;
     renderTemplateGrid();
-    if(typeof showToast === 'function') showToast('↻ Template updated: ' + tpl.name);
-  }
+    if(typeof showToast === 'function') showToast('↻ Template updated: ' + row.name);
+  }).catch(function(e){
+    console.error('[templates] update failed:', e);
+    alert('Could not update template: ' + (e.message || e));
+  });
 }
 
 // Render the current board to a small square canvas and return a JPEG data URL. Reuses the
@@ -6804,18 +6955,35 @@ function _generateTemplateThumbnail(maxSize){
   return off.toDataURL('image/jpeg', 0.6);
 }
 
-// Load a saved template — deserialize its layers, remap all IDs so they don't collide with
-// existing layers on the current board, then push them on TOP (never replaces). Follows the
-// same id-remap logic as pasteClipboard so groups + parentId + maskChildId stay wired up.
+// Load a saved template — fetch its layers JSON from Storage, deserialize, remap all IDs so
+// they don't collide with existing layers on the current board, then push them on TOP (never
+// replaces). Follows the same id-remap logic as pasteClipboard so groups + parentId +
+// maskChildId stay wired up.
+// v356: `layers` is no longer inline on the cache entry — it lives in Storage and gets fetched
+// lazily on card click. Toast shows during the network round-trip so the user knows something
+// is happening.
 function loadTemplate(id){
-  var list = _readTemplates();
-  var tpl = list.find(function(t){ return t.id === id; });
-  if(!tpl || !tpl.layers){ alert('Template not found or empty.'); return; }
+  var tpl = (_templatesCache || []).find(function(t){ return t.id === id; });
+  if(!tpl){ alert('Template not found. Reopen the browser and try again.'); return; }
+  if(typeof showToast === 'function') showToast('☁ Loading template…');
+  cloudFetchTemplateLayers(tpl.storage_path).then(function(layersArr){
+    if(!Array.isArray(layersArr) || !layersArr.length){
+      alert('Template "' + tpl.name + '" is empty or has no layers data.');
+      return;
+    }
+    _applyTemplateLayers(tpl, layersArr);
+  }).catch(function(e){
+    console.error('[templates] load payload failed:', e);
+    alert('Could not load template payload: ' + (e.message || e));
+  });
+}
+
+function _applyTemplateLayers(tpl, layersArr){
   snapshotState();
   var idMap = {};
-  tpl.layers.forEach(function(entry){ idMap[entry.id] = nextId++; });
+  layersArr.forEach(function(entry){ idMap[entry.id] = nextId++; });
   var addedIds = [];
-  tpl.layers.forEach(function(entry){
+  layersArr.forEach(function(entry){
     var copy = JSON.parse(JSON.stringify(entry));
     copy.id = idMap[entry.id];
     if(copy.parentId != null){
@@ -6865,13 +7033,70 @@ function loadTemplate(id){
   if(typeof showToast === 'function') showToast('📐 Template loaded: ' + tpl.name);
 }
 
+// v356: cloud delete. Removes the row and best-effort removes the Storage payload. The
+// disclaimer copy calls out that everyone loses access — no soft-delete or per-user hiding.
 function deleteTemplate(id){
-  var list = _readTemplates();
-  var tpl = list.find(function(t){ return t.id === id; });
-  if(!tpl) return;
-  if(!confirm('Delete template "' + tpl.name + '"?')) return;
-  var next = list.filter(function(t){ return t.id !== id; });
-  if(_writeTemplates(next)) renderTemplateGrid();
+  if(!currentUser){ alert('Sign in to delete team templates.'); return; }
+  var tpl = (_templatesCache || []).find(function(t){ return t.id === id; });
+  if(!tpl){ return; }
+  if(!confirm('Delete team template "' + tpl.name + '"?\n\nThis removes it for EVERYONE on the team — nobody will be able to load it after this. Designs already built from this template are unaffected.')) return;
+  cloudDeleteTemplate(id, tpl.storage_path).then(function(){
+    _templatesCache = null;
+    renderTemplateGrid();
+    if(typeof showToast === 'function') showToast('🗑 Template deleted: ' + tpl.name);
+  }).catch(function(e){
+    console.error('[templates] delete failed:', e);
+    alert('Could not delete template: ' + (e.message || e));
+  });
+}
+
+// v356: one-shot migration of any legacy local-only templates (v326-v355) into the team
+// library. Uploads each in sequence — parallel would race on toasts and doesn't buy much
+// since templates aren't huge. Removes the local key at the end so the migration banner
+// disappears. If some uploads fail, keeps the ones that survive in localStorage so the user
+// can retry.
+function migrateLocalTemplatesToCloud(){
+  if(!currentUser){ alert('Sign in to migrate templates.'); return; }
+  var local = _readLocalTemplates();
+  if(!local.length){ alert('Nothing to migrate.'); return; }
+  if(!confirm('Move ' + local.length + ' local template' + (local.length === 1 ? '' : 's') + ' to the team library?\n\nEveryone on the team will be able to use them. The local copies stay on this browser until every upload succeeds — if any fail, those stay local so you can retry.')) return;
+  if(typeof showToast === 'function') showToast('☁ Migrating ' + local.length + ' template' + (local.length === 1 ? '' : 's') + '…');
+  var remaining = local.slice();
+  var uploaded = [];
+  var failed = [];
+  function next(){
+    if(!remaining.length){
+      // Persist only the failed ones back to localStorage so a retry catches them
+      try { localStorage.setItem(_TEMPLATES_STORAGE_KEY, JSON.stringify(failed)); }
+      catch(_){}
+      _templatesCache = null;
+      renderTemplateGrid();
+      var msg = '✓ Migrated ' + uploaded.length + ' template' + (uploaded.length === 1 ? '' : 's');
+      if(failed.length) msg += ' — ' + failed.length + ' failed and stayed local';
+      if(typeof showToast === 'function') showToast(msg);
+      return;
+    }
+    var t = remaining.shift();
+    // Legacy format: `layers` is inline, `createdAt` / `updatedAt` are the field names.
+    var layersArr = Array.isArray(t.layers) ? t.layers : [];
+    var storagePath = _makeTemplateStoragePath();
+    var payloadJson = JSON.stringify(layersArr);
+    cloudUploadTemplatePayload(storagePath, payloadJson).then(function(){
+      return cloudInsertTemplate({
+        name: t.name || 'Untitled template',
+        thumbnail: t.thumbnail || null,
+        storage_path: storagePath,
+        layers_count: layersArr.length,
+        uploaded_by: currentUser.id
+      });
+    }).then(function(){
+      uploaded.push(t);
+    }).catch(function(e){
+      console.warn('[templates] migrate failed for', t.name, ':', e);
+      failed.push(t);
+    }).then(next);
+  }
+  next();
 }
 
 function refreshMemeTemplates(){
