@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v353</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v354</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3181,6 +3181,14 @@ function duplicateBoard(id){
   // Clone each layer using the same serialize-and-rehydrate strategy that copy/paste uses.
   // This skips live HTMLImageElement/HTMLVideoElement references (can't structured-clone them)
   // and reconstructs them from src URLs after the layer is JSON-cloned.
+  // v354: build an oldId→newId map during the first pass so we can rewire group.childIds,
+  // group.maskChildId, and child.parentId to the DUPLICATED layer ids in a second pass.
+  // Before this, duplicateBoard assigned fresh ids but left the group-relationship references
+  // pointing at the SOURCE board's ids — so the duplicated group appeared empty (its childIds
+  // referenced source-board children that don't exist in the new board) and the duplicated
+  // children still thought their parent was the source group. Cropped/masked content
+  // vanished on the duplicate.
+  var _idMap = {};
   dup.layers = src.layers.map(function(l){
     // 1. Build a JSON-safe shallow snapshot
     var snap = {};
@@ -3198,8 +3206,10 @@ function duplicateBoard(id){
     }
     // 2. Deep-copy plain data
     var copy = JSON.parse(JSON.stringify(snap));
-    // 3. Fresh layer id (must be unique across ALL boards)
+    // 3. Fresh layer id (must be unique across ALL boards) + record mapping for pass 2
+    var oldId = copy.id;
     copy.id = nextId++;
+    _idMap[oldId] = copy.id;
     // 4. Rehydrate live elements from src URLs (mirrors pasteClipboard)
     if(copy.type === 'svg' && copy.svgText){
       var pnorm = normalizeSvgDimensions(copy.svgText);
@@ -3243,6 +3253,23 @@ function duplicateBoard(id){
       copy._playing = false;
     }
     return copy;
+  });
+  // v354: pass 2 — rewire every group-relationship reference from source-board ids to the
+  // freshly-minted duplicate ids. Any reference that doesn't remap (child ref to a deleted or
+  // out-of-set layer) gets dropped rather than left as a dangling id.
+  dup.layers.forEach(function(copy){
+    if(copy.parentId != null){
+      copy.parentId = (_idMap[copy.parentId] != null) ? _idMap[copy.parentId] : null;
+      if(copy.parentId == null) delete copy.parentId;
+    }
+    if(copy.type === 'group' && Array.isArray(copy.childIds)){
+      copy.childIds = copy.childIds
+        .map(function(cid){ return _idMap[cid]; })
+        .filter(function(cid){ return cid != null; });
+    }
+    if(copy.type === 'group' && copy.maskChildId != null){
+      copy.maskChildId = (_idMap[copy.maskChildId] != null) ? _idMap[copy.maskChildId] : null;
+    }
   });
   // Insert immediately after the source board
   var idx = boards.findIndex(function(b){return b.id === id;});
