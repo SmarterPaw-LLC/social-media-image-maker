@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v358</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v359</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -6121,6 +6121,199 @@ function extractSvgSwatches(svgText){
 
 // Replace one swatch's color in the SVG text. Targets only the specific occurrence (not a global
 // find/replace of every occurrence of the old hex, which would clobber unrelated colors).
+// v359: seed value for the stroke-width slider. Sample the first stroke-width in the SVG —
+// attribute form first, then inline-style form. Falls back to 1 (the SVG spec default) when
+// nothing explicit exists yet.
+function _svgGetInitialStrokeWidth(svgText){
+  var m = svgText.match(/\bstroke-width\s*=\s*"([^"]+)"/i);
+  if(m){
+    var n = parseFloat(m[1]);
+    if(!isNaN(n)) return n;
+  }
+  var sm = svgText.match(/stroke-width\s*:\s*([^;"\s]+)/i);
+  if(sm){
+    var n2 = parseFloat(sm[1]);
+    if(!isNaN(n2)) return n2;
+  }
+  return 1;
+}
+
+// v359: check whether the SVG has any strokes at all — used to decide if the width slider is
+// worth showing. Matches stroke attribute values that AREN'T none/transparent (those are
+// stroke-off signals, not colors).
+function _svgHasAnyStroke(svgText){
+  var m = svgText.match(/\bstroke\s*=\s*"([^"]+)"/gi);
+  if(!m) return false;
+  for(var i = 0; i < m.length; i++){
+    var v = (m[i].match(/"([^"]+)"/) || [])[1] || '';
+    v = v.trim().toLowerCase();
+    if(v && v !== 'none' && v !== 'transparent') return true;
+  }
+  return false;
+}
+
+// v359: replace every stroke-width in the SVG with a single value. Three sites to rewrite:
+// (1) explicit stroke-width="X" attributes, (2) stroke-width:X inline style declarations, and
+// (3) elements that carry a stroke color but no explicit stroke-width (the spec default is 1,
+// which is often too thin). The regex for (3) is scoped to elements that ALREADY have a stroke
+// attribute so it can't accidentally inject stroke-width onto random elements.
+function _svgSetAllStrokeWidths(svgText, width){
+  var w = String(Math.max(0, +width || 0));
+  var out = svgText.replace(/\bstroke-width\s*=\s*"[^"]*"/gi, 'stroke-width="' + w + '"');
+  out = out.replace(/(style\s*=\s*"[^"]*?)stroke-width\s*:\s*[^;"]+/gi, '$1stroke-width:' + w);
+  out = out.replace(/<[a-zA-Z][^>]*\sstroke\s*=\s*"[^"]+"[^>]*>/g, function(m){
+    if(/\sstroke-width\s*=/i.test(m)) return m;
+    if(/\sstyle\s*=\s*"[^"]*stroke-width/i.test(m)) return m;
+    return m.replace(/\/?>$/, function(end){ return ' stroke-width="' + w + '"' + end; });
+  });
+  return out;
+}
+
+// v359: convert a solid fill/stroke swatch into a 2-stop linear gradient. Generates a unique
+// id in the `_smim_grad_` namespace (recognized later so we know which gradients we own and
+// can offer angle/revert controls). Injects the gradient into <defs> (creating <defs> if the
+// SVG doesn't have one), and replaces every attribute occurrence of the old solid color with
+// url(#newId). Both stops start at the current color so the visible SVG doesn't change until
+// the user edits a stop — matches the "here's a gradient, now pick the colors" UX.
+var _smSvgGradCounter = 0;
+function _svgConvertSolidToGradient(svgText, swatch){
+  if(!swatch || (swatch.kind !== 'fill' && swatch.kind !== 'stroke')) return svgText;
+  var newId = '_smim_grad_' + (++_smSvgGradCounter) + '_' + Math.random().toString(36).slice(2, 8);
+  var color = swatch.currentHex || '#000000';
+  var end = _darkenHex(color, 0.30);
+  var gradDef = '<linearGradient id="' + newId + '" x1="0%" y1="0%" x2="100%" y2="100%">'
+              + '<stop offset="0%" stop-color="' + color + '"/>'
+              + '<stop offset="100%" stop-color="' + end + '"/>'
+              + '</linearGradient>';
+  var out;
+  if(/<defs\b[^>]*>/i.test(svgText)){
+    out = svgText.replace(/(<defs\b[^>]*>)/i, '$1' + gradDef);
+  } else {
+    out = svgText.replace(/(<svg\b[^>]*>)/i, '$1<defs>' + gradDef + '</defs>');
+  }
+  var attrRe = new RegExp('(\\s' + swatch.kind + '\\s*=\\s*")' + escapeRegex(swatch.rawValue) + '(")', 'gi');
+  out = out.replace(attrRe, '$1url(#' + newId + ')$2');
+  return out;
+}
+
+// v359: mirror of _darkenHex — for the "solid → gradient" default, we want a darker second
+// stop so the gradient reads as a gradient immediately without the user having to change anything.
+function _darkenHex(hex, factor){
+  var m = hex.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if(!m) return hex;
+  var r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+  function hh(n){ var s = Math.max(0, Math.min(255, Math.round(n))).toString(16); return s.length < 2 ? '0' + s : s; }
+  return '#' + hh(r * (1 - factor)) + hh(g * (1 - factor)) + hh(b * (1 - factor));
+}
+
+// v359: change the angle of an app-generated linear gradient. Angle in degrees where 0 =
+// top-to-bottom (default), 90 = left-to-right, 180 = bottom-to-top, etc. Rewrites x1/y1/x2/y2
+// in objectBoundingBox space (0-100%) so the gradient stretches with whatever shape it fills.
+function _svgSetGradientAngle(svgText, gradId, angleDeg){
+  var rad = (angleDeg - 90) * Math.PI / 180;
+  var cx = 50, cy = 50;
+  var dx = Math.cos(rad) * 50, dy = Math.sin(rad) * 50;
+  var x1 = (cx - dx).toFixed(1), y1 = (cy - dy).toFixed(1);
+  var x2 = (cx + dx).toFixed(1), y2 = (cy + dy).toFixed(1);
+  var re = new RegExp('<linearGradient\\b([^>]*\\bid\\s*=\\s*"' + escapeRegex(gradId) + '"[^>]*)>', 'i');
+  return svgText.replace(re, function(m, attrs){
+    var cleaned = attrs.replace(/\s*x[12]\s*=\s*"[^"]*"/gi, '').replace(/\s*y[12]\s*=\s*"[^"]*"/gi, '');
+    return '<linearGradient' + cleaned + ' x1="' + x1 + '%" y1="' + y1 + '%" x2="' + x2 + '%" y2="' + y2 + '%">';
+  });
+}
+
+// v359: extract the current angle from an app-generated linear gradient — inverse of
+// _svgSetGradientAngle. Returns 0 as a safe default when the gradient can't be parsed.
+function _svgGetGradientAngle(svgText, gradId){
+  var re = new RegExp('<linearGradient\\b[^>]*\\bid\\s*=\\s*"' + escapeRegex(gradId) + '"[^>]*>', 'i');
+  var m = svgText.match(re);
+  if(!m) return 0;
+  var attrs = m[0];
+  var mx1 = attrs.match(/\bx1\s*=\s*"([^"]+)"/i);
+  var my1 = attrs.match(/\by1\s*=\s*"([^"]+)"/i);
+  var mx2 = attrs.match(/\bx2\s*=\s*"([^"]+)"/i);
+  var my2 = attrs.match(/\by2\s*=\s*"([^"]+)"/i);
+  if(!mx1 || !my1 || !mx2 || !my2) return 0;
+  var x1 = parseFloat(mx1[1]), y1 = parseFloat(my1[1]);
+  var x2 = parseFloat(mx2[1]), y2 = parseFloat(my2[1]);
+  var dx = x2 - x1, dy = y2 - y1;
+  var angleRad = Math.atan2(dy, dx);
+  var deg = angleRad * 180 / Math.PI + 90;
+  if(deg < 0) deg += 360;
+  if(deg >= 360) deg -= 360;
+  return Math.round(deg);
+}
+
+// v359: revert an app-generated gradient back to a solid color. Uses the first stop's color
+// as the new solid so the user gets a visually predictable "undo" (the top-left corner of the
+// gradient becomes the new solid fill). Strips the gradient block from <defs> and replaces
+// every url(#id) occurrence with the solid color.
+function _svgRevertGradientToSolid(svgText, gradId){
+  var gradRe = new RegExp('<linearGradient\\b[^>]*\\bid\\s*=\\s*"' + escapeRegex(gradId) + '"[^>]*>([\\s\\S]*?)</linearGradient>', 'i');
+  var gm = gradRe.exec(svgText);
+  if(!gm) return svgText;
+  var stopMatch = gm[1].match(/<stop\b[^>]*stop-color\s*=\s*"([^"]+)"/i);
+  var solidColor = stopMatch ? stopMatch[1] : '#000000';
+  var out = svgText.replace(gradRe, '');
+  var urlRe = new RegExp('(\\s(?:fill|stroke)\\s*=\\s*")url\\(#' + escapeRegex(gradId) + '\\)(")', 'gi');
+  out = out.replace(urlRe, '$1' + solidColor + '$2');
+  return out;
+}
+
+// v359: shared apply helper for every SVG-text mutation from the property panel. Snapshots
+// undo state, writes the new svgText, revokes the old blob URL, builds a fresh one, and reloads
+// the image so the canvas repaints with the new bytes. Every new v359 control funnels through
+// here so the "recolor swatch" path stays the reference implementation.
+function _svgApplyLayerTextChange(layer, newText){
+  snapshotState();
+  layer.svgText = newText;
+  if(layer.url) URL.revokeObjectURL(layer.url);
+  var blob = new Blob([layer.svgText], {type:'image/svg+xml'});
+  layer.url = URL.createObjectURL(blob);
+  var newImg = new Image();
+  newImg.onload = function(){ layer.img = newImg; redraw(); };
+  newImg.onerror = function(){ console.error('[svg apply] reload failed after mutation'); };
+  newImg.src = layer.url;
+}
+
+// v359: list every app-generated gradient id currently in the SVG. Used by buildSvgProps to
+// decide which gradient stop groups get the extra angle / revert controls — user-authored
+// gradients (from Illustrator etc.) get the stops-only treatment as before.
+function _svgListGeneratedGradientIds(svgText){
+  var ids = [];
+  var re = /<linearGradient\b[^>]*\bid\s*=\s*"(_smim_grad_[^"]+)"/gi;
+  var m;
+  while((m = re.exec(svgText)) !== null){ ids.push(m[1]); }
+  return ids;
+}
+
+// v359: user-facing entry points, called from onclick handlers built by buildSvgProps.
+function svgSetStrokeWidth(layerId, width){
+  var l = layers.find(function(x){return x.id === layerId;});
+  if(!l || l.type !== 'svg' || !l.svgText) return;
+  _svgApplyLayerTextChange(l, _svgSetAllStrokeWidths(l.svgText, width));
+}
+function svgConvertSolidSwatchToGradient(layerId, swatchKey){
+  var l = layers.find(function(x){return x.id === layerId;});
+  if(!l || l.type !== 'svg' || !l.svgText) return;
+  var swatches = extractSvgSwatches(l.svgText);
+  var sw = swatches.find(function(s){ return s.key === swatchKey; });
+  if(!sw) return;
+  _svgApplyLayerTextChange(l, _svgConvertSolidToGradient(l.svgText, sw));
+  renderProps();   // stops appear as new swatches — need a rebuild
+}
+function svgSetGradientAngleForLayer(layerId, gradId, angleDeg){
+  var l = layers.find(function(x){return x.id === layerId;});
+  if(!l || l.type !== 'svg' || !l.svgText) return;
+  _svgApplyLayerTextChange(l, _svgSetGradientAngle(l.svgText, gradId, angleDeg));
+}
+function svgRevertGradientForLayer(layerId, gradId){
+  var l = layers.find(function(x){return x.id === layerId;});
+  if(!l || l.type !== 'svg' || !l.svgText) return;
+  _svgApplyLayerTextChange(l, _svgRevertGradientToSolid(l.svgText, gradId));
+  renderProps();
+}
+
 function replaceSvgSwatchColor(svgText, swatch, newHex){
   if(!swatch || !newHex) return svgText;
   if(swatch.kind === 'fill' || swatch.kind === 'stroke'){
@@ -11622,18 +11815,62 @@ function buildSvgProps(l){
         + '<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Click a swatch to change one color, or apply a full brand palette below.</div>'
         + '<div style="margin-bottom:4px;">' + brandButtons + '</div>'
         + '<div style="text-align:right;margin-bottom:8px;"><a href="#" onclick="event.preventDefault();openBrandPaletteEditor(\'' + defaultEditBrand + '\');" style="font-size:10px;color:var(--muted);text-decoration:underline;">⚙ Customize brand palettes…</a></div>';
+      // v359: stroke width slider — only shown when the SVG has any strokes at all. Seeds the
+      // slider from the first stroke-width in the document; range 0–20 covers everything from
+      // hairline to heavy outline. Setting to 0 effectively hides outlines without deleting
+      // them, so the user can dial back if they overshoot.
+      if(_svgHasAnyStroke(l.svgText)){
+        var initSw = _svgGetInitialStrokeWidth(l.svgText);
+        recolorHtml += '<div style="margin-bottom:8px;padding:8px;background:#fafafa;border:1px solid var(--border);border-radius:6px;">'
+          + '<label style="font-size:10px;color:var(--muted);font-weight:600;">Outline width</label>'
+          + '<div style="display:flex;gap:6px;align-items:center;margin-top:2px;">'
+            + '<input type="range" class="psvg-strokewidth" min="0" max="20" step="0.5" value="' + initSw + '" style="flex:1;">'
+            + '<span class="psvg-strokewidth-v" style="font-size:11px;font-weight:600;color:var(--text);min-width:32px;text-align:right;">' + initSw + '</span>'
+          + '</div>'
+          + '<div style="font-size:10px;color:var(--muted);margin-top:2px;">Applies to every stroked element. Set to 0 to hide outlines.</div>'
+        + '</div>';
+      }
+      // v359: per-swatch controls. `swatchRow(sw)` renders one row; solid fill/stroke swatches
+      // get an extra "→ Gradient" button that converts that color into a 2-stop linear gradient
+      // in-place (stops start at the same color; the newly-created stops appear in the group
+      // list below where the user can edit them). Stop swatches (kind === 'stop') don't get
+      // the gradient button — they ARE the gradient.
       function swatchRow(sw){
-        // Each swatch: little color preview (clickable color input) + label
+        var toGradientBtn = (sw.kind === 'fill' || sw.kind === 'stroke')
+          ? '<button type="button" class="psvg-to-gradient" data-key="' + escAttr(sw.key) + '" title="Convert this solid color to a 2-stop linear gradient — edit the stops in the group that appears below" style="flex:0 0 auto;font-size:10px;padding:2px 6px;border:1px dashed var(--border);border-radius:4px;background:none;cursor:pointer;color:var(--muted);">→ 🌈</button>'
+          : '';
         return '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
           + '<input type="color" class="psvg-swatch" data-key="' + escAttr(sw.key) + '" value="' + sw.currentHex + '" '
           +     'style="width:28px;height:22px;padding:0;border:1px solid var(--border);border-radius:4px;cursor:pointer;background:transparent;">'
           + '<span style="font-size:10px;color:#444;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escAttr(sw.label) + '</span>'
+          + toGradientBtn
           + '</div>';
+      }
+      // v359: after each app-generated gradient's stop group, expose an angle slider + revert
+      // button. Detects generated gradients by the `_smim_grad_` id prefix — user-authored
+      // gradients (from Illustrator etc.) aren't guaranteed to have simple 2-stop linear
+      // geometry, so we don't offer angle control on those.
+      var generatedIds = _svgListGeneratedGradientIds(l.svgText);
+      function generatedControlsFor(gLabel){
+        var match = gLabel.match(/"([^"]+)"/);
+        if(!match) return '';
+        var gradId = match[1];
+        if(generatedIds.indexOf(gradId) < 0) return '';
+        var angle = _svgGetGradientAngle(l.svgText, gradId);
+        return '<div style="padding:6px 8px;margin:4px 0 8px;background:#fafafa;border:1px solid var(--border);border-radius:6px;">'
+          + '<div style="display:flex;gap:6px;align-items:center;">'
+            + '<label style="font-size:10px;color:var(--muted);font-weight:600;">Angle</label>'
+            + '<input type="range" class="psvg-grad-angle" data-grad="' + escAttr(gradId) + '" min="0" max="359" step="1" value="' + angle + '" style="flex:1;">'
+            + '<span class="psvg-grad-angle-v" data-grad="' + escAttr(gradId) + '" style="font-size:11px;font-weight:600;color:var(--text);min-width:32px;text-align:right;">' + angle + '°</span>'
+          + '</div>'
+          + '<button type="button" class="psvg-grad-revert" data-grad="' + escAttr(gradId) + '" style="width:100%;margin-top:4px;font-size:10px;padding:3px 6px;border:1px dashed var(--border);border-radius:4px;background:none;cursor:pointer;color:var(--muted);" title="Revert this gradient back to a solid color (uses the first stop\'s color)">↩ Revert to solid</button>'
+        + '</div>';
       }
       ungrouped.forEach(function(sw){ recolorHtml += swatchRow(sw); });
       Object.keys(groups).forEach(function(gLabel){
         recolorHtml += '<div style="font-size:10px;color:var(--muted);margin-top:6px;margin-bottom:2px;font-style:italic;">' + escAttr(gLabel) + '</div>';
         groups[gLabel].forEach(function(sw){ recolorHtml += swatchRow(sw); });
+        recolorHtml += generatedControlsFor(gLabel);
       });
       recolorHtml += '</div>';
     }
@@ -12426,6 +12663,34 @@ function bindPropEvents(layer){
         newImg.src = layer.url;
         // Don't rebuild the property panel here — the user might be picking another swatch and a
         // panel rebuild would close the still-open native color picker on some browsers.
+      });
+    });
+    // v359: stroke width slider. `input` updates the numeric label on every tick (cheap DOM
+    // write) so drag feels responsive; `change` fires on release and does the actual svgText
+    // mutation + blob-URL rebuild. Avoids dozens of intermediate blob URLs from a single drag.
+    document.querySelectorAll('.psvg-strokewidth').forEach(function(inp){
+      var labelEl = document.querySelector('.psvg-strokewidth-v');
+      inp.addEventListener('input',  function(){ if(labelEl) labelEl.textContent = inp.value; });
+      inp.addEventListener('change', function(){ svgSetStrokeWidth(layer.id, +inp.value); });
+    });
+    // v359: "→ gradient" buttons on solid fill/stroke swatches. Rebuilds the panel afterward
+    // so the new gradient's stops appear in the group list where the user can edit colors.
+    document.querySelectorAll('.psvg-to-gradient').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        svgConvertSolidSwatchToGradient(layer.id, btn.getAttribute('data-key'));
+      });
+    });
+    // v359: angle sliders for app-generated linear gradients. Same input/change split as the
+    // stroke-width slider.
+    document.querySelectorAll('.psvg-grad-angle').forEach(function(inp){
+      var g = inp.getAttribute('data-grad');
+      var labelEl = document.querySelector('.psvg-grad-angle-v[data-grad="' + g + '"]');
+      inp.addEventListener('input',  function(){ if(labelEl) labelEl.textContent = inp.value + '°'; });
+      inp.addEventListener('change', function(){ svgSetGradientAngleForLayer(layer.id, g, +inp.value); });
+    });
+    document.querySelectorAll('.psvg-grad-revert').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        svgRevertGradientForLayer(layer.id, btn.getAttribute('data-grad'));
       });
     });
   } else if(layer.type==='video'){
