@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v356</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v357</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -953,6 +953,14 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     <h2>Add to library</h2>
     <div id="uploadBrandCount" style="font-size:12px;color:var(--muted);margin-bottom:14px;"></div>
     <div style="display:flex;flex-direction:column;gap:14px;">
+      <!-- v357: name override for single-file uploads. Hidden when the batch has more than one
+           file since one shared name across many files would be misleading. Pre-filled with the
+           file basename (extension stripped) so a blank submit still gives a sensible display
+           name — matching the pre-v357 default. -->
+      <div id="uploadNameField">
+        <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">Name</label>
+        <input type="text" id="uploadNameInput" autocomplete="off" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;" placeholder="What the file will be called in the library">
+      </div>
       <div>
         <label style="display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;">Brand</label>
         <select id="uploadBrandSelect" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:#fff;">
@@ -19297,6 +19305,11 @@ function handleLibraryUpload(event){
   if(svgCount) parts.push(svgCount + ' SVG' + (svgCount === 1 ? '' : 's'));
   if(vidCount) parts.push(vidCount + ' video' + (vidCount === 1 ? '' : 's'));
   document.getElementById('uploadBrandCount').textContent = parts.join(' + ') + ' selected';
+  // v357: name field. Only meaningful when the batch has exactly one file — a shared name
+  // across many files would either silently apply to just the first or produce N copies with
+  // identical display names. Pre-fill with the file basename (extension stripped) so a blank
+  // submit still gives the pre-v357 default.
+  _resetUploadNameField(files.length === 1 ? files[0] : null);
   // v342: populate the brand + category selects, preselecting whatever the library filter is
   // currently set to. Users often filter to a specific brand/category before uploading precisely
   // because they want the new items in that bucket.
@@ -19322,6 +19335,38 @@ function handleLibraryUpload(event){
 
 // v342: rebuild the upload-modal category dropdown from _libraryCategoriesCache. Preselects the
 // current library filter's category if it points at a real (non-Uncategorized) row.
+// v357: reset the Name field on modal open. `singletonHint` is either a File (single-file
+// batch — pre-fill the input with its basename and show the field) or null (batch of >1 —
+// hide the field entirely so the user can't set a shared name across many uploads).
+function _resetUploadNameField(singletonHint){
+  var wrap = document.getElementById('uploadNameField');
+  var inp  = document.getElementById('uploadNameInput');
+  if(!wrap || !inp){ return; }
+  if(singletonHint){
+    // File.name is `dog-tongue.jpeg`; strip the extension to match how displayName gets
+    // derived downstream when the user leaves the field blank.
+    var base = (singletonHint.name || 'Untitled').replace(/\.[^.]+$/, '');
+    inp.value = base;
+    wrap.classList.remove('hidden');
+    wrap.style.display = '';
+  } else {
+    inp.value = '';
+    wrap.style.display = 'none';
+  }
+}
+
+// v357: variant used by the layer-panel entry points (addImageLayerToLibrary /
+// addSvgLayerToLibrary) — those upload one synthetic File and want to pre-fill with the
+// layer's name, not the auto-generated `image.png` / `svg.svg` filename.
+function _resetUploadNameFieldFromLayer(layerName){
+  var wrap = document.getElementById('uploadNameField');
+  var inp  = document.getElementById('uploadNameInput');
+  if(!wrap || !inp){ return; }
+  inp.value = (layerName || '').trim();
+  wrap.classList.remove('hidden');
+  wrap.style.display = '';
+}
+
 function populateUploadCategorySelect(){
   var sel = document.getElementById('uploadCategorySelect');
   if(!sel) return;
@@ -19342,6 +19387,25 @@ function populateUploadCategorySelect(){
     if(preId != null && c.id === preId) opt.selected = true;
     sel.appendChild(opt);
   });
+  // v357: self-heal an empty cache. The library-modal entry point populates
+  // _libraryCategoriesCache when it opens, but the layer-panel entry points
+  // (addImageLayerToLibrary, addSvgLayerToLibrary) open the upload modal DIRECTLY without
+  // first touching the library — so on a fresh session the cache is empty and the dropdown
+  // shows nothing but "— Uncategorized —". If empty and the user is signed in, fetch and
+  // re-populate. Best-effort: on failure the dropdown just stays uncategorized-only.
+  if(!_libraryCategoriesCache.length && sb && currentUser && typeof cloudListLibraryCategories === 'function'){
+    cloudListLibraryCategories().then(function(cats){
+      _libraryCategoriesCache = cats || [];
+      // Re-run only if the modal is still open (the user may have cancelled while the
+      // fetch was in flight); no need to fight for a select they no longer see.
+      var modal = document.getElementById('uploadBrandModal');
+      if(modal && !modal.classList.contains('hidden')){
+        populateUploadCategorySelect();
+      }
+    }).catch(function(e){
+      console.warn('[upload] category fetch failed:', e);
+    });
+  }
 }
 
 // v342: inline "create a new category" flow inside the upload modal. Prompts for a name, creates
@@ -19388,7 +19452,16 @@ function confirmUploadBrandCategory(){
   // v345: manual date override for the whole batch. Blank input → null → auto-detect runs.
   var dateInp = document.getElementById('uploadDateInput');
   var batchDateIso = _dateInputToIso(dateInp ? dateInp.value : '');
-  runLibraryUpload(brand, categoryId, batchTags, batchDateIso);
+  // v357: read the optional Name override. Only meaningful for single-file batches; the input
+  // is hidden when >1 file is queued. Blank input → null → runLibraryUpload falls back to the
+  // pre-v357 default (file basename with extension stripped).
+  var nameInp = document.getElementById('uploadNameInput');
+  var nameOverride = null;
+  if(nameInp){
+    var raw = (nameInp.value || '').trim();
+    if(raw) nameOverride = raw.slice(0, 200);
+  }
+  runLibraryUpload(brand, categoryId, batchTags, batchDateIso, nameOverride);
 }
 
 function cancelUploadBrand(){
@@ -19398,13 +19471,19 @@ function cancelUploadBrand(){
   _pendingUploadInputEl = null;
 }
 
-function runLibraryUpload(brand, categoryId, batchTags, batchDateIso){
+function runLibraryUpload(brand, categoryId, batchTags, batchDateIso, nameOverride){
   document.getElementById('uploadBrandModal').classList.add('hidden');
   var files = _pendingUploadFiles;
   var inputEl = _pendingUploadInputEl;
   _pendingUploadFiles = null;
   _pendingUploadInputEl = null;
   if(!files || !files.length) return;
+  // v357: name override only applies when the batch has exactly one file. The upload modal
+  // hides the name input for multi-file batches, but callers could still pass a value — guard
+  // here so a stale override doesn't accidentally rename the first file in a batch of many.
+  var singleName = (files.length === 1 && typeof nameOverride === 'string' && nameOverride.trim())
+    ? nameOverride.trim().slice(0, 200)
+    : null;
   // v342: category comes from the upload modal now. Callers that pass a number use it directly;
   // undefined/null falls back to the current library filter (preserves the pre-v342 behavior for
   // any external caller — none in-tree, but keeps the API forgiving).
@@ -19464,7 +19543,9 @@ function runLibraryUpload(brand, categoryId, batchTags, batchDateIso){
     // v338: video files skip the whole image-compression pipeline (their bytes stay untouched)
     // and instead generate a small poster-frame thumbnail so the library grid can preview them.
     var srcFile = fileArr[i];
-    var displayName = (srcFile.name || 'Untitled').replace(/\.[^.]+$/, '');
+    // v357: name override wins over the file-basename default for single-file batches.
+    // singleName is null for multi-file batches, so this collapses to the pre-v357 default.
+    var displayName = singleName || (srcFile.name || 'Untitled').replace(/\.[^.]+$/, '');
     if(_isVideoFile(srcFile)){
       statusEl.textContent = 'Processing video ' + (i + 1) + '/' + fileArr.length + ': ' + srcFile.name + '…';
       // v339: extract original creation date from mvhd (falls back to lastModified) in parallel
@@ -19674,6 +19755,8 @@ function addSvgLayerToLibrary(layerId){
   if(newTagInp) newTagInp.value = '';
   var dateInp = document.getElementById('uploadDateInput');
   if(dateInp) dateInp.value = '';
+  // v357: pre-fill Name with the layer's own name rather than the synthesized filename
+  _resetUploadNameFieldFromLayer(l.name || baseName);
   document.getElementById('uploadBrandModal').classList.remove('hidden');
 }
 
@@ -19699,6 +19782,24 @@ function addImageLayerToLibrary(layerId){
     _pendingUploadInputEl = null;   // no <input> to clear afterwards — we built the File ourselves
     var cnt = document.getElementById('uploadBrandCount');
     if(cnt) cnt.textContent = '1 image · "' + (l.name || baseName) + '"';
+    // v357: populate the same brand/category/tags/date resets the folder-upload path does,
+    // plus load categories on demand. Before this, only uploadBrandCount was set and the rest
+    // of the modal state was left over from a previous session (or empty on first open).
+    var brandSel = document.getElementById('uploadBrandSelect');
+    if(brandSel){
+      var preBrand = _libraryCurrentBrandFilter;
+      if(preBrand === '__none__') preBrand = '';
+      if(preBrand === 'meowi' || preBrand === 'doggi' || preBrand === 'kkz' || preBrand === '') brandSel.value = preBrand;
+      else brandSel.value = 'meowi';
+    }
+    populateUploadCategorySelect();
+    _uploadTags = [];
+    renderUploadTagsChips();
+    var newTagInp2 = document.getElementById('uploadNewTagInput');
+    if(newTagInp2) newTagInp2.value = '';
+    var dateInp2 = document.getElementById('uploadDateInput');
+    if(dateInp2) dateInp2.value = '';
+    _resetUploadNameFieldFromLayer(l.name || baseName);
     document.getElementById('uploadBrandModal').classList.remove('hidden');
   }).catch(function(e){
     console.error('[lib] prepare upload from layer failed:', e);
