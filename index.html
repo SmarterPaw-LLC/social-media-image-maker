@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v359</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v360</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1226,6 +1226,17 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     <div id="imageLibraryModeHint" class="hidden" style="padding:6px 10px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;font-size:11px;color:#664d03;margin-bottom:8px;"></div>
     <!-- v141: search bar — filters items by name (within the current category filter) -->
     <input type="text" id="imageLibrarySearch" placeholder="🔍 Search images…" autocomplete="off" oninput="renderImageLibrary()" style="width:100%;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;margin-bottom:8px;">
+    <!-- v360: "Show hidden" toggle. Only appears when the user has hidden at least one
+         category (via Manage Categories). Search + any explicit filter already bypass the
+         hidden set; this checkbox is the "I want to browse everything right now" override. -->
+    <div id="imageLibraryShowHiddenWrap" class="hidden" style="display:flex;align-items:center;gap:6px;margin:-4px 0 8px;font-size:11px;color:var(--muted);">
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+        <input type="checkbox" id="imageLibraryShowHiddenCb" onchange="toggleLibraryShowHidden()">
+        <span>Show <b id="imageLibraryShowHiddenCount">0</b> hidden categor<span id="imageLibraryShowHiddenPlural">ies</span></span>
+      </label>
+      <span style="color:var(--muted);">·</span>
+      <a href="#" onclick="event.preventDefault();openManageCategoriesModal();" style="color:var(--muted);text-decoration:underline;">Manage</a>
+    </div>
     <!-- v339: date-range filter. Filters by effective creation date = COALESCE(EXIF DateTimeOriginal
          for images / mvhd creation_time for videos, upload date). Leave both blank to disable. -->
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;">
@@ -17846,6 +17857,49 @@ function closeMarkerMenu(){
 // save will re-externalize on Save to Cloud, dedup via the same hash).
 
 var _libraryCategoriesCache = [];
+
+// v360: per-browser default-visibility set for categories. Map keyed by category id (as
+// string) → true means the category is hidden by default. Search and any explicit filter
+// (category, tag, brand, media, date) bypass this — hidden is a "default browse" affordance,
+// not a hard hide. Stored per-browser (localStorage) not per-user in cloud, so each teammate
+// can maintain their own decluttering preferences without stepping on each other.
+var _LIBRARY_HIDDEN_CATS_KEY = 'smarterimage_lib_hidden_cats';
+var _libraryShowHidden = false;   // runtime override — toolbar checkbox toggles this
+
+function _libraryLoadHiddenCats(){
+  try {
+    var raw = localStorage.getItem(_LIBRARY_HIDDEN_CATS_KEY);
+    if(!raw) return {};
+    var parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch(e){ return {}; }
+}
+function _librarySaveHiddenCats(map){
+  try { localStorage.setItem(_LIBRARY_HIDDEN_CATS_KEY, JSON.stringify(map || {})); return true; }
+  catch(e){ console.warn('[lib-hidden] save failed:', e); return false; }
+}
+function _libraryIsCategoryHidden(catId){
+  if(catId == null) return false;   // Uncategorized is never hidden by default
+  return !!_libraryLoadHiddenCats()[String(catId)];
+}
+function _libraryHiddenCategoryCount(){
+  var m = _libraryLoadHiddenCats();
+  var n = 0;
+  for(var k in m){ if(m[k]) n++; }
+  return n;
+}
+function _librarySetCategoryHidden(catId, hidden){
+  if(catId == null) return;
+  var map = _libraryLoadHiddenCats();
+  if(hidden) map[String(catId)] = true;
+  else delete map[String(catId)];
+  _librarySaveHiddenCats(map);
+}
+function toggleLibraryShowHidden(){
+  var cb = document.getElementById('imageLibraryShowHiddenCb');
+  _libraryShowHidden = !!(cb && cb.checked);
+  renderImageLibrary();
+}
 var _libraryItemsCache = [];     // v142: all items, fetched once per modal-open + refreshed on mutations
 var _libraryAllTagsCache = [];   // v142: unique sorted tag list for the filter dropdown
 var _libraryVisibleItems = [];   // v152: last-rendered filtered set, used by Download ZIP
@@ -19069,12 +19123,46 @@ function renderImageLibrary(){
       if(dateToMs   != null && t > dateToMs)   return false;
       return true;
     }
+    // v360: hidden-by-default categories. Applied AFTER the AND/OR reduction because "hidden"
+    // isn't a user filter — it's a default-view affordance that both search and any explicit
+    // filter should bypass. If the user searched, picked a category, tag, brand, media, or
+    // date filter, or flipped the "Show hidden" toggle, hidden items pass through.
+    var anyExplicitFilter = !!(
+      searchQ ||
+      _libraryCurrentFilter !== '' ||
+      _libraryCurrentTagFilter ||
+      _libraryCurrentBrandFilter !== '' ||
+      mediaVal ||
+      dateFromMs != null || dateToMs != null
+    );
+    var applyHiddenFilter = !_libraryShowHidden && !anyExplicitFilter;
+    // v360: sync the toolbar "Show hidden" checkbox visibility + count. Only shown when the
+    // user has hidden ≥1 category so it doesn't add UI noise for anyone who never uses the
+    // feature. Checkbox state reflects `_libraryShowHidden` so it stays in sync across
+    // renders (e.g., after a category was hidden/unhidden from Manage Categories).
+    (function(){
+      var wrap = document.getElementById('imageLibraryShowHiddenWrap');
+      if(!wrap) return;
+      var n = _libraryHiddenCategoryCount();
+      if(!n){ wrap.classList.add('hidden'); return; }
+      wrap.classList.remove('hidden');
+      var cb = document.getElementById('imageLibraryShowHiddenCb');
+      if(cb) cb.checked = _libraryShowHidden;
+      var countEl = document.getElementById('imageLibraryShowHiddenCount');
+      if(countEl) countEl.textContent = String(n);
+      var pluralEl = document.getElementById('imageLibraryShowHiddenPlural');
+      if(pluralEl) pluralEl.textContent = (n === 1) ? 'y' : 'ies';
+    })();
     var visible = items.filter(function(it){
       var results = [checkBrand(it), checkMedia(it), checkCategory(it), checkTag(it), checkSearch(it), checkDate(it)];
       var active = results.filter(function(r){ return r !== null; });
-      if(!active.length) return true;   // no filters set → everything passes
-      if(_libraryMatchMode === 'OR') return active.some(function(r){ return r === true; });
-      return active.every(function(r){ return r === true; });
+      var passesFilters;
+      if(!active.length) passesFilters = true;
+      else if(_libraryMatchMode === 'OR') passesFilters = active.some(function(r){ return r === true; });
+      else passesFilters = active.every(function(r){ return r === true; });
+      if(!passesFilters) return false;
+      if(applyHiddenFilter && _libraryIsCategoryHidden(it.category_id)) return false;
+      return true;
     });
     _libraryVisibleItems = visible;  // v152: cache for the Download ZIP button
 
@@ -22458,15 +22546,31 @@ function renderManageCategoriesList(){
   var sorted = _libraryCategoriesCache.slice().sort(function(a, b){ return a.name.localeCompare(b.name); });
   sorted.forEach(function(c){
     var count = usage[String(c.id)] || 0;
+    var isHidden = _libraryIsCategoryHidden(c.id);
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border:1.5px solid var(--border);border-radius:6px;background:#fafafa;';
+    // v360: "Show by default" checkbox. Checked = category shows in the default library view;
+    // unchecked = hidden by default (search + explicit filters still find items in it). This
+    // is a per-browser preference (localStorage) — teammates can maintain their own.
     row.innerHTML =
-      '<div style="flex:1;min-width:0;">'
+      '<label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;font-size:11px;color:var(--muted);" title="When unchecked, this category is hidden from the default library view. Search still finds its images.">'
+        + '<input type="checkbox" data-action="visible"' + (isHidden ? '' : ' checked') + '>'
+        + '<span>Show</span>'
+      + '</label>'
+      + '<div style="flex:1;min-width:0;">'
         + '<b style="font-size:13px;word-break:break-word;">' + escAttr(c.name) + '</b>'
-        + '<div style="font-size:10px;color:var(--muted);margin-top:1px;">' + count + ' image' + (count === 1 ? '' : 's') + '</div>'
+        + '<div style="font-size:10px;color:var(--muted);margin-top:1px;">' + count + ' image' + (count === 1 ? '' : 's') + (isHidden ? ' · <span style="color:#a86000;">hidden by default</span>' : '') + '</div>'
       + '</div>'
       + '<button type="button" class="btn-sm" data-action="rename" title="Rename this category" style="flex-shrink:0;">Rename</button>'
       + '<button type="button" class="btn-sm danger" data-action="delete" title="Delete category (images move to Uncategorized)" style="flex-shrink:0;">Delete</button>';
+    row.querySelector('[data-action="visible"]').onchange = function(e){
+      _librarySetCategoryHidden(c.id, !e.target.checked);
+      renderManageCategoriesList();   // re-render this modal so the "hidden by default" hint appears
+      // Refresh the underlying library too so the change is reflected immediately (grid + toolbar)
+      if(!document.getElementById('imageLibraryModal').classList.contains('hidden')){
+        renderImageLibrary();
+      }
+    };
     row.querySelector('[data-action="rename"]').onclick = function(){ doRenameCategory(c); };
     row.querySelector('[data-action="delete"]').onclick = function(){ doDeleteCategory(c, count); };
     container.appendChild(row);
