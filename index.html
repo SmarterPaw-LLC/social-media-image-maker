@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v360</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v361</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1145,7 +1145,18 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
 <div class="modal-overlay hidden" id="imageLibraryModal">
   <div class="modal" style="max-width:760px;width:90vw;">
-    <h2>📚 Image Library</h2>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
+      <h2 style="margin:0;">📚 Image Library</h2>
+      <div style="flex:1;"></div>
+      <!-- v361: view-mode toggle. Grid (default) is the flat filterable grid; Media Viewer is
+           a hierarchical brand → category → items-by-date browser. Hash-routing keeps both
+           addressable so a link can point to a specific view. -->
+      <div class="match-toggle" id="libraryViewModeToggle">
+        <button type="button" id="libraryViewGridBtn" onclick="setLibraryViewMode('grid')" title="Filterable grid of every library item" class="active">▦ Grid</button>
+        <button type="button" id="libraryViewViewerBtn" onclick="setLibraryViewMode('viewer')" title="Browse by brand → category, sorted by creation date">📂 Media Viewer</button>
+      </div>
+      <button type="button" onclick="copyLibraryLink()" title="Copy a shareable link to the library view you're currently in — teammates opening the link land in the same view" style="padding:5px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:11px;background:#fff;cursor:pointer;">🔗 Copy link</button>
+    </div>
     <!-- v170: toolbar reorganized into three stacked filter rows + an actions row so the
          relationships are visually grouped:
            1) Category row — filter + Manage Categories
@@ -1250,6 +1261,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     <div id="imageLibraryStatus" class="hidden" style="padding:8px 10px;background:#f4faf4;border:1px solid #d5e8bc;border-radius:6px;font-size:12px;color:#3a5e10;margin-bottom:8px;"></div>
     <div id="imageLibraryGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:8px;max-height:480px;overflow-y:auto;padding:4px;">
       <!-- populated by renderImageLibrary() -->
+    </div>
+    <!-- v361: Media Viewer container — hidden in Grid mode. Renders brand tiles at root,
+         category tiles inside a brand, and a chronological item list inside a category.
+         Populated by renderMediaViewer(). -->
+    <div id="mediaViewerContainer" class="hidden" style="max-height:520px;overflow-y:auto;">
+      <div id="mediaViewerBreadcrumb" style="display:flex;align-items:center;gap:6px;padding:8px 4px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);margin-bottom:8px;"></div>
+      <div id="mediaViewerContent" style="padding:4px;"></div>
     </div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeImageLibraryModal()">Close</button>
@@ -3470,6 +3488,13 @@ window.addEventListener('DOMContentLoaded',function(){
       console.warn('[perf] session restore failed:', e);
     });
   }
+  // v361: if the URL includes a #library hash (with an optional viewer path), open the library
+  // modal at that view. Runs after the auth boot poll has had a moment to seed currentUser —
+  // _openLibraryFromHash itself waits on the async items fetch that openImageLibraryModal kicks
+  // off, so the drill-down can render at whatever brand/category the link named.
+  setTimeout(function(){
+    if(typeof _openLibraryFromHash === 'function') _openLibraryFromHash();
+  }, 500);
 });
 
 // ── UNDO HISTORY ──
@@ -18972,6 +18997,10 @@ function openImageLibraryModal(arg){
     _libraryCategoriesCache = cats;
     populateLibraryCategoryFilter();
     renderImageLibrary();
+    // v361: reapply the current view mode so if we're in Media Viewer (via a link or a prior
+    // session) the viewer container gets rendered too. renderImageLibrary above populates the
+    // items cache the viewer reads. Use skipHash so we don't rewrite the hash unnecessarily.
+    setLibraryViewMode(_libraryViewMode, {skipHash: true});
   }).catch(function(e){
     console.error('[lib] load categories failed:', e);
     // v323: detect JWT-expired and surface a one-click refresh instead of leaving the user
@@ -18998,6 +19027,283 @@ function closeImageLibraryModal(){
   _libraryPickCallback = null;
   // v147: reset to default pick mode so the next open isn't unexpectedly in manage mode
   _libraryMode = 'pick';
+  // v361: clear the hash so a subsequent reload doesn't reopen the library
+  if(location.hash && location.hash.indexOf('#library') === 0){
+    _libraryUpdatingHash = true;
+    try { history.replaceState(null, '', location.pathname + location.search); }
+    catch(_){ location.hash = ''; }
+    _libraryUpdatingHash = false;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// v361: Media Viewer — hierarchical brand → category → items-by-date browser
+// as an alternate view inside the library modal. Plus URL hash routing so the
+// library (and a specific viewer path) can be opened at a link.
+//
+// Hash formats:
+//   #library                       Grid mode
+//   #library/viewer                Viewer at root (brand tiles)
+//   #library/viewer/{brand}        Viewer inside a brand (category tiles)
+//   #library/viewer/{brand}/{catId}  Viewer inside a category (item list by date)
+//
+// Where {brand} is 'meowi' | 'doggi' | 'kkz' | 'none' (No brand), and {catId} is
+// the numeric category id (or '0' for Uncategorized).
+// ══════════════════════════════════════════════════════════════════════════
+
+var _libraryViewMode = 'grid';   // 'grid' | 'viewer'
+var _mediaViewerPath = { brand: null, categoryId: null };
+var _libraryUpdatingHash = false;   // guard so hashchange doesn't reentrantly re-open
+
+function setLibraryViewMode(mode, opts){
+  opts = opts || {};
+  if(mode !== 'grid' && mode !== 'viewer') mode = 'grid';
+  _libraryViewMode = mode;
+  var gridBtn   = document.getElementById('libraryViewGridBtn');
+  var viewerBtn = document.getElementById('libraryViewViewerBtn');
+  if(gridBtn)   gridBtn.classList.toggle('active',   mode === 'grid');
+  if(viewerBtn) viewerBtn.classList.toggle('active', mode === 'viewer');
+  var gridEl   = document.getElementById('imageLibraryGrid');
+  var viewerEl = document.getElementById('mediaViewerContainer');
+  if(mode === 'grid'){
+    if(gridEl)   gridEl.classList.remove('hidden');
+    if(viewerEl) viewerEl.classList.add('hidden');
+    renderImageLibrary();
+  } else {
+    if(gridEl)   gridEl.classList.add('hidden');
+    if(viewerEl) viewerEl.classList.remove('hidden');
+    renderMediaViewer();
+  }
+  if(!opts.skipHash) _updateLibraryHash();
+}
+
+function mediaViewerNavigate(brand, catId, opts){
+  opts = opts || {};
+  _mediaViewerPath.brand = (brand === undefined) ? _mediaViewerPath.brand : brand;
+  _mediaViewerPath.categoryId = (catId === undefined) ? _mediaViewerPath.categoryId : catId;
+  renderMediaViewer();
+  if(!opts.skipHash) _updateLibraryHash();
+}
+
+// v361: pretty labels + counts for the drill-down. Runs cheaply off the already-loaded
+// _libraryItemsCache — no extra network hops. `null` brand key means "No brand"; `null`
+// categoryId means "Uncategorized". Items in a hidden category still get counted here — the
+// hidden-by-default rule is a Grid-view affordance; Media Viewer surfaces everything so users
+// looking through the brand hierarchy don't wonder where things went.
+var _MEDIA_VIEWER_BRAND_LABELS = {
+  meowi: 'Meowijuana',
+  doggi: 'Doggijuana',
+  kkz:   'Kitty Ka-Zoom',
+  none:  '(No brand)'
+};
+function _mediaViewerBrandLabel(key){ return _MEDIA_VIEWER_BRAND_LABELS[key] || '(No brand)'; }
+function _mediaViewerCategoryLabel(catId){
+  if(catId == null || catId === '0') return '(Uncategorized)';
+  var c = (_libraryCategoriesCache || []).find(function(x){ return String(x.id) === String(catId); });
+  return c ? c.name : '(Category #' + catId + ')';
+}
+function _mediaViewerItemMatchesBrand(item, brandKey){
+  if(brandKey === 'none') return !item.brand;
+  return item.brand === brandKey;
+}
+function _mediaViewerItemMatchesCategory(item, catId){
+  if(catId == null || catId === '0') return item.category_id == null;
+  return String(item.category_id) === String(catId);
+}
+
+function renderMediaViewer(){
+  var content = document.getElementById('mediaViewerContent');
+  var crumb   = document.getElementById('mediaViewerBreadcrumb');
+  if(!content || !crumb) return;
+  if(!currentUser){
+    content.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:12px;">Sign in to browse the library.</div>';
+    crumb.innerHTML = '';
+    return;
+  }
+  var items = _libraryItemsCache || [];
+  // Breadcrumb
+  var crumbHtml = '<a href="#" onclick="event.preventDefault();mediaViewerNavigate(null,null);" style="color:var(--muted);text-decoration:none;font-weight:600;">📚 Library</a>';
+  if(_mediaViewerPath.brand){
+    crumbHtml += '<span>›</span>';
+    if(_mediaViewerPath.categoryId != null){
+      crumbHtml += '<a href="#" onclick="event.preventDefault();mediaViewerNavigate(\'' + escAttr(_mediaViewerPath.brand) + '\',null);" style="color:var(--muted);text-decoration:none;">' + escAttr(_mediaViewerBrandLabel(_mediaViewerPath.brand)) + '</a>';
+      crumbHtml += '<span>›</span>';
+      crumbHtml += '<b style="color:var(--text);">' + escAttr(_mediaViewerCategoryLabel(_mediaViewerPath.categoryId)) + '</b>';
+    } else {
+      crumbHtml += '<b style="color:var(--text);">' + escAttr(_mediaViewerBrandLabel(_mediaViewerPath.brand)) + '</b>';
+    }
+  }
+  crumb.innerHTML = crumbHtml;
+  // Level 1: brand tiles
+  if(!_mediaViewerPath.brand){
+    var brandKeys = ['meowi', 'doggi', 'kkz', 'none'];
+    var brandCounts = {meowi:0, doggi:0, kkz:0, none:0};
+    items.forEach(function(it){
+      var k = it.brand || 'none';
+      if(brandCounts[k] != null) brandCounts[k]++;
+      else brandCounts.none++;
+    });
+    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;">';
+    brandKeys.forEach(function(k){
+      var n = brandCounts[k] || 0;
+      html += '<div class="mv-tile" onclick="mediaViewerNavigate(\'' + k + '\',null)" style="border:1.5px solid var(--border);border-radius:8px;padding:16px 12px;text-align:center;cursor:pointer;background:#fff;transition:transform .12s,border-color .12s;" onmouseover="this.style.borderColor=\'var(--green)\';this.style.transform=\'translateY(-2px)\';" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'\';">'
+        + '<div style="font-size:24px;line-height:1;margin-bottom:6px;">' + (k === 'none' ? '📁' : '🏷') + '</div>'
+        + '<div style="font-size:13px;font-weight:700;color:var(--text);">' + escAttr(_mediaViewerBrandLabel(k)) + '</div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + n + ' item' + (n === 1 ? '' : 's') + '</div>'
+      + '</div>';
+    });
+    html += '</div>';
+    content.innerHTML = html;
+    return;
+  }
+  // Level 2: category tiles inside a brand
+  if(_mediaViewerPath.categoryId == null){
+    var brandItems = items.filter(function(it){ return _mediaViewerItemMatchesBrand(it, _mediaViewerPath.brand); });
+    if(!brandItems.length){
+      content.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:12px;">No items in ' + escAttr(_mediaViewerBrandLabel(_mediaViewerPath.brand)) + '.</div>';
+      return;
+    }
+    // Group items into categories; catId key '__none__' for Uncategorized so numeric ids
+    // sort naturally alongside without a mixed-type comparison.
+    var catCounts = {};
+    brandItems.forEach(function(it){
+      var k = (it.category_id == null) ? '__none__' : String(it.category_id);
+      catCounts[k] = (catCounts[k] || 0) + 1;
+    });
+    // Build the list: seen categories in this brand, sorted by name (Uncategorized last)
+    var rows = Object.keys(catCounts).map(function(k){
+      return { key: k, label: (k === '__none__') ? '(Uncategorized)' : _mediaViewerCategoryLabel(k), n: catCounts[k] };
+    });
+    rows.sort(function(a, b){
+      if(a.key === '__none__') return 1;
+      if(b.key === '__none__') return -1;
+      return a.label.localeCompare(b.label);
+    });
+    var html2 = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;">';
+    rows.forEach(function(r){
+      var navKey = (r.key === '__none__') ? '0' : r.key;
+      html2 += '<div class="mv-tile" onclick="mediaViewerNavigate(\'' + escAttr(_mediaViewerPath.brand) + '\',\'' + escAttr(navKey) + '\')" style="border:1.5px solid var(--border);border-radius:8px;padding:14px 12px;text-align:center;cursor:pointer;background:#fff;transition:transform .12s,border-color .12s;" onmouseover="this.style.borderColor=\'var(--green)\';this.style.transform=\'translateY(-2px)\';" onmouseout="this.style.borderColor=\'var(--border)\';this.style.transform=\'\';">'
+        + '<div style="font-size:22px;line-height:1;margin-bottom:6px;">📂</div>'
+        + '<div style="font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escAttr(r.label) + '</div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + r.n + ' item' + (r.n === 1 ? '' : 's') + '</div>'
+      + '</div>';
+    });
+    html2 += '</div>';
+    content.innerHTML = html2;
+    return;
+  }
+  // Level 3: items in this brand + category, sorted by effective creation date (original_created_at
+  // if present, otherwise upload date) descending — newest first.
+  var leafItems = items.filter(function(it){
+    return _mediaViewerItemMatchesBrand(it, _mediaViewerPath.brand)
+        && _mediaViewerItemMatchesCategory(it, _mediaViewerPath.categoryId);
+  }).slice().sort(function(a, b){
+    var ta = new Date(a.original_created_at || a.created_at || 0).getTime() || 0;
+    var tb = new Date(b.original_created_at || b.created_at || 0).getTime() || 0;
+    return tb - ta;
+  });
+  if(!leafItems.length){
+    content.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:12px;">No items in this category.</div>';
+    return;
+  }
+  var html3 = '<div style="display:flex;flex-direction:column;gap:6px;">';
+  leafItems.forEach(function(item){
+    var url = cloudGetLibraryItemPublicUrl(item.storage_path);
+    var thumbSrc = _libraryItemIsVideo(item) ? (item.thumbnail_data_uri || '') : url;
+    var isSvg = _libraryItemIsSvg(item);
+    var typeIcon = _libraryItemIsVideo(item) ? '🎬' : (isSvg ? '◇' : '📷');
+    var effIso = item.original_created_at || item.created_at;
+    var dateStr = '';
+    if(effIso){
+      var d = new Date(effIso);
+      if(!isNaN(d.getTime())){
+        var mo = d.getUTCMonth() + 1, day = d.getUTCDate(), y = d.getUTCFullYear();
+        dateStr = (mo < 10 ? '0' + mo : mo) + '/' + (day < 10 ? '0' + day : day) + '/' + y;
+      }
+    }
+    var sizeStr = item.file_size_bytes ? _formatBytes(item.file_size_bytes) : '';
+    var tagsStr = (item.tags && item.tags.length) ? ('🏷 ' + item.tags.join(', ')) : '';
+    var metaParts = [dateStr, sizeStr, tagsStr].filter(Boolean).join(' · ');
+    var thumbHtml = thumbSrc
+      ? '<img src="' + escAttr(thumbSrc) + '" loading="lazy" decoding="async" style="width:56px;height:56px;object-fit:cover;border-radius:4px;background:#f4f4f0;flex-shrink:0;" alt="">'
+      : '<div style="width:56px;height:56px;border-radius:4px;background:#f4f4f0;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;">' + typeIcon + '</div>';
+    html3 += '<div class="mv-row" onclick="pickLibraryItem(' + JSON.stringify(item).replace(/"/g, '&quot;') + ')" style="display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;transition:border-color .12s, background .12s;" onmouseover="this.style.borderColor=\'var(--green)\';this.style.background=\'#f4faf4\';" onmouseout="this.style.borderColor=\'var(--border)\';this.style.background=\'#fff\';">'
+      + thumbHtml
+      + '<div style="flex:1;min-width:0;">'
+        + '<div style="font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + typeIcon + ' ' + escAttr(item.name || 'Untitled') + '</div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escAttr(metaParts) + '</div>'
+      + '</div>'
+    + '</div>';
+  });
+  html3 += '</div>';
+  content.innerHTML = html3;
+}
+
+// v361: URL hash sync. Every mode/path change writes to location.hash; on page load we read
+// the hash and open the library at that state. Guarded with `_libraryUpdatingHash` so our own
+// writes don't trigger the hashchange handler and re-open the modal spuriously.
+function _updateLibraryHash(){
+  if(_libraryUpdatingHash) return;
+  var parts = ['library'];
+  if(_libraryViewMode === 'viewer'){
+    parts.push('viewer');
+    if(_mediaViewerPath.brand){
+      parts.push(_mediaViewerPath.brand);
+      if(_mediaViewerPath.categoryId != null){
+        parts.push(String(_mediaViewerPath.categoryId));
+      }
+    }
+  }
+  var newHash = '#' + parts.join('/');
+  if(location.hash !== newHash){
+    _libraryUpdatingHash = true;
+    try { history.replaceState(null, '', location.pathname + location.search + newHash); }
+    catch(_){ location.hash = newHash.slice(1); }
+    _libraryUpdatingHash = false;
+  }
+}
+
+function _openLibraryFromHash(){
+  var h = (location.hash || '').replace(/^#/, '');
+  if(!h || h.indexOf('library') !== 0) return;
+  var parts = h.split('/');
+  // parts: ['library'] | ['library','viewer'] | ['library','viewer',brand] | ['library','viewer',brand,catId]
+  var wantViewer = parts[1] === 'viewer';
+  var brand = (parts.length >= 3) ? parts[2] : null;
+  var catId = (parts.length >= 4) ? parts[3] : null;
+  // Reset viewer path first so a subsequent switch renders at the intended level
+  _mediaViewerPath.brand = brand || null;
+  _mediaViewerPath.categoryId = (catId != null && catId !== '') ? catId : null;
+  // Open the modal (this is the normal open flow — kicks off the categories/items fetch too)
+  openImageLibraryModal();
+  // Once the fetch settles, apply the mode + render — poll briefly since the fetch is async
+  var tries = 0;
+  var poll = setInterval(function(){
+    tries++;
+    if(_libraryItemsCache && _libraryItemsCache.length !== undefined){
+      clearInterval(poll);
+      setLibraryViewMode(wantViewer ? 'viewer' : 'grid', {skipHash: true});
+    } else if(tries > 40){
+      clearInterval(poll);   // give up quietly after ~4s — grid will just show empty
+    }
+  }, 100);
+}
+
+function copyLibraryLink(){
+  // Force a fresh hash write in case the current one is stale (rare, but safer than assuming)
+  _updateLibraryHash();
+  var url = location.href;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(function(){
+      if(typeof showToast === 'function') showToast('🔗 Link copied to clipboard');
+    }).catch(function(){
+      // Some browsers only allow clipboard writes from a user-gesture context if the page isn't
+      // in focus. Falling back to prompt() lets the user select + copy manually.
+      window.prompt('Copy this link:', url);
+    });
+  } else {
+    window.prompt('Copy this link:', url);
+  }
 }
 
 function populateLibraryCategoryFilter(){
