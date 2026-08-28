@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v361</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v362</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -4552,14 +4552,21 @@ function renderMyDesigns(){
     var searchQ = (searchInput ? searchInput.value : '').trim().toLowerCase();
 
     // ── Subfolder rows for the current folder (folders mode only) ──
-    var subfolders = (_myDesignsViewMode === 'folders') ? folders.filter(function(f){
-      var p = f.parent_folder_id != null ? f.parent_folder_id : null;
-      return p === _myDesignsCurrentFolderId;
-    }).sort(function(a,b){ return a.name.localeCompare(b.name); }) : [];
-    if(searchQ){
-      subfolders = subfolders.filter(function(f){
+    // v362: when a search query is active, list matching subfolders from ANYWHERE in the tree
+    // (not just the current folder's direct children). Otherwise only direct children of the
+    // current folder are shown, matching pre-v362 behavior.
+    var subfolders;
+    if(_myDesignsViewMode !== 'folders'){
+      subfolders = [];
+    } else if(searchQ){
+      subfolders = folders.filter(function(f){
         return (f.name || '').toLowerCase().indexOf(searchQ) >= 0;
-      });
+      }).sort(function(a,b){ return a.name.localeCompare(b.name); });
+    } else {
+      subfolders = folders.filter(function(f){
+        var p = f.parent_folder_id != null ? f.parent_folder_id : null;
+        return p === _myDesignsCurrentFolderId;
+      }).sort(function(a,b){ return a.name.localeCompare(b.name); });
     }
 
     subfolders.forEach(function(f){
@@ -4619,12 +4626,19 @@ function renderMyDesigns(){
 
     // v139: in 'recent' mode show every design regardless of folder; in 'folders' mode filter to
     // whichever folder the user has navigated into (autosave still only shows at root).
-    var visibleDesigns = (_myDesignsViewMode === 'recent')
-      ? merged.slice()
-      : merged.filter(function(m){
-          if(m.isAutosave) return _myDesignsCurrentFolderId == null;
-          return m.effFolderId === _myDesignsCurrentFolderId;
-        });
+    // v362: when a search query is active in folders mode, ignore the folder filter — search
+    // should surface matches from EVERY folder. Otherwise a user searching "try" would only
+    // find matches in whatever subfolder they happen to be looking at, which is what the
+    // screenshot in the report was showing (search in Root missed matches in subfolders).
+    var visibleDesigns;
+    if(_myDesignsViewMode === 'recent' || searchQ){
+      visibleDesigns = merged.slice();
+    } else {
+      visibleDesigns = merged.filter(function(m){
+        if(m.isAutosave) return _myDesignsCurrentFolderId == null;
+        return m.effFolderId === _myDesignsCurrentFolderId;
+      });
+    }
     // v141: apply search query — case-insensitive substring match against the design's name
     if(searchQ){
       visibleDesigns = visibleDesigns.filter(function(m){
