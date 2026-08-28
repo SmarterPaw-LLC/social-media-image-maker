@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v362</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v363</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -15581,6 +15581,27 @@ function drawShapeLayer(ctx,layer){
     buildShapePath(ctx, layer);
     if(hasFill) ctx.fill();
     if(layer.strokeWidth>0)ctx.stroke();
+    // v363: polaroid shape — after the outer paper rect is filled, draw an inset "photo window"
+    // in a distinct color so a standalone polaroid shape actually looks like a polaroid (white
+    // paper with a photo area) rather than a plain rounded rect. The window rect matches
+    // _getPolaroidPhotoRect's math so the geometry lines up with the framedImage's polaroid.
+    // NOTE: this only changes the RENDERED look. Using the polaroid shape as a mask still gives
+    // a plain-rectangle silhouette (masks reveal/hide by alpha — they can't paint the paper for
+    // you). For an actual polaroid-framed image, use the image layer's "🪟 Add frame" button
+    // then pick Polaroid — that runs through drawFramedImageLayer's compound path.
+    if(layer.shape === 'polaroid' && hasFill){
+      var _pBorderPct  = layer.polaroidBorder  != null ? layer.polaroidBorder  : 6;
+      var _pCaptionPct = layer.polaroidCaption != null ? layer.polaroidCaption : 22;
+      var _pBorder  = w * _pBorderPct  / 100;
+      var _pCaption = h * _pCaptionPct / 100;
+      var _pwX = x + _pBorder, _pwY = y + _pBorder;
+      var _pwW = Math.max(1, w - _pBorder * 2);
+      var _pwH = Math.max(1, h - _pBorder - _pCaption);
+      ctx.fillStyle = layer.polaroidWindowColor || '#dcdcd4';
+      ctx.beginPath();
+      ctx.rect(_pwX, _pwY, _pwW, _pwH);
+      ctx.fill();
+    }
     ctx.restore();
   });
 }
