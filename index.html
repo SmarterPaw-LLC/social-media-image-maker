@@ -387,7 +387,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v363</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v364</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -8049,7 +8049,25 @@ function loadVideoIntoNewLayer(dataUrl, filename){
   v.addEventListener('loadeddata', function(){ redraw(); });
   v.addEventListener('seeked',     function(){ redraw(); });
   v.addEventListener('error', function(e){
-    alert('Could not decode video. Make sure it is an MP4/WebM/MOV the browser supports.');
+    // v364: the generic "make sure it's a MOV the browser supports" message wasn't actionable —
+    // the actual issue is almost always codec, not container. iPhone MOVs default to HEVC/H.265
+    // which Chrome/Edge on Windows + Linux can't decode without hardware support. Point to the
+    // two recovery paths users actually have: change the iPhone recording format, or transcode
+    // the file to H.264. `.error.code` on the media element is 4 (MEDIA_ERR_SRC_NOT_SUPPORTED)
+    // for codec issues, 3 (MEDIA_ERR_DECODE) for corruption; either way the fix is the same.
+    var isMov = /\.mov$/i.test(filename || '');
+    var msg = 'Could not decode video "' + (filename || 'unknown') + '".\n\n';
+    if(isMov){
+      msg += 'iPhone MOV files are usually H.265 (HEVC), which Chrome + Edge on Windows/Linux '
+           + 'can\'t play. Two fixes:\n\n'
+           + '1. Re-record in H.264: on iPhone, Settings → Camera → Formats → Most Compatible.\n\n'
+           + '2. Convert the existing file: drag it into a free online converter, or use '
+           + 'ffmpeg (`ffmpeg -i input.mov -c:v libx264 output.mp4`). Then re-add the .mp4.';
+    } else {
+      msg += 'The file\'s codec isn\'t supported by this browser. MP4 (H.264) and WebM are the '
+           + 'safest formats — try converting first.';
+    }
+    alert(msg);
   });
 }
 
@@ -8140,6 +8158,11 @@ function buildVideoProps(l){
     +'</div>'
     +'<label style="font-size:10px;color:var(--muted);">Playhead (within clip)</label>'
     +'<input type="range" id="pvid_seek" min="'+trimStart.toFixed(3)+'" max="'+trimEnd.toFixed(3)+'" step="0.01" value="'+cur.toFixed(2)+'" oninput="seekVideoLayer('+l.id+',+this.value)">'
+    // v364: capture the current frame as a new image layer. Scrub the playhead to the moment
+    // you want, then click — we grab the current frame at the video's natural resolution,
+    // create a PNG image layer, and add it on top with a name like "Video @ 3.42s". Useful
+    // for turning a video moment into a still without leaving the tool.
+    +'<button class="btn-sm" style="width:100%;margin-top:6px;padding:6px;font-weight:600;" onclick="captureVideoFrame('+l.id+')" title="Save the current frame at the video\'s full resolution as a new image layer">📸 Capture this frame → new image layer</button>'
     +R('Trim Start (s)','pvid_trimStart', trimStart, 0, dur, 0.05)
     +R('Trim End (s)','pvid_trimEnd',   trimEnd,   0, dur, 0.05)
     +'<div style="font-size:10px;color:var(--muted);">Clip length: '+trimLen.toFixed(2)+'s · Source: '+dur.toFixed(2)+'s</div>'
@@ -8167,6 +8190,49 @@ function flipVideoLayer(id, axis){
   if(axis === 'h') l.flipH = !l.flipH;
   if(axis === 'v') l.flipV = !l.flipV;
   renderProps(); redraw();
+}
+
+// v364: grab the video's current frame as a new image layer. Draws the current playback frame
+// to an offscreen canvas at the video's natural resolution, converts to a PNG data URL, and
+// hands off to addImageLayer so it lands with the standard image-layer sizing + placement.
+// The video is same-origin (data URL) so canvas isn't tainted — toDataURL succeeds.
+function captureVideoFrame(layerId){
+  var l = layers.find(function(x){return x.id === layerId;});
+  if(!l || l.type !== 'video' || !l._video){
+    alert('No video on this layer to capture from.');
+    return;
+  }
+  var v = l._video;
+  if(!v.videoWidth || !v.videoHeight){
+    alert('Video isn\'t decoded yet — scrub the playhead to any frame first, then try again.');
+    return;
+  }
+  var off = document.createElement('canvas');
+  off.width = v.videoWidth;
+  off.height = v.videoHeight;
+  var ctx = off.getContext('2d');
+  try {
+    ctx.drawImage(v, 0, 0, v.videoWidth, v.videoHeight);
+  } catch(e){
+    alert('Could not read the current frame: ' + (e.message || e));
+    return;
+  }
+  var dataUrl;
+  try {
+    dataUrl = off.toDataURL('image/png');
+  } catch(e){
+    // Only happens if the source were cross-origin; data URLs (our loader path) don't taint.
+    alert('Frame capture blocked (canvas security): ' + (e.message || e));
+    return;
+  }
+  var img = new Image();
+  img.onload = function(){
+    var t = (v.currentTime || 0).toFixed(2);
+    var baseName = (l.name || 'Video') + ' @ ' + t + 's';
+    addImageLayer(img, baseName);
+  };
+  img.onerror = function(){ alert('Captured frame failed to load as an image.'); };
+  img.src = dataUrl;
 }
 
 // ── FRAMED IMAGE LAYER ──
