@@ -39,7 +39,8 @@ input[type=color]{width:40px;height:28px;border:1.5px solid var(--border);border
 .col3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;}
 .range-row{display:flex;gap:7px;align-items:center;}
 .range-row input[type=range]{flex:1;}
-.range-val{font-size:11px;color:var(--muted);width:28px;text-align:right;flex-shrink:0;}
+.range-val{font-size:11px;color:var(--muted);width:28px;text-align:right;flex-shrink:0;cursor:pointer;user-select:none;border-radius:3px;padding:1px 2px;transition:background 0.12s,color 0.12s;}
+.range-val:hover{background:var(--green);color:#fff;}
 .color-row{display:flex;gap:7px;align-items:center;}
 .color-row label{margin:0;flex:1;font-size:11px;}
 .size-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:7px 4px;border:2px solid var(--border);border-radius:7px;cursor:pointer;font-size:10px;font-weight:600;color:var(--muted);background:#fafafa;transition:all 0.15s;line-height:1.2;}
@@ -387,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v364</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v365</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -10832,9 +10833,50 @@ function bindCommonLayerEffectsEvents(layer){
 }
 
 function R(label,id,val,min,max,step){
+  // v365: value display is click-to-type. Every R() slider gets it for free — the tooltip +
+  // hover treatment (see .range-val CSS) advertise it. Fixes the "can't drag back to exactly 0"
+  // class of complaints (polaroid Border, mask-rotation stuck at 1, etc.) — click the number,
+  // type the exact value, Enter to commit. Also removes the "one wrong pixel and I have to
+  // start over" ceiling on wide-range sliders like Width/Height.
   return '<div style="margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">'+label+'</label>'
     +'<div class="range-row"><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+val+'">'
-    +'<span class="range-val" id="'+id+'_v">'+val+'</span></div></div>';
+    +'<span class="range-val" id="'+id+'_v" title="Click to type an exact value" onclick="_promptRangeValue(\''+id+'\')">'+val+'</span></div></div>';
+}
+
+// v365: click-a-slider-value → typed-value entry. Uses prompt() rather than inline editing so
+// there's no re-layout of the panel and no risk of interfering with the existing rng() event
+// bindings — we drive the slider element itself, dispatch the 'input' event, and every listener
+// (which reads slider.value) fires unchanged. Min/max/step from the slider bound the accepted
+// value; NaN or empty string cancels. `parseFloat` handles integer + decimal sliders uniformly.
+function _promptRangeValue(id){
+  var sl = document.getElementById(id);
+  if(!sl) return;
+  var min = parseFloat(sl.min), max = parseFloat(sl.max);
+  var cur = sl.value;
+  var raw = window.prompt('Enter value' + (isNaN(min) ? '' : ' (' + min + ' to ' + max + ')') + ':', cur);
+  if(raw == null) return;   // cancelled
+  var trimmed = String(raw).trim();
+  if(trimmed === '') return;
+  var v = parseFloat(trimmed);
+  if(isNaN(v)) return;
+  if(!isNaN(min) && v < min) v = min;
+  if(!isNaN(max) && v > max) v = max;
+  // Write to the slider and fire an InputEvent so every existing rng() handler sees the change
+  // through the same channel as a drag. Also update the `_v` span so the visible number matches
+  // in case some caller's rng() handler didn't wire the label update (defensive — every rng()
+  // does update _v, but this is one place I don't want to trust).
+  sl.value = String(v);
+  var vEl = document.getElementById(id + '_v');
+  if(vEl) vEl.textContent = sl.value;
+  try {
+    sl.dispatchEvent(new Event('input',  {bubbles: true}));
+    sl.dispatchEvent(new Event('change', {bubbles: true}));
+  } catch(_){
+    // Fallback for very old browsers without Event constructor — probably unreachable in-fleet.
+    var ev = document.createEvent('Event');
+    ev.initEvent('input', true, true);
+    sl.dispatchEvent(ev);
+  }
 }
 function F(label,id,val,type){type=type||'number';
   return '<div style="margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">'+label+'</label>'
