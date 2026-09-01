@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v366</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v367</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -13732,6 +13732,19 @@ function bindCanvasEvents(){
           if(sCy){ nh = Math.max(10, nh + sCy.delta); _activeSnapLines.push({axis:'h', pos:sCy.line}); }
         }
         layer.w=Math.round(nw);layer.h=Math.round(nh);
+        // v367: button + rating layers have an autoFit mode that snaps w/h back to text-content
+        // size on every redraw. Cornering-dragging one of them was invisible because drawButtonLayer
+        // / drawRatingLayer would immediately overwrite the freshly-set w/h. Turning autoFit off
+        // as soon as the corner starts moving matches the "user is manually sizing this" intent
+        // exactly the way the numeric W/H inputs already do (see line 12639).
+        if(layer.type === 'button' || layer.type === 'rating'){
+          if(layer.autoFit !== false){
+            layer.autoFit = false;
+            var ckId = layer.type === 'button' ? 'pbtn_autoFit' : 'prat_autoFit';
+            var ck = document.getElementById(ckId);
+            if(ck) ck.checked = false;
+          }
+        }
         syncPropWH(layer);
         // Group resize: scale every layer in the group proportionally around the anchor.
         // sx/sy are the horizontal/vertical scale factors from the primary's dimensional change;
