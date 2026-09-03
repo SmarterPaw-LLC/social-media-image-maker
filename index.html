@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v367</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v368</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3135,14 +3135,40 @@ function perfReloadKeepSession(){
 // paying N×5-renders on the main thread before the first paint.
 var _bulkRestoreInFlight = false;
 
+// v368: THE permanent slow-on-open fix. Boot no longer auto-runs session-restore. Instead,
+// tryRestoreSessionBundle now DETECTS a bundle and surfaces a banner offering restore; the
+// user clicks to opt in, which calls _restoreSessionBundleNow(). Boot cost drops to zero
+// regardless of how big or heavy the last session was. If the user never clicks, the bundle
+// stays in IDB for next time (unlike pre-v368 which deleted it after auto-restoring).
+// Rationale: every previous perf attempt kept losing to session-restore's decode + shadow
+// cost. Rather than keep optimizing that path, we've made it opt-in so the DEFAULT is fast.
 function tryRestoreSessionBundle(){
   if(typeof idbGetDesign !== 'function') return Promise.resolve(false);
   return idbGetDesign(SESSION_RESTORE_ID).then(function(bundle){
     if(!bundle || bundle.kind !== 'session-restore' || !bundle.boards || !bundle.boards.length){
       return false;
     }
-    console.log('[perf] restoring session bundle:', bundle.boards.length, 'boards');
-    // Delete FIRST so a mid-restore failure doesn't leave the bundle to be applied again next reload
+    console.log('[perf] session-restore bundle available (' + bundle.boards.length + ' boards) — showing opt-in banner instead of auto-restoring');
+    _showSessionRestoreBanner(bundle.boards.length);
+    return false;   // caller checks for truthy = restored; we've deferred to user click
+  }).catch(function(e){
+    console.log('[perf] no session bundle to restore:', e && e.message ? e.message : e);
+    return false;
+  });
+}
+
+// v368: opt-in restore flow. Loads the bundle FROM IDB (again — cheap, it was just cached in
+// the earlier check) and applies it via the same batched restore path v349 shipped. Deletes
+// the bundle on success so a subsequent normal reload starts fresh.
+function _restoreSessionBundleNow(){
+  var banner = document.getElementById('sessionRestoreBanner');
+  if(banner){ banner.innerHTML = '<span style="color:var(--muted);">Restoring session…</span>'; }
+  return idbGetDesign(SESSION_RESTORE_ID).then(function(bundle){
+    if(!bundle || !bundle.boards || !bundle.boards.length){
+      if(banner) banner.remove();
+      return false;
+    }
+    console.log('[perf] user opted in — restoring', bundle.boards.length, 'boards');
     idbDeleteDesign(SESSION_RESTORE_ID).catch(function(e){
       console.warn('[perf] failed to delete session bundle after restore:', e);
     });
@@ -3177,11 +3203,32 @@ function tryRestoreSessionBundle(){
       setCanvasSize(active.canvasW, active.canvasH);
     }
     renderBoardTabs(); renderLayerList(); renderProps(); renderPresets(); redraw();
+    var banner2 = document.getElementById('sessionRestoreBanner');
+    if(banner2) banner2.remove();
     return true;
   }).catch(function(e){
-    console.log('[perf] no session bundle to restore:', e && e.message ? e.message : e);
+    console.warn('[perf] session restore failed:', e);
+    var banner3 = document.getElementById('sessionRestoreBanner');
+    if(banner3){
+      banner3.innerHTML = '<span style="color:#b3261e;">Restore failed: ' + (e && e.message ? e.message : e) + '</span>';
+    }
     return false;
   });
+}
+
+// v368: the opt-in banner. Positioned as a top-of-viewport strip so it's visible but doesn't
+// block the app. `_dismissSessionRestore` just removes the banner without touching the IDB
+// bundle — user can reload and get the banner back if they change their mind.
+function _showSessionRestoreBanner(nBoards){
+  var existing = document.getElementById('sessionRestoreBanner');
+  if(existing) existing.remove();
+  var el = document.createElement('div');
+  el.id = 'sessionRestoreBanner';
+  el.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:200;padding:8px 14px;background:#fffbe6;border:1.5px solid #ffe58f;border-radius:8px;font-size:12px;color:#664d03;box-shadow:0 4px 12px rgba(0,0,0,0.12);display:flex;align-items:center;gap:10px;';
+  el.innerHTML = '<span>🔄 <b>' + nBoards + '</b> board' + (nBoards === 1 ? '' : 's') + ' from your last session are available to restore.</span>'
+    + '<button type="button" onclick="_restoreSessionBundleNow()" style="padding:4px 10px;font-size:11px;font-weight:600;background:var(--green);color:#fff;border:none;border-radius:5px;cursor:pointer;">Restore</button>'
+    + '<button type="button" onclick="var b=document.getElementById(\'sessionRestoreBanner\');if(b)b.remove();" style="padding:4px 8px;font-size:11px;background:none;border:1px solid #ffe58f;border-radius:5px;color:#664d03;cursor:pointer;" title="Keep the bundle in storage — you\'ll see this banner again on next open">Not now</button>';
+  document.body.appendChild(el);
 }
 
 // Draw the CURRENTLY-selected board's top-level layers into `ctx`. Mirrors the redraw() and
@@ -3465,15 +3512,24 @@ function duplicateSelected(){
 
 // ── INIT ──
 window.addEventListener('DOMContentLoaded',function(){
-  buildPrefabDropdowns();buildShapeGrid();
-  setCanvasSize(1080,1080);fitZoom();
-  bindCanvasEvents();bindDrop();redraw();
-  setBrand(currentBrand);   // initializes gradientPresets, renders logo buttons, etc.
+  // v368: boot-time profiler. Every stage logs its duration to the console so any residual
+  // slow-on-open can be pinpointed instead of guessed at. Look for "[boot]" lines in DevTools;
+  // if a specific stage is >200ms, that's your bottleneck.
+  var _bootStart = performance.now();
+  function _bootMark(name){
+    var t = performance.now() - _bootStart;
+    console.log('[boot] ' + name + ' at ' + t.toFixed(0) + 'ms');
+  }
+  buildPrefabDropdowns();buildShapeGrid();_bootMark('prefabs+shapes');
+  setCanvasSize(1080,1080);fitZoom();_bootMark('canvas+zoom');
+  bindCanvasEvents();bindDrop();redraw();_bootMark('bind+first-redraw');
+  setBrand(currentBrand);_bootMark('setBrand');
   updateExportInfo();
   bindKeyboardShortcuts();
   updateSnapBtn();   // v180: reflect persisted snap on/off state on the toolbar button
   updateCloudSyncStatus();   // v185: initialize the cloud-sync status pill
   renderBoardTabs();
+  _bootMark('boot complete');
   // Request persistent storage — on supported browsers this lifts the IndexedDB quota significantly,
   // which matters once you start saving designs with embedded video (tens of MB per design).
   if(navigator.storage && navigator.storage.persist){
