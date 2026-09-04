@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v379</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v380</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3456,6 +3456,11 @@ function pasteClipboard(){
   var idMap = {};
   clipboard.forEach(function(entry){ idMap[entry.id] = nextId++; });
   var newIds = [];
+  // v380: collect the paste block first, then splice it in at a single point just above the
+  // currently-selected layer — instead of push()ing each copy onto the top of the stack. This
+  // preserves relative order within the block AND stops paste from always landing on top of
+  // every other layer, which was the reported behaviour.
+  var newLayers = [];
   clipboard.forEach(function(entry){
     var copy = JSON.parse(JSON.stringify(entry));
     copy.id = idMap[entry.id];
@@ -3523,9 +3528,24 @@ function pasteClipboard(){
       copy._video = v;
       copy._playing = false;
     }
-    layers.push(copy);
+    newLayers.push(copy);
     newIds.push(copy.id);
   });
+  // v380: slot the block right above the currently-selected layer. selectedId is the anchor —
+  // if it's still in the layer stack, splice the new copies in at anchorIdx+1 so they sit
+  // directly above it in z-order. If nothing is selected (or the selection was removed since
+  // copy), fall back to the old push-to-top behaviour so paste always lands SOMEWHERE visible.
+  var anchorIdx = (selectedId != null)
+    ? layers.findIndex(function(x){ return x.id === selectedId; })
+    : -1;
+  if(anchorIdx >= 0){
+    // Array.prototype.splice with a variable arg list — inserts newLayers as a contiguous block
+    // starting at anchorIdx+1, preserving their order (and any group/child relationships between
+    // them, which the idMap remap above already rewired).
+    Array.prototype.splice.apply(layers, [anchorIdx + 1, 0].concat(newLayers));
+  } else {
+    newLayers.forEach(function(nl){ layers.push(nl); });
+  }
   selectedIds = newIds.slice();
   selectedId = newIds[newIds.length - 1];
   renderLayerList(); renderProps(); redraw();
@@ -3578,7 +3598,7 @@ window.addEventListener('DOMContentLoaded',function(){
     var total = _bootLog.length ? _bootLog[_bootLog.length - 1].ms : 0;
     var bg = total < 500 ? '#3a5e10' : total < 1500 ? '#a86000' : '#8b0000';
     bt.style.background = bg;
-    bt.innerHTML = '<div style="font-size:12px;margin-bottom:2px;">⚡ v379 · ' + total.toFixed(0) + 'ms</div>'
+    bt.innerHTML = '<div style="font-size:12px;margin-bottom:2px;">⚡ v380 · ' + total.toFixed(0) + 'ms</div>'
       + _bootLog.map(function(e){
           return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · ' + e.name + '</div>';
         }).join('');
