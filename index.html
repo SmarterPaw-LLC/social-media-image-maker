@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v377</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v378</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3572,7 +3572,7 @@ window.addEventListener('DOMContentLoaded',function(){
       var total = _bootLog.length ? _bootLog[_bootLog.length - 1].ms : 0;
       var bg = total < 500 ? '#3a5e10' : total < 1500 ? '#a86000' : '#8b0000';
       bt.style.background = bg;
-      var header = '⚡ v376' + (_FAST_BOOT ? ' [FAST]' : '') + ' · ' + total.toFixed(0) + 'ms';
+      var header = '⚡ v378' + (_FAST_BOOT ? ' [FAST]' : '') + ' · ' + total.toFixed(0) + 'ms';
       bt.innerHTML = '<div style="font-size:12px;margin-bottom:2px;">' + header + '</div>'
         + _bootLog.map(function(e){
             return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · ' + e.name + '</div>';
@@ -11937,17 +11937,13 @@ function buildShapeProps(l){
       : isSolid
         ? '<div style="margin-bottom:5px;">'+COL('Color','pshGradTop',l.fillColor||l.gradTop||'#8ab81d')+'</div>'
           +brandSwatchesHtml('pshColor')
-        : '<div class="col2" style="margin-bottom:5px;">'
-          +COL('Top','pshGradTop',l.gradTop||'#8ab81d')
-          +COL('Bottom','pshGradBot',l.gradBottom||'#3c8e14')
-          +'</div>'
-          // v336: per-stop opacity sliders for the two ends of the gradient. Setting either to
-          // less than 100 converts the stop's hex color to rgba() at render time — that's what
-          // lets a gradient fade to fully or partially transparent.
-          +R('Top opacity',    'pshGradTopOpacity',    l.gradTopOpacity    == null ? 100 : l.gradTopOpacity,    0, 100, 1)
-          +R('Bottom opacity', 'pshGradBottomOpacity', l.gradBottomOpacity == null ? 100 : l.gradBottomOpacity, 0, 100, 1)
+        // v378: full multi-stop gradient editor. Each stop has its own color, position, and
+        // opacity, plus an overall gradient-opacity multiplier. Backed by ensureShapeStops +
+        // the update/add/remove helpers above; renderer picks it up automatically via the
+        // gradStops/gradStopOpacities/gradStopPositions arrays in addLayerGradientStops.
+        : buildShapeStopsEditor(l)
           +brandSwatchesHtml('pshColor')
-          +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click = Top · Alt+Click = Bottom · Set either opacity to 0 for a fade-to-transparent</div>'
+          +'<div style="font-size:10px;color:var(--muted);margin-top:3px;">Click swatch = Start stop · Alt+Click = End stop · Set any stop opacity to 0 for a fade-to-transparent</div>'
     )
     +'<div style="margin-top:8px;margin-bottom:5px;"><label style="font-size:10px;color:var(--muted);">Apply Preset →</label>'
     +'<div class="preset-grid" style="margin-top:3px;">'
@@ -12651,21 +12647,30 @@ function addLayerGradientStops(grad, layer){
   // to 100 when unset so existing layers render identically. When set, the stop's hex color is
   // converted to rgba() with the alpha applied — this is what lets a gradient fade to
   // transparent, or have a translucent middle stop.
+  // v378: per-stop POSITION support via layer.gradStopPositions[] (parallel array, values 0..1)
+  // + overall gradient-opacity multiplier via layer.gradOpacity (0-100). Both are optional and
+  // default to (even spacing, 100%) so v336 layers render identically.
+  var overall = (layer.gradOpacity == null) ? 1 : Math.max(0, Math.min(100, layer.gradOpacity)) / 100;
   if(layer.gradStops && layer.gradStops.length > 1){
     var s = layer.gradStops;
     var ops = layer.gradStopOpacities || [];
+    var poss = layer.gradStopPositions || [];
     for(var i=0;i<s.length;i++){
       var op = (ops[i] == null) ? 100 : ops[i];
       var col = s[i];
-      grad.addColorStop(i/(s.length-1), op >= 100 ? col : hexToRgba(col, op/100));
+      var pos = (poss[i] == null) ? (i/(s.length-1)) : Math.max(0, Math.min(1, poss[i]));
+      var alpha = (op/100) * overall;
+      grad.addColorStop(pos, alpha >= 1 ? col : hexToRgba(col, alpha));
     }
   } else {
     var topOp = (layer.gradTopOpacity    == null) ? 100 : layer.gradTopOpacity;
     var botOp = (layer.gradBottomOpacity == null) ? 100 : layer.gradBottomOpacity;
     var topCol = layer.gradTop || '#8ab81d';
     var botCol = layer.gradBottom || '#3c8e14';
-    grad.addColorStop(0, topOp >= 100 ? topCol : hexToRgba(topCol, topOp/100));
-    grad.addColorStop(1, botOp >= 100 ? botCol : hexToRgba(botCol, botOp/100));
+    var topA = (topOp/100) * overall;
+    var botA = (botOp/100) * overall;
+    grad.addColorStop(0, topA >= 1 ? topCol : hexToRgba(topCol, topA));
+    grad.addColorStop(1, botA >= 1 ? botCol : hexToRgba(botCol, botA));
   }
 }
 
@@ -12673,6 +12678,134 @@ function addLayerGradientStops(grad, layer){
 // This forces the layer back into 2-stop mode — the user's change has to take effect,
 // which means discarding any multi-stop array they were previously using.
 // EXCEPTION: if the layer is tied to a locked preset (e.g. brand rainbow), keep the stops intact.
+// v378: Multi-stop gradient editor for shape layers. Backs the per-stop UI in buildShapeProps —
+// the layer stores three parallel arrays (gradStops, gradStopOpacities, gradStopPositions), and
+// this cluster of helpers keeps them in sync as the user adds/removes/edits stops. Every mutation
+// also mirrors first/last stop into gradTop/gradBottom so the legacy 2-stop read paths (stroke
+// fallback, older serialized designs) keep seeing a coherent pair of endpoints.
+function ensureShapeStops(l){
+  if(!l.gradStops || l.gradStops.length<2){
+    l.gradStops = [l.gradTop||'#8ab81d', l.gradBottom||'#3c8e14'];
+  }
+  if(!l.gradStopOpacities || l.gradStopOpacities.length !== l.gradStops.length){
+    var ops = new Array(l.gradStops.length);
+    for(var i=0;i<l.gradStops.length;i++){
+      if(i===0) ops[i] = l.gradTopOpacity==null ? 100 : l.gradTopOpacity;
+      else if(i===l.gradStops.length-1) ops[i] = l.gradBottomOpacity==null ? 100 : l.gradBottomOpacity;
+      else ops[i] = 100;
+    }
+    l.gradStopOpacities = ops;
+  }
+  if(!l.gradStopPositions || l.gradStopPositions.length !== l.gradStops.length){
+    var poss = new Array(l.gradStops.length);
+    for(var j=0;j<l.gradStops.length;j++){
+      poss[j] = j/(l.gradStops.length-1);
+    }
+    l.gradStopPositions = poss;
+  }
+}
+function _hex2(x){ x=x.toString(16); return x.length<2?'0'+x:x; }
+function interpolateHex(a, b, t){
+  if(!a || a[0]!=='#' || a.length<7) a = '#000000';
+  if(!b || b[0]!=='#' || b.length<7) b = '#ffffff';
+  var ar=parseInt(a.substr(1,2),16), ag=parseInt(a.substr(3,2),16), ab=parseInt(a.substr(5,2),16);
+  var br=parseInt(b.substr(1,2),16), bg=parseInt(b.substr(3,2),16), bb=parseInt(b.substr(5,2),16);
+  return '#'+_hex2(Math.round(ar+(br-ar)*t))+_hex2(Math.round(ag+(bg-ag)*t))+_hex2(Math.round(ab+(bb-ab)*t));
+}
+function _findShape(layerId){
+  return layers.find(function(x){ return x.id==layerId; });
+}
+function updateShapeStopColor(layerId, index, hex){
+  var l = _findShape(layerId); if(!l) return;
+  ensureShapeStops(l);
+  if(index<0 || index>=l.gradStops.length) return;
+  l.gradStops[index] = hex;
+  if(index===0) l.gradTop = hex;
+  if(index===l.gradStops.length-1) l.gradBottom = hex;
+  if(activePresetId){ activePresetId=''; try{ renderPresets(); }catch(_){} }
+  redraw();
+}
+function updateShapeStopOpacity(layerId, index, v){
+  var l = _findShape(layerId); if(!l) return;
+  ensureShapeStops(l);
+  if(index<0 || index>=l.gradStopOpacities.length) return;
+  var op = Math.max(0, Math.min(100, +v||0));
+  l.gradStopOpacities[index] = op;
+  if(index===0) l.gradTopOpacity = op;
+  if(index===l.gradStopOpacities.length-1) l.gradBottomOpacity = op;
+  redraw();
+}
+function updateShapeStopPosition(layerId, index, v){
+  var l = _findShape(layerId); if(!l) return;
+  ensureShapeStops(l);
+  if(index<0 || index>=l.gradStopPositions.length) return;
+  var pct = Math.max(0, Math.min(100, +v||0));
+  l.gradStopPositions[index] = pct/100;
+  redraw();
+}
+function updateShapeGradOverall(layerId, v){
+  var l = _findShape(layerId); if(!l) return;
+  l.gradOpacity = Math.max(0, Math.min(100, +v||0));
+  redraw();
+}
+function addShapeStop(layerId){
+  var l = _findShape(layerId); if(!l) return;
+  snapshotState();
+  ensureShapeStops(l);
+  var n = l.gradStops.length;
+  var lastPos = l.gradStopPositions[n-1];
+  var prevPos = l.gradStopPositions[n-2];
+  var newPos = (prevPos + lastPos) / 2;
+  var midColor = interpolateHex(l.gradStops[n-2], l.gradStops[n-1], 0.5);
+  l.gradStops.splice(n-1, 0, midColor);
+  l.gradStopOpacities.splice(n-1, 0, 100);
+  l.gradStopPositions.splice(n-1, 0, newPos);
+  if(activePresetId){ activePresetId=''; try{ renderPresets(); }catch(_){} }
+  renderProps(); redraw();
+}
+function removeShapeStop(layerId, index){
+  var l = _findShape(layerId); if(!l) return;
+  ensureShapeStops(l);
+  if(l.gradStops.length <= 2) return;
+  snapshotState();
+  l.gradStops.splice(index, 1);
+  l.gradStopOpacities.splice(index, 1);
+  l.gradStopPositions.splice(index, 1);
+  l.gradTop = l.gradStops[0];
+  l.gradBottom = l.gradStops[l.gradStops.length-1];
+  if(activePresetId){ activePresetId=''; try{ renderPresets(); }catch(_){} }
+  renderProps(); redraw();
+}
+// Builds the stops repeater UI. Each row: color · position % · opacity slider · remove. Plus a
+// "+ Add stop" button and an overall opacity slider (multiplies through every stop's alpha at
+// render time — see addLayerGradientStops). Called from buildShapeProps; safe to call any time
+// the layer's fillType is 'gradient'.
+function buildShapeStopsEditor(l){
+  ensureShapeStops(l);
+  var stops = l.gradStops, ops = l.gradStopOpacities, poss = l.gradStopPositions;
+  var canRemove = stops.length > 2;
+  var rows = stops.map(function(hex, i){
+    var pos = Math.round((poss[i]==null ? (i/(stops.length-1)) : poss[i]) * 100);
+    var op = ops[i]==null ? 100 : ops[i];
+    var roleLabel = i===0 ? 'Start' : (i===stops.length-1 ? 'End' : ('#'+(i+1)));
+    return '<div style="display:grid;grid-template-columns:26px 56px 1fr 22px;gap:5px;align-items:center;margin-bottom:4px;padding:3px 4px;background:#fafafa;border:1px solid var(--border);border-radius:4px;">'
+      + '<input type="color" value="'+hex+'" oninput="updateShapeStopColor('+l.id+','+i+',this.value)" style="width:26px;height:22px;padding:0;border:1px solid var(--border);border-radius:3px;cursor:pointer;" title="Stop '+roleLabel+' color">'
+      + '<div><label style="font-size:9px;color:var(--muted);display:block;line-height:1;margin-bottom:1px;">'+roleLabel+' %</label><input type="number" min="0" max="100" step="1" value="'+pos+'" oninput="updateShapeStopPosition('+l.id+','+i+',this.value)" style="width:100%;padding:2px 3px;font-size:11px;box-sizing:border-box;"></div>'
+      + '<div><label style="font-size:9px;color:var(--muted);display:block;line-height:1;margin-bottom:1px;">Opacity <span id="pshStopOpVal_'+i+'">'+op+'</span>%</label><input type="range" min="0" max="100" step="1" value="'+op+'" oninput="updateShapeStopOpacity('+l.id+','+i+',this.value); var s=document.getElementById(\'pshStopOpVal_'+i+'\'); if(s) s.textContent=this.value;" style="width:100%;"></div>'
+      + (canRemove
+          ? '<button class="btn-sm danger" style="padding:2px 5px;font-size:10px;line-height:1;" onclick="removeShapeStop('+l.id+','+i+')" title="Remove this stop">✕</button>'
+          : '<span style="font-size:11px;color:var(--muted);text-align:center;" title="Gradients need at least 2 stops">·</span>'
+        )
+      + '</div>';
+  }).join('');
+  return '<div style="margin-bottom:5px;">'
+    + '<label style="font-size:10px;color:var(--muted);">Gradient Stops</label>'
+    + rows
+    + '<button class="btn-sm" style="width:100%;margin-top:2px;font-size:11px;" onclick="addShapeStop('+l.id+')">+ Add stop</button>'
+    + '</div>'
+    + R('Gradient overall opacity', 'pshGradOverallOpacity', l.gradOpacity == null ? 100 : l.gradOpacity, 0, 100, 1);
+}
+
 function revertToTwoStopOnEdit(layer){
   if(layer.gradStops){
     // If the currently-active preset is locked AND its stops match this layer's stops, don't revert.
@@ -12910,24 +13043,31 @@ function bindPropEvents(layer){
     on('pshGradBot','input',function(e){layer.gradBottom=e.target.value; revertToTwoStopOnEdit(layer); redraw();});
     // v336: per-stop opacity sliders. revertToTwoStopOnEdit runs so any active multi-stop preset
     // gets replaced by the simple 2-stop path — otherwise the new opacity value would be ignored.
+    // v378: legacy 2-stop opacity sliders are only present in older serialized designs — the new
+    // shape gradient UI uses the per-stop editor (buildShapeStopsEditor). These bindings stay
+    // guarded by the on()/rng() no-op-if-missing pattern so they're harmless when the element
+    // isn't rendered.
     rng('pshGradTopOpacity',    function(v){ layer.gradTopOpacity    = +v; revertToTwoStopOnEdit(layer); redraw(); });
     rng('pshGradBottomOpacity', function(v){ layer.gradBottomOpacity = +v; revertToTwoStopOnEdit(layer); redraw(); });
+    // v378: overall gradient opacity multiplier — applies through every stop's alpha at draw time
+    // via addLayerGradientStops. Distinct from layer.opacity: this affects only the fill gradient,
+    // leaving the stroke and shadow untouched.
+    rng('pshGradOverallOpacity', function(v){ updateShapeGradOverall(layer.id, v); });
     rng('pshGradAngle',function(v){layer.gradAngle=v;redraw();});
-    // Brand color swatches: click = top/solid, alt+click = bottom (gradient only)
+    // v378: brand swatches route through the multi-stop editor when in gradient mode. Click sets
+    // the FIRST stop (start of gradient); Alt+Click sets the LAST stop (end). Any intermediate
+    // stops are edited via their own per-row color inputs in the stops repeater.
     bindBrandSwatches('pshColor', function(hex){
       if(layer.fillType==='solid'){
         layer.fillColor=hex;
         var el=document.getElementById('pshGradTop'); if(el) el.value=hex;
-      } else if(window.__altPressed){
-        layer.gradBottom=hex;
-        var el=document.getElementById('pshGradBot'); if(el) el.value=hex;
-        revertToTwoStopOnEdit(layer);
+        redraw();
       } else {
-        layer.gradTop=hex;
-        var el=document.getElementById('pshGradTop'); if(el) el.value=hex;
-        revertToTwoStopOnEdit(layer);
+        ensureShapeStops(layer);
+        var idx = window.__altPressed ? layer.gradStops.length-1 : 0;
+        updateShapeStopColor(layer.id, idx, hex);
+        renderProps();  // refresh the stops-editor color chips
       }
-      redraw();
     });
     on('pshStroke','input',function(e){layer.strokeColor=e.target.value;redraw();});
     rng('pshStrokeW',function(v){layer.strokeWidth=v;redraw();});
