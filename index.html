@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v370</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v371</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -498,7 +498,16 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <button class="btn-add" id="addStickerBtn" onclick="addStickerLayer()">+ Sticker</button>
     </div>
     <div class="col2">
-      <button class="btn-add" onclick="addTextLayer()">+ Text</button>
+      <!-- v371: + Text becomes a dropdown so we can offer Plain text vs List without stealing
+           the whole button row. Same .add-image-menu / .add-image-popup pattern the + Image
+           dropdown uses. -->
+      <div class="add-image-menu">
+        <button class="btn-add" onclick="toggleAddTextMenu()" title="Add a text or list layer">+ Text ▾</button>
+        <div class="add-image-popup" id="addTextPopup">
+          <button class="add-image-popup-item" onclick="closeAddTextMenu(); addTextLayer();" title="Single text block">📝 Plain text</button>
+          <button class="add-image-popup-item" onclick="closeAddTextMenu(); addListLayer();" title="Bulleted or numbered list with configurable bullet + full text formatting">📋 List</button>
+        </div>
+      </div>
       <button class="btn-add" onclick="openShapeMenu()">+ Shape</button>
     </div>
     <div class="col2">
@@ -8927,6 +8936,141 @@ function addTextLayer(){
   selectLayer(id);renderLayerList();redraw();
 }
 
+// ── LIST LAYER (v371) ──
+// A bulleted or numbered list. Each line is one item; the bullet glyph is chosen from a small
+// set (disc/circle/square/dash/arrow/checkmark/star/number/emoji). Full text formatting
+// (font, size, weight, color, alignment) applies to every item; list-specific fields control
+// item spacing, bullet color, and bullet-to-text gap.
+function addListLayer(){
+  snapshotState();
+  var id = nextId++;
+  var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+  var defaultFont = fontList[0];
+  layers.push({
+    id: id, type: 'list', name: 'List ' + id,
+    items: ['First item', 'Second item', 'Third item'],
+    bulletType: 'disc',
+    bulletEmoji: '⭐',
+    bulletColor: '#222222',
+    fontFamily: defaultFont.family,
+    fontWeight: defaultFont.weights[0],
+    fontSize: 48,
+    color: '#222222',
+    align: 'left',
+    lineHeight: 1.3,
+    itemSpacing: 8,       // extra vertical gap between items (px), on top of lineHeight
+    bulletGap: 16,        // horizontal gap between bullet and text (px)
+    x: Math.round(canvasW * 0.1),
+    y: Math.round(canvasH * 0.25),
+    w: Math.round(canvasW * 0.8),
+    h: 400,               // auto-computed on draw; stored so bounds are valid before first draw
+    opacity: 100,
+    rotation: 0
+  });
+  selectLayer(id); renderLayerList(); redraw();
+}
+
+// v371: bullet glyph map. Emoji type reads from layer.bulletEmoji; number returns the 1-based
+// index followed by a period ("1.", "2.", etc.). Anything unknown falls back to a disc.
+var _LIST_BULLET_GLYPHS = {
+  disc:      '•',   // •
+  circle:    '◦',   // ◦
+  square:    '▪',   // ▪
+  dash:      '–',   // –
+  arrow:     '➤',   // ➤
+  checkmark: '✓',   // ✓
+  star:      '★',   // ★
+  none:      ''
+};
+function _listBulletGlyph(layer, itemIndex){
+  var t = layer.bulletType || 'disc';
+  if(t === 'number') return String(itemIndex + 1) + '.';
+  if(t === 'emoji')  return layer.bulletEmoji || '⭐';
+  return _LIST_BULLET_GLYPHS[t] != null ? _LIST_BULLET_GLYPHS[t] : '•';
+}
+
+function drawListLayer(ctx, layer){
+  withRotation(ctx, layer, function(){
+    var items = Array.isArray(layer.items) ? layer.items : [];
+    if(!items.length) return;
+    var fontSize = Math.max(8, layer.fontSize || 48);
+    var lineH = fontSize * (layer.lineHeight || 1.3);
+    var itemGap = layer.itemSpacing != null ? layer.itemSpacing : 8;
+    var bulletGap = layer.bulletGap != null ? layer.bulletGap : 16;
+    var align = layer.align || 'left';
+    var color = layer.color || '#222';
+    var bulletColor = layer.bulletColor || color;
+    // Set the text font. Font family may be a comma-separated fallback list (v369's Impact
+    // shim); quote it as-is — the browser handles the cascade.
+    var weightStr = (layer.fontWeight || 400) + ' ';
+    ctx.font = weightStr + fontSize + 'px ' + layer.fontFamily;
+    ctx.textBaseline = 'top';
+    // Measure the widest bullet so all text starts at the same x — otherwise numbered lists
+    // (where "10." is wider than "1.") drift.
+    var maxBulletW = 0;
+    items.forEach(function(_, i){
+      var g = _listBulletGlyph(layer, i);
+      if(!g) return;
+      var m = ctx.measureText(g);
+      if(m.width > maxBulletW) maxBulletW = m.width;
+    });
+    var textX = layer.x + maxBulletW + bulletGap;
+    var maxTextW = Math.max(10, layer.w - (maxBulletW + bulletGap));
+    var y = layer.y;
+    var totalHeight = 0;
+    items.forEach(function(item, i){
+      var raw = String(item == null ? '' : item);
+      // Wrap long items to fit within the layer width. Naive word-wrap: split on spaces, greedy fit.
+      var lines = _wrapListItem(ctx, raw, maxTextW);
+      // Draw bullet on the FIRST line, aligned to the left of the item
+      var glyph = _listBulletGlyph(layer, i);
+      if(glyph){
+        ctx.fillStyle = bulletColor;
+        ctx.textAlign = 'left';
+        ctx.fillText(glyph, layer.x, y);
+      }
+      // Draw the item text (each wrapped line)
+      ctx.fillStyle = color;
+      ctx.textAlign = (align === 'center') ? 'center' : (align === 'right') ? 'right' : 'left';
+      var anchorX = (align === 'center')
+        ? textX + maxTextW / 2
+        : (align === 'right') ? textX + maxTextW : textX;
+      lines.forEach(function(line, li){
+        ctx.fillText(line, anchorX, y + li * lineH);
+      });
+      var itemH = lines.length * lineH;
+      y += itemH + itemGap;
+      totalHeight += itemH + itemGap;
+    });
+    // Store computed height back on the layer so hit-testing + selection chrome match visible
+    // bounds. Subtract the trailing itemGap so it doesn't hang past the last item.
+    layer.h = Math.max(fontSize, totalHeight - itemGap);
+  });
+}
+
+// v371: word-wrap helper for list items. Greedy — collects words until the next one would exceed
+// maxWidth, then wraps. Falls back to force-wrapping a single word if it's longer than the box.
+function _wrapListItem(ctx, text, maxWidth){
+  if(!text) return [''];
+  var words = text.split(/(\s+)/);   // keep whitespace tokens so we can re-emit them
+  var lines = [];
+  var current = '';
+  for(var i = 0; i < words.length; i++){
+    var w = words[i];
+    if(w === '') continue;
+    var probe = current + w;
+    if(ctx.measureText(probe).width <= maxWidth || current === ''){
+      current = probe;
+    } else {
+      lines.push(current.replace(/\s+$/, ''));
+      current = w.replace(/^\s+/, '');
+    }
+  }
+  if(current) lines.push(current);
+  if(!lines.length) lines.push('');
+  return lines;
+}
+
 // ── BUTTON LAYER (v282) ──
 // A pill-shaped CTA. Rounded-rect fill (gradient by default, using the current brand's first
 // preset), optional stroke, uppercase text inside, drop-shadow support via the shared shadow
@@ -10657,7 +10801,7 @@ function _renderLayerRow(list, layer, depth, parentGroup, ctx){
     item.style.borderLeft = '2px solid var(--border)';
     item.style.paddingLeft = '4px';
   }
-  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾',emojiPattern:'🎉'};
+  var icons = {image:'🖼',framedImage:'🪟',video:'🎬',sticker:'✍️',shape:'⬛',svg:'📐',text:'T',list:'📋',logo:'🏷',sprinkle:'🌿',arrow:'↗',group:'📁',button:'🔘',rating:'🐾',emojiPattern:'🎉'};
   var eyeIcon = layer.hidden ? '⊘' : '●';
   var eyeColor = layer.hidden ? 'color:#aaa;' : 'color:#4a7a3a;';
   var lockIcon = layer.locked ? '🔒' : '🔓';
@@ -10858,6 +11002,7 @@ function renderProps(){
   else if(layer.type==='sprinkle') innerHtml=buildSprinkleProps(layer);
   else if(layer.type==='svg')     innerHtml=buildSvgProps(layer);
   else if(layer.type==='text')    innerHtml=buildTextProps(layer);
+  else if(layer.type==='list')    innerHtml=buildListProps(layer);   // v371
   else if(layer.type==='arrow')   innerHtml=buildArrowProps(layer);
   else if(layer.type==='button')  innerHtml=buildButtonProps(layer);   // v282
   else if(layer.type==='group')   innerHtml=buildGroupProps(layer);    // v285
@@ -12155,6 +12300,73 @@ function toggleSvgFlip(layerId, axis){
   renderProps(); redraw();
 }
 
+// ── LIST LAYER PROPERTIES PANEL (v371) ──
+function buildListProps(l){
+  var fontList = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+  var isBrandFont = fontList.some(function(f){ return f.family === l.fontFamily; });
+  var fontOpts = '<optgroup label="Brand">'
+    + fontList.map(function(f){
+        return '<option value="' + escAttr(f.family) + '"' + (l.fontFamily === f.family ? ' selected' : '') + '>' + escAttr(f.label) + '</option>';
+      }).join('')
+    + '</optgroup>';
+  if(!isBrandFont && l.fontFamily){
+    fontOpts += '<optgroup label="Current"><option value="' + escAttr(l.fontFamily) + '" selected>' + escAttr(l.fontFamily) + '</option></optgroup>';
+  }
+  var itemsText = (l.items || []).join('\n');
+  var bulletOpts = [
+    ['disc',      '• Disc'],
+    ['circle',    '◦ Circle'],
+    ['square',    '▪ Square'],
+    ['dash',      '– Dash'],
+    ['arrow',     '➤ Arrow'],
+    ['checkmark', '✓ Checkmark'],
+    ['star',      '★ Star'],
+    ['number',    '1. 2. 3. Number'],
+    ['emoji',     '✨ Custom emoji'],
+    ['none',      '(none — indent only)']
+  ];
+  var isEmoji = (l.bulletType || 'disc') === 'emoji';
+  return '<div class="prop-section">'
+    + '<label style="font-size:10px;color:var(--muted);">Items <span style="font-weight:400;">(one per line)</span></label>'
+    + '<textarea id="plst_items" rows="5" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:8px;">' + escAttr(itemsText) + '</textarea>'
+    + SEL('Bullet', 'plst_bulletType', bulletOpts, l.bulletType || 'disc')
+    + (isEmoji
+        ? '<label style="font-size:10px;color:var(--muted);">Bullet emoji</label>'
+          + '<input type="text" id="plst_bulletEmoji" value="' + escAttr(l.bulletEmoji || '⭐') + '" maxlength="4" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:22px;text-align:center;margin-bottom:8px;">'
+        : '')
+    + '<label style="font-size:10px;color:var(--muted);">Font</label>'
+    + '<select id="plst_fontFamily" style="width:100%;margin-bottom:6px;">' + fontOpts + '</select>'
+    + '<div class="col2" style="gap:6px;">'
+      + '<div><label style="font-size:10px;color:var(--muted);">Weight</label>'
+      + '<select id="plst_fontWeight" style="width:100%;">'
+        + [100,200,300,400,500,600,700,800,900].map(function(w){
+            return '<option value="' + w + '"' + (l.fontWeight == w ? ' selected' : '') + '>' + w + '</option>';
+          }).join('')
+      + '</select></div>'
+      + '<div>' + COL('Text color', 'plst_color', l.color || '#222') + '</div>'
+    + '</div>'
+    + '<div class="col2" style="gap:6px;margin-top:4px;">'
+      + '<div>' + COL('Bullet color', 'plst_bulletColor', l.bulletColor || l.color || '#222') + '</div>'
+      + '<div><label style="font-size:10px;color:var(--muted);">Align</label>'
+      + '<select id="plst_align" style="width:100%;">'
+        + [['left','Left'],['center','Center'],['right','Right']].map(function(o){
+            return '<option value="' + o[0] + '"' + ((l.align || 'left') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+          }).join('')
+      + '</select></div>'
+    + '</div>'
+    + R('Font size',       'plst_fontSize',    l.fontSize    || 48,   10, 300, 1)
+    + R('Line height',     'plst_lineHeight',  l.lineHeight  || 1.3,  0.8, 3, 0.05)
+    + R('Item spacing (px)','plst_itemSpacing',l.itemSpacing != null ? l.itemSpacing : 8, 0, 100, 1)
+    + R('Bullet gap (px)', 'plst_bulletGap',   l.bulletGap   != null ? l.bulletGap   : 16, 0, 120, 1)
+    + NUMPAIR('X (px)', 'nlstx', l.x, 'Y (px)', 'nlsty', l.y)
+    + NUMPAIR('W (px)', 'nlstw', l.w, 'H (px)', 'nlsth', l.h)
+    + R('Rotation', 'plst_rotation', l.rotation || 0, -180, 180, 1)
+    + R('Opacity',  'plst_opacity',  l.opacity  || 100, 0, 100, 1)
+    + shadowUI('plst_', l)
+    + moveBtns(l.id)
+    + '</div>';
+}
+
 // ── TEXT LAYER PROPERTIES PANEL ──
 function buildTextProps(l){
   // Brand default fonts (shown first in dropdown)
@@ -13150,6 +13362,47 @@ function bindPropEvents(layer){
     rng('ptxt_opacity',function(v){layer.opacity=v;redraw();});
     bindShadowEvents('ptxt_', layer);
     bindTextEffectsEvents(layer);
+  } else if(layer.type === 'list'){
+    // v371: list layer bindings. Items are edited as one textarea (one item per line) — simpler
+    // than a repeater and matches how the user thinks about lists. Bullet type change rebuilds
+    // the panel so the emoji-picker appears/disappears with the type. Font-family change resets
+    // the weight to the first available brand weight (mirrors text layer's behavior).
+    on('plst_items', 'input', function(e){
+      layer.items = String(e.target.value || '').split('\n');
+      redraw();
+    });
+    on('plst_bulletType', 'change', function(e){
+      layer.bulletType = e.target.value;
+      renderProps(); redraw();
+    });
+    on('plst_bulletEmoji', 'input', function(e){
+      layer.bulletEmoji = e.target.value || '⭐';
+      redraw();
+    });
+    on('plst_fontFamily', 'change', function(e){
+      layer.fontFamily = e.target.value;
+      var _fl = FONTS_BY_BRAND[currentBrand] || FONTS_BY_BRAND.meowi;
+      var _f = _fl.find(function(f){ return f.family === layer.fontFamily; });
+      if(_f && _f.weights.indexOf(+layer.fontWeight) < 0) layer.fontWeight = _f.weights[0];
+      var wSel = document.getElementById('plst_fontWeight');
+      if(wSel) wSel.value = String(layer.fontWeight);
+      redraw();
+    });
+    on('plst_fontWeight', 'change', function(e){ layer.fontWeight = +e.target.value; redraw(); });
+    on('plst_color', 'input',       function(e){ layer.color = e.target.value; redraw(); });
+    on('plst_bulletColor', 'input', function(e){ layer.bulletColor = e.target.value; redraw(); });
+    on('plst_align', 'change',      function(e){ layer.align = e.target.value; redraw(); });
+    rng('plst_fontSize',    function(v){ layer.fontSize    = +v; redraw(); });
+    rng('plst_lineHeight',  function(v){ layer.lineHeight  = +v; redraw(); });
+    rng('plst_itemSpacing', function(v){ layer.itemSpacing = +v; redraw(); });
+    rng('plst_bulletGap',   function(v){ layer.bulletGap   = +v; redraw(); });
+    num('nlstx', function(v){ layer.x = v; redraw(); });
+    num('nlsty', function(v){ layer.y = v; redraw(); });
+    num('nlstw', function(v){ layer.w = v; redraw(); });
+    num('nlsth', function(v){ layer.h = v; redraw(); });
+    rng('plst_rotation', function(v){ layer.rotation = +v; redraw(); });
+    rng('plst_opacity',  function(v){ layer.opacity  = +v; redraw(); });
+    bindShadowEvents('plst_', layer);
   }
 }
 
@@ -14360,6 +14613,7 @@ function _drawSingleLayerInto(ctx, layer){
   else if(layer.type==='sprinkle')drawSprinkleLayer(ctx,layer);
   else if(layer.type==='svg')drawSvgLayer(ctx,layer);
   else if(layer.type==='text')drawTextLayer(ctx,layer);
+  else if(layer.type==='list')drawListLayer(ctx,layer);   // v371
   else if(layer.type==='arrow')drawArrowLayer(ctx,layer);
   else if(layer.type==='group')_drawGroupInto(ctx,layer);   // v270
   else if(layer.type==='button')drawButtonLayer(ctx,layer);  // v282
@@ -18073,6 +18327,39 @@ function closeAddImageMenu(){
   if(_addImageMenuListener){
     document.removeEventListener('click', _addImageMenuListener);
     _addImageMenuListener = null;
+  }
+}
+
+// v371: sibling menu for the + Text dropdown. Copy of the image-menu open/close/outside-click
+// pattern — kept separate rather than parameterized so each menu's outside-click listener has
+// its own reference to remove cleanly.
+var _addTextMenuListener = null;
+function toggleAddTextMenu(){
+  var p = document.getElementById('addTextPopup');
+  if(!p) return;
+  if(p.classList.contains('open')) closeAddTextMenu();
+  else openAddTextMenu();
+}
+function openAddTextMenu(){
+  var p = document.getElementById('addTextPopup');
+  if(!p) return;
+  p.classList.add('open');
+  setTimeout(function(){
+    _addTextMenuListener = function(e){
+      var menus = document.querySelectorAll('.add-image-menu');
+      var inMenu = false;
+      menus.forEach(function(m){ if(m.contains(e.target)) inMenu = true; });
+      if(!inMenu) closeAddTextMenu();
+    };
+    document.addEventListener('click', _addTextMenuListener);
+  }, 0);
+}
+function closeAddTextMenu(){
+  var p = document.getElementById('addTextPopup');
+  if(p) p.classList.remove('open');
+  if(_addTextMenuListener){
+    document.removeEventListener('click', _addTextMenuListener);
+    _addTextMenuListener = null;
   }
 }
 
