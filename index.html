@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v376</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v377</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -5777,9 +5777,26 @@ function buildShapeGrid(){
   });
 }
 function openShapeMenu(){
+  // v377: defensively rebuild the shape grid on every open. Symptom being fixed: user reported
+  // shape layers couldn't be added — most likely cause was the shape grid being empty because
+  // v370's Phase 2 didn't get a chance to run buildShapeGrid before the user tried. Cheap to
+  // rebuild (10 SHAPES entries, plain DOM appends).
+  try { buildShapeGrid(); } catch(e){ console.warn('[shape-menu] rebuild failed:', e); }
   document.getElementById('shapeMenu').classList.toggle('hidden');
 }
 function addShapeLayer(shapeId){
+  // v377: surface any failure visibly rather than swallowing it — a silent throw here would
+  // present as "click did nothing" which is exactly what the user hit. Any error is logged AND
+  // shown as a toast so it's obvious what went wrong.
+  try {
+    _addShapeLayerImpl(shapeId);
+  } catch(e){
+    console.error('[addShapeLayer] failed:', e);
+    if(typeof showToast === 'function') showToast('Add shape failed: ' + (e.message || e));
+    else alert('Add shape failed: ' + (e.message || e));
+  }
+}
+function _addShapeLayerImpl(shapeId){
   snapshotState();
   var id=nextId++;
   var preset=gradientPresets.find(function(p){return p.id===activePresetId;})||gradientPresets[0];
