@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v372</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v373</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3548,7 +3548,7 @@ window.addEventListener('DOMContentLoaded',function(){
   // to open devtools. Fixed-position so it doesn't shift layout.
   try {
     var vc = document.createElement('div');
-    vc.textContent = '⚡ v372 loaded';
+    vc.textContent = '⚡ v373 loaded';
     vc.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:6px 12px;background:#3a5e10;color:#fff;font-size:11px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);pointer-events:none;opacity:0.9;';
     document.body.appendChild(vc);
     setTimeout(function(){
@@ -9290,6 +9290,11 @@ function addEmojiPatternLayer(){
     size: 80,              // per-emoji size in canvas px
     spacing: 20,           // tile mode: gap between emojis
     randomRotation: 45,    // scatter mode: max ± rotation jitter in degrees
+    // v373: per-emoji tilt (rotates each glyph without rotating the bbox), random opacity,
+    // random blanks. All default to 0/off so existing layers render exactly as before.
+    emojiRotation: 0,
+    randomOpacity: 0,
+    randomBlank:   0,
     scatterSeed: Math.floor(Math.random() * 1e6),  // reproducibility handle
     x: 0, y: 0, w: canvasW, h: canvasH,   // default to full canvas
     opacity: 100, rotation: 0
@@ -9314,6 +9319,16 @@ function drawEmojiPatternLayer(ctx, layer){
   var x = layer.x || 0, y = layer.y || 0;
   var w = Math.max(1, layer.w || canvasW), h = Math.max(1, layer.h || canvasH);
   var mode = layer.mode || 'scatter';
+  // v373: per-emoji options (apply in both tile + scatter modes).
+  //   emojiRotation  — base rotation applied to EACH emoji (not the bbox). Layer.rotation still
+  //                    rotates the whole bounding box; this rotates the glyph itself so you can
+  //                    tilt every emoji uniformly without spinning the container.
+  //   randomOpacity  — 0-100 %; per-emoji alpha jitter in [1 - v/100, 1]. 0 = uniform.
+  //   randomBlank    — 0-100 %; each emoji has this % chance of being skipped. Uses the same
+  //                    seeded RNG as scatter placement so results are stable across renders.
+  var baseTilt = ((layer.emojiRotation || 0)) * Math.PI / 180;
+  var opJitter = Math.max(0, Math.min(100, layer.randomOpacity || 0)) / 100;
+  var blankPct = Math.max(0, Math.min(100, layer.randomBlank || 0)) / 100;
   ctx.save();
   // Rotate the whole pattern around its bbox center if the layer has a rotation. Same withRotation
   // pattern as other layers use — inlined here since emojiPattern doesn't share the standard
@@ -9327,9 +9342,35 @@ function drawEmojiPatternLayer(ctx, layer){
   ctx.font = size + 'px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "EmojiOne Color", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  // v373: shared RNG for BOTH modes so tile mode's blanks/opacity are deterministic-and-rerollable
+  // via the scatter seed too. Scatter uses it for position; tile just consumes draws for blanks/opacity.
+  var rng = _emojiPatternRng(layer.scatterSeed);
+  var jitter = Math.max(0, layer.randomRotation || 0);
+  // Helper: draw one emoji at (ex, ey) with the shared per-instance transforms + jitters.
+  // Returns whether it actually drew (vs. was skipped as a random blank).
+  function drawOne(ex, ey, addExtraRot){
+    if(blankPct > 0 && rng() < blankPct) return false;
+    var alpha = 1;
+    if(opJitter > 0) alpha = 1 - opJitter + rng() * opJitter;   // random in [1-op, 1]
+    var extraRot = (addExtraRot && jitter) ? ((rng() - 0.5) * 2 * jitter * Math.PI / 180) : 0;
+    var totalRot = baseTilt + extraRot;
+    if(alpha < 1 || totalRot){
+      ctx.save();
+      if(alpha < 1) ctx.globalAlpha *= alpha;
+      if(totalRot){
+        ctx.translate(ex, ey);
+        ctx.rotate(totalRot);
+        ctx.fillText(emoji, 0, 0);
+      } else {
+        ctx.fillText(emoji, ex, ey);
+      }
+      ctx.restore();
+    } else {
+      ctx.fillText(emoji, ex, ey);
+    }
+    return true;
+  }
   if(mode === 'tile'){
-    // Fit `count` cells into the bbox in a rough sqrt-based grid, then draw one per cell.
-    var spacing = Math.max(0, layer.spacing || 0);
     var cellsPerRow = Math.max(1, Math.round(Math.sqrt(count * (w / Math.max(h, 1)))));
     var rows = Math.ceil(count / cellsPerRow);
     var cellW = w / cellsPerRow;
@@ -9339,26 +9380,13 @@ function drawEmojiPatternLayer(ctx, layer){
       var row = Math.floor(i / cellsPerRow);
       var ex = x + cellW * (col + 0.5);
       var ey = y + cellH * (row + 0.5);
-      ctx.fillText(emoji, ex, ey);
+      drawOne(ex, ey, false);   // tile mode: no random-rotation jitter (that's a scatter thing)
     }
   } else {
-    // Scatter: seeded random placement within (x, y, w, h). Each emoji gets its own random
-    // rotation within ± randomRotation.
-    var rng = _emojiPatternRng(layer.scatterSeed);
-    var jitter = Math.max(0, layer.randomRotation || 0);
     for(var j = 0; j < count; j++){
       var jx = x + rng() * w;
       var jy = y + rng() * h;
-      var jrot = jitter ? ((rng() - 0.5) * 2 * jitter) : 0;
-      if(jrot){
-        ctx.save();
-        ctx.translate(jx, jy);
-        ctx.rotate(jrot * Math.PI / 180);
-        ctx.fillText(emoji, 0, 0);
-        ctx.restore();
-      } else {
-        ctx.fillText(emoji, jx, jy);
-      }
+      drawOne(jx, jy, true);
     }
   }
   ctx.restore();
@@ -12004,6 +12032,12 @@ function buildEmojiPatternProps(l){
           + '</div>'
         : R('Spacing', 'pep_spacing', l.spacing || 20, 0, 200, 1)
       )
+    // v373: per-emoji controls, apply in both modes. Emoji tilt rotates each glyph itself
+    // (NOT the bbox — layer.rotation still does that below). Random opacity + blanks add
+    // scatter-y variation to what would otherwise be a uniform pattern.
+    + R('Emoji tilt (°)',     'pep_emojiRotation', l.emojiRotation || 0, -180, 180, 1)
+    + R('Random opacity (%)', 'pep_randomOpacity', l.randomOpacity || 0, 0, 100, 1)
+    + R('Random blanks (%)',  'pep_randomBlank',   l.randomBlank   || 0, 0, 100, 1)
     + NUMPAIR('X (px)', 'nepx', l.x, 'Y (px)', 'nepy', l.y)
     + NUMPAIR('W (px)', 'nepw', l.w, 'H (px)', 'neph', l.h)
     + R('Rotation', 'pep_rotation', l.rotation || 0, -180, 180, 1)
@@ -13020,6 +13054,10 @@ function bindPropEvents(layer){
       if(seedEl) seedEl.value = layer.scatterSeed;
       redraw();
     });
+    // v373: bindings for the per-emoji options
+    rng('pep_emojiRotation', function(v){ layer.emojiRotation = +v; redraw(); });
+    rng('pep_randomOpacity', function(v){ layer.randomOpacity = +v; redraw(); });
+    rng('pep_randomBlank',   function(v){ layer.randomBlank   = +v; redraw(); });
     num('nepx', function(v){ layer.x = v; redraw(); });
     num('nepy', function(v){ layer.y = v; redraw(); });
     num('nepw', function(v){ layer.w = v; redraw(); });
