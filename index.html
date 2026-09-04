@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v374</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v375</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -1610,6 +1610,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         </div>
       </div>
       <div id="bgPresetMesh" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
+    </div>
+    <!-- v375: mirror the sidebar's Gradient Presets (the ones tied to currentBrand — same set
+         that appears at the top of the sidebar) so any preset you use for shape/text/button
+         fills is also one-click-usable as a background. Includes user-added custom presets. -->
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Your Gradient Presets <span style="font-weight:400;text-transform:none;font-size:10px;">(matches the sidebar list)</span></div>
+      <div id="bgPresetGradient" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;"></div>
     </div>
     <div style="margin-bottom:14px;">
       <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">Brand Gradients</div>
@@ -3553,7 +3560,7 @@ window.addEventListener('DOMContentLoaded',function(){
   // to open devtools. Fixed-position so it doesn't shift layout.
   try {
     var vc = document.createElement('div');
-    vc.textContent = '⚡ v374 loaded';
+    vc.textContent = '⚡ v375 loaded';
     vc.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:6px 12px;background:#3a5e10;color:#fff;font-size:11px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);pointer-events:none;opacity:0.9;';
     document.body.appendChild(vc);
     setTimeout(function(){
@@ -23192,6 +23199,25 @@ function openBackgroundPicker(){
       _renderMeshPreviewCanvas(canvas, p, w, 80);
     });
   }
+  // v375: render the Your Gradient Presets section using the LIVE `gradientPresets` array
+  // (populated by setBrand + any user-added presets). Same click model as the other sections:
+  // click a tile → creates a bg layer with that preset's fill. Reuses presetSwatchCss so the
+  // preview exactly matches how it renders in the sidebar's preset row.
+  var gpContainer = document.getElementById('bgPresetGradient');
+  if(gpContainer){
+    gpContainer.innerHTML = '';
+    (gradientPresets || []).forEach(function(p, idx){
+      var tile = document.createElement('div');
+      tile.style.cssText = 'cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid transparent;transition:border-color 0.15s,transform 0.15s;background:#fff;';
+      tile.onmouseenter = function(){ tile.style.borderColor = 'var(--green)'; tile.style.transform = 'scale(1.02)'; };
+      tile.onmouseleave = function(){ tile.style.borderColor = 'transparent'; tile.style.transform = ''; };
+      tile.onclick = function(){ applyGradientPresetAsBackground(p.id); };
+      tile.innerHTML =
+          '<div style="height:64px;background:' + presetSwatchCss(p) + ';"></div>'
+        + '<div style="padding:5px 6px;font-size:10px;font-weight:600;color:#333;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escAttr(p.label || 'Preset') + '</div>';
+      gpContainer.appendChild(tile);
+    });
+  }
   // Render the three preset sections once when opened — fast enough that we don't bother caching
   ['brand','mood','solid'].forEach(function(section){
     var container = document.getElementById('bgPreset' + section.charAt(0).toUpperCase() + section.slice(1));
@@ -23252,6 +23278,51 @@ function applyBackgroundPreset(section, idx){
   renderLayerList(); redraw();
   closeBackgroundPicker();
   showToast('🎨 Background: ' + p.name);
+}
+
+// v375: apply a gradientPreset (the sidebar Gradient Presets shape — {top, bottom, gradType,
+// gradAngle, stops?, label}) as a background layer. Mirrors applyBackgroundPreset but sources
+// from `gradientPresets` (live, brand-scoped) instead of BACKGROUND_PRESETS. Handles multi-stop
+// (KKZ rainbow etc.) and single-color-as-solid the same way applyPresetToLayer already does.
+function applyGradientPresetAsBackground(presetId){
+  var p = (gradientPresets || []).find(function(x){ return x.id === presetId; });
+  if(!p) return;
+  snapshotState();
+  var id = nextId++;
+  var isSolid = p.top && p.bottom && p.top === p.bottom && !(p.stops && p.stops.length > 1);
+  var layer = {
+    id: id, type: 'shape', name: '🎨 ' + (p.label || 'Preset'),
+    shape: 'rect',
+    x: 0, y: 0, w: canvasW, h: canvasH,
+    strokeColor: 'rgba(0,0,0,0)', strokeWidth: 0,
+    opacity: 100, cornerRadius: 0, rotation: 0,
+    skewAngle: 15, topWidthPct: 60, polygonSides: 6, polygonRotation: 0,
+    _fillsCanvas: true
+  };
+  if(isSolid){
+    layer.fillType = 'solid';
+    layer.fillColor = p.top;
+    layer.gradTop = p.top; layer.gradBottom = p.bottom;
+  } else {
+    layer.fillType = 'gradient';
+    layer.gradType = p.gradType || 'linear';
+    layer.gradAngle = p.gradAngle != null ? p.gradAngle : 135;
+    if(p.stops && p.stops.length >= 2){
+      layer.gradStops = p.stops.slice();
+      layer.gradTop = p.stops[0];
+      layer.gradBottom = p.stops[p.stops.length - 1];
+    } else {
+      layer.gradTop = p.top;
+      layer.gradBottom = p.bottom;
+    }
+    layer.fillColor = layer.gradTop;
+  }
+  // Insert at the BOTTOM of the stack — behind everything else on the canvas
+  layers.unshift(layer);
+  selectLayer(id);
+  renderLayerList(); redraw();
+  closeBackgroundPicker();
+  showToast('🎨 Background: ' + (p.label || 'Preset'));
 }
 
 function removeImageLayerBackground(layerId){
