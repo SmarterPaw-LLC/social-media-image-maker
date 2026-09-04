@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v371</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v372</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3548,7 +3548,7 @@ window.addEventListener('DOMContentLoaded',function(){
   // to open devtools. Fixed-position so it doesn't shift layout.
   try {
     var vc = document.createElement('div');
-    vc.textContent = '⚡ v371 loaded';
+    vc.textContent = '⚡ v372 loaded';
     vc.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:6px 12px;background:#3a5e10;color:#fff;font-size:11px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);pointer-events:none;opacity:0.9;';
     document.body.appendChild(vc);
     setTimeout(function(){
@@ -9006,10 +9006,16 @@ function drawListLayer(ctx, layer){
     ctx.font = weightStr + fontSize + 'px ' + layer.fontFamily;
     ctx.textBaseline = 'top';
     // Measure the widest bullet so all text starts at the same x — otherwise numbered lists
-    // (where "10." is wider than "1.") drift.
+    // (where "10." is wider than "1.") drift. v372: track visibleIndex separately from array
+    // index so a numbered list with spacer lines numbers sequentially (1, 2, 3) instead of
+    // (1, _, 3, _, 5).
     var maxBulletW = 0;
-    items.forEach(function(_, i){
-      var g = _listBulletGlyph(layer, i);
+    var _vi = 0;
+    items.forEach(function(it, i){
+      var raw = String(it == null ? '' : it);
+      if(raw.trim() === '') return;   // spacer — no bullet contributes to width
+      var g = _listBulletGlyph(layer, _vi);
+      _vi++;
       if(!g) return;
       var m = ctx.measureText(g);
       if(m.width > maxBulletW) maxBulletW = m.width;
@@ -9018,12 +9024,24 @@ function drawListLayer(ctx, layer){
     var maxTextW = Math.max(10, layer.w - (maxBulletW + bulletGap));
     var y = layer.y;
     var totalHeight = 0;
+    var visibleIndex = 0;   // v372: increments only for non-spacer items (used for numbering)
     items.forEach(function(item, i){
       var raw = String(item == null ? '' : item);
+      // v372: an empty/whitespace-only item is a SPACER — no bullet, but the vertical slot is
+      // preserved so a user can align two side-by-side lists by inserting blank lines in the
+      // shorter one. Skip both the bullet draw and the empty text draw; still advance y by one
+      // line-height (+ item gap) so subsequent items sit where the user expects.
+      var isSpacer = raw.trim() === '';
+      if(isSpacer){
+        y += lineH + itemGap;
+        totalHeight += lineH + itemGap;
+        return;
+      }
       // Wrap long items to fit within the layer width. Naive word-wrap: split on spaces, greedy fit.
       var lines = _wrapListItem(ctx, raw, maxTextW);
       // Draw bullet on the FIRST line, aligned to the left of the item
-      var glyph = _listBulletGlyph(layer, i);
+      var glyph = _listBulletGlyph(layer, visibleIndex);
+      visibleIndex++;
       if(glyph){
         ctx.fillStyle = bulletColor;
         ctx.textAlign = 'left';
