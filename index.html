@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v373</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v374</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -404,7 +404,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     <button class="btn-hdr" id="undoBtn" onclick="undo(); _refreshUndoButtons();" title="Undo (Ctrl+Z)" style="padding:8px 12px;font-size:16px;">↶</button>
     <button class="btn-hdr" id="redoBtn" onclick="redo(); _refreshUndoButtons();" title="Redo (Ctrl+Y)" style="padding:8px 12px;font-size:16px;">↷</button>
     <button class="btn-hdr" onclick="openMyDesignsModal()" title="Load a saved design">📂 My Designs</button>
-    <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design">💾 Save</button>
+    <button class="btn-hdr" onclick="promptSaveDesign()" title="Save current design (opens the Save dialog for name + destination)">💾 Save</button>
+    <!-- v374: one-click cloud save. Skips the Save dialog — reuses the current design's name +
+         cloud id and pushes straight to Supabase. Perfect for the "I already know where this
+         goes, just push my changes" case. When no cloud row exists yet, falls back to opening
+         the dialog so the user can name it. -->
+    <button class="btn-hdr" onclick="saveToCloudDirect()" title="Save to cloud NOW — overwrites the existing cloud copy with no dialog. If never saved before, opens the dialog to name it first.">☁ Save Cloud</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
     <!-- v127: Account dropdown — collapses Add User / Change Password / Sign Out under one menu.
          v145: renamed "Account & Settings"; added Image Library entry as a top-level shortcut. -->
@@ -3548,7 +3553,7 @@ window.addEventListener('DOMContentLoaded',function(){
   // to open devtools. Fixed-position so it doesn't shift layout.
   try {
     var vc = document.createElement('div');
-    vc.textContent = '⚡ v373 loaded';
+    vc.textContent = '⚡ v374 loaded';
     vc.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:6px 12px;background:#3a5e10;color:#fff;font-size:11px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);pointer-events:none;opacity:0.9;';
     document.body.appendChild(vc);
     setTimeout(function(){
@@ -4264,6 +4269,54 @@ function saveToCloud(){
     console.error('[save:cloud] error:', e);
     alert('Cloud save failed:\n\n' + (e.message || e) + '\n\nNothing was saved. Try again, or use 💾 Save to Computer to keep a local copy in the meantime.');
   }).then(function(){ _saveModalDone(ctx); }, function(){ _saveModalDone(ctx); });
+}
+
+// v374: modal-free one-click cloud save. Bypasses the Save dialog when we already know where
+// the design goes (i.e. it has a _currentCloudId, so this is an OVERWRITE not a new save). For
+// a design that's never been cloud-saved, fall back to opening the Save dialog so the user
+// gets to name it — that's the one time the dialog earns its interruption.
+function saveToCloudDirect(){
+  if(!currentUser || !sb){
+    alert('Sign in to save to the cloud. Use the 🚪 Sign In button to authenticate.');
+    return;
+  }
+  // First-time cloud save with no existing cloud row → open the dialog to name it. Trying to
+  // guess a name from board.name works most of the time but produces junk when the board still
+  // has the default "Board 1" placeholder; better to make the user commit to a real name once.
+  if(_currentCloudId == null){
+    promptSaveDesign();
+    return;
+  }
+  // Overwrite path — reuse the current name from _lastDesignName (set on every prior save) or
+  // the board name as fallback. Never prompt.
+  var name = _lastDesignName || (getBoard() && getBoard().name) || 'Untitled';
+  var state;
+  try { state = gatherDesignState(); }
+  catch(e){ alert('Could not gather design state: ' + (e.message || e)); return; }
+  state.name = name;
+  state.cloud_id = _currentCloudId;
+  state.folder_id = (_currentFolderIdForSave != null) ? _currentFolderIdForSave : null;
+  // Visual feedback — the header button dims + shows a spinner-ish state; success/failure both
+  // fire a toast. No modal to close.
+  var btn = document.querySelector('button[onclick="saveToCloudDirect()"]');
+  var origLabel = btn ? btn.textContent : null;
+  if(btn){ btn.disabled = true; btn.textContent = '☁ Saving…'; }
+  cloudSaveDesign(_currentCloudId, state, name).then(function(cloudId){
+    _currentCloudId = cloudId;
+    state.cloud_id = cloudId;
+    return idbSaveDesign(_currentDesignId != null ? _currentDesignId : null, state).then(function(idbId){
+      _currentDesignId = idbId;
+    });
+  }).then(function(){
+    _cloudDirty = false;
+    updateCloudSyncStatus();
+    showToast('☁ Saved to Cloud · ' + name);
+  }).catch(function(e){
+    console.error('[save:cloud-direct] error:', e);
+    alert('Cloud save failed:\n\n' + (e.message || e) + '\n\nNothing was saved. Try again, or use 💾 Save to open the dialog.');
+  }).then(function(){
+    if(btn){ btn.disabled = false; btn.textContent = origLabel || '☁ Save Cloud'; }
+  });
 }
 
 // v137 — Save modal busy/done helpers. Disables both Save buttons + Cancel, swaps the active
