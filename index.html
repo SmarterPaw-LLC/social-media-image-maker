@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v375</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v376</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3537,15 +3537,18 @@ function duplicateSelected(){
 }
 
 // ── INIT ──
+// v376: `?fast` URL flag skips EVERYTHING deferrable — no session-restore banner, no cloud
+// status, no board-tab render, no library hash routing, no persist request. Boots the bare
+// canvas and stops there. Use it as a control: if `?fast` is fast but the normal URL isn't,
+// the delta is one of Phase 2's calls (check the [boot] console lines). If `?fast` is ALSO
+// slow, it isn't code we can fix — it's the browser, machine, or network.
+var _FAST_BOOT = /[?&]fast(=|&|$)/.test(location.search || '');
 window.addEventListener('DOMContentLoaded',function(){
-  // v370: aggressive boot split. Phase 1 (this handler body) does the ABSOLUTE MINIMUM to
-  // paint an empty canvas — everything the user needs to see + interact with the canvas right
-  // now. Phase 2 (in a requestAnimationFrame after first paint) does everything else. The
-  // browser gets a chance to commit the first frame BEFORE we start any of the deferrable
-  // work, so perceived boot goes from "wait for all setup" to "canvas appears instantly."
   var _bootStart = performance.now();
+  var _bootLog = [];   // v376: also stashed on window._bootLog so we can render it in the corner
   function _bootMark(name){
     var t = performance.now() - _bootStart;
+    _bootLog.push({name: name, ms: t});
     console.log('[boot] ' + name + ' at ' + t.toFixed(0) + 'ms');
   }
   // Phase 1 — bare minimum for a visible interactive canvas
@@ -3555,19 +3558,39 @@ window.addEventListener('DOMContentLoaded',function(){
   bindDrop();
   redraw();
   _bootMark('phase 1 (canvas visible)');
-  // Show a small version chip so the user can visually confirm they're on the latest build.
-  // Auto-dismisses after 4 seconds. Rules out "am I even running the new code?" without needing
-  // to open devtools. Fixed-position so it doesn't shift layout.
+  // v376: persistent boot-time readout in the bottom-left. Shows every stage's elapsed ms so
+  // you can look at it and immediately know where time went — no devtools required. Click it
+  // to dismiss. Green background if total under 500ms; yellow 500-1500; red over 1500.
   try {
-    var vc = document.createElement('div');
-    vc.textContent = '⚡ v375 loaded';
-    vc.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:6px 12px;background:#3a5e10;color:#fff;font-size:11px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);pointer-events:none;opacity:0.9;';
-    document.body.appendChild(vc);
-    setTimeout(function(){
-      vc.style.transition = 'opacity 0.6s'; vc.style.opacity = '0';
-      setTimeout(function(){ if(vc.parentNode) vc.parentNode.removeChild(vc); }, 700);
-    }, 3500);
+    var bt = document.createElement('div');
+    bt.id = '_bootTimings';
+    bt.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:8px 12px;background:#3a5e10;color:#fff;font-size:10px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.5;max-width:280px;cursor:pointer;opacity:0.92;' + (_FAST_BOOT ? 'border:2px solid #ffd700;' : '');
+    bt.title = 'Boot timings — click to dismiss';
+    bt.onclick = function(){ if(bt.parentNode) bt.parentNode.removeChild(bt); };
+    document.body.appendChild(bt);
+    function _renderBootTimings(){
+      var total = _bootLog.length ? _bootLog[_bootLog.length - 1].ms : 0;
+      var bg = total < 500 ? '#3a5e10' : total < 1500 ? '#a86000' : '#8b0000';
+      bt.style.background = bg;
+      var header = '⚡ v376' + (_FAST_BOOT ? ' [FAST]' : '') + ' · ' + total.toFixed(0) + 'ms';
+      bt.innerHTML = '<div style="font-size:12px;margin-bottom:2px;">' + header + '</div>'
+        + _bootLog.map(function(e){
+            return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · ' + e.name + '</div>';
+          }).join('');
+    }
+    _renderBootTimings();
+    window._renderBootTimings = _renderBootTimings;
   } catch(_){}
+  // v376: `?fast` bails here. Canvas is up, nothing else runs. Everything the user needs to
+  // exercise (drag, resize, add layer via keyboard shortcuts) is already bound. Sidebar
+  // buttons won't work (they need Phase 2 for gradient presets, board tabs, etc.) — this mode
+  // is DIAGNOSTIC ONLY, not a full workflow.
+  if(_FAST_BOOT){
+    console.log('[boot] ?fast active — skipping Phase 2');
+    _bootMark('fast boot done');
+    if(window._renderBootTimings) window._renderBootTimings();
+    return;
+  }
   // Phase 2 — defer past first paint. Wrapped in requestAnimationFrame so the browser gets
   // to commit the frame from Phase 1 first, then setTimeout(0) so we yield the event loop once
   // more (rAF fires BEFORE paint on most browsers; setTimeout after gives the paint room).
@@ -3585,6 +3608,7 @@ window.addEventListener('DOMContentLoaded',function(){
       updateCloudSyncStatus();
       renderBoardTabs();
       _bootMark('phase 2 complete');
+      if(window._renderBootTimings) window._renderBootTimings();
       if(navigator.storage && navigator.storage.persist){
         navigator.storage.persist().then(function(granted){
           console.log('[storage] persist granted:', granted);
