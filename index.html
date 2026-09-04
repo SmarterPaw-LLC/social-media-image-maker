@@ -388,7 +388,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v369</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v370</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3517,46 +3517,70 @@ function duplicateSelected(){
 
 // ── INIT ──
 window.addEventListener('DOMContentLoaded',function(){
-  // v368: boot-time profiler. Every stage logs its duration to the console so any residual
-  // slow-on-open can be pinpointed instead of guessed at. Look for "[boot]" lines in DevTools;
-  // if a specific stage is >200ms, that's your bottleneck.
+  // v370: aggressive boot split. Phase 1 (this handler body) does the ABSOLUTE MINIMUM to
+  // paint an empty canvas — everything the user needs to see + interact with the canvas right
+  // now. Phase 2 (in a requestAnimationFrame after first paint) does everything else. The
+  // browser gets a chance to commit the first frame BEFORE we start any of the deferrable
+  // work, so perceived boot goes from "wait for all setup" to "canvas appears instantly."
   var _bootStart = performance.now();
   function _bootMark(name){
     var t = performance.now() - _bootStart;
     console.log('[boot] ' + name + ' at ' + t.toFixed(0) + 'ms');
   }
-  buildPrefabDropdowns();buildShapeGrid();_bootMark('prefabs+shapes');
-  setCanvasSize(1080,1080);fitZoom();_bootMark('canvas+zoom');
-  bindCanvasEvents();bindDrop();redraw();_bootMark('bind+first-redraw');
-  setBrand(currentBrand);_bootMark('setBrand');
-  updateExportInfo();
-  bindKeyboardShortcuts();
-  updateSnapBtn();   // v180: reflect persisted snap on/off state on the toolbar button
-  updateCloudSyncStatus();   // v185: initialize the cloud-sync status pill
-  renderBoardTabs();
-  _bootMark('boot complete');
-  // Request persistent storage — on supported browsers this lifts the IndexedDB quota significantly,
-  // which matters once you start saving designs with embedded video (tens of MB per design).
-  if(navigator.storage && navigator.storage.persist){
-    navigator.storage.persist().then(function(granted){
-      console.log('[storage] persist granted:', granted);
-    }).catch(function(e){});
-  }
-  // v295: if the last action before reload was "Reload & keep session", a session-restore bundle
-  // is waiting in IDB. Rebuild every board from it and jump back to whichever one was active.
-  // Runs asynchronously — the fresh single-board seed already showed while this resolves.
-  if(typeof tryRestoreSessionBundle === 'function'){
-    tryRestoreSessionBundle().catch(function(e){
-      console.warn('[perf] session restore failed:', e);
-    });
-  }
-  // v361: if the URL includes a #library hash (with an optional viewer path), open the library
-  // modal at that view. Runs after the auth boot poll has had a moment to seed currentUser —
-  // _openLibraryFromHash itself waits on the async items fetch that openImageLibraryModal kicks
-  // off, so the drill-down can render at whatever brand/category the link named.
-  setTimeout(function(){
-    if(typeof _openLibraryFromHash === 'function') _openLibraryFromHash();
-  }, 500);
+  // Phase 1 — bare minimum for a visible interactive canvas
+  setCanvasSize(1080,1080);
+  fitZoom();
+  bindCanvasEvents();
+  bindDrop();
+  redraw();
+  _bootMark('phase 1 (canvas visible)');
+  // Show a small version chip so the user can visually confirm they're on the latest build.
+  // Auto-dismisses after 4 seconds. Rules out "am I even running the new code?" without needing
+  // to open devtools. Fixed-position so it doesn't shift layout.
+  try {
+    var vc = document.createElement('div');
+    vc.textContent = '⚡ v370 loaded';
+    vc.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:6px 12px;background:#3a5e10;color:#fff;font-size:11px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);pointer-events:none;opacity:0.9;';
+    document.body.appendChild(vc);
+    setTimeout(function(){
+      vc.style.transition = 'opacity 0.6s'; vc.style.opacity = '0';
+      setTimeout(function(){ if(vc.parentNode) vc.parentNode.removeChild(vc); }, 700);
+    }, 3500);
+  } catch(_){}
+  // Phase 2 — defer past first paint. Wrapped in requestAnimationFrame so the browser gets
+  // to commit the frame from Phase 1 first, then setTimeout(0) so we yield the event loop once
+  // more (rAF fires BEFORE paint on most browsers; setTimeout after gives the paint room).
+  requestAnimationFrame(function(){
+    setTimeout(function(){
+      _bootMark('phase 2 begin');
+      buildPrefabDropdowns();
+      buildShapeGrid();
+      _bootMark('phase 2 prefabs+shapes');
+      setBrand(currentBrand);   // logo buttons, gradient presets
+      _bootMark('phase 2 setBrand');
+      updateExportInfo();
+      bindKeyboardShortcuts();
+      updateSnapBtn();
+      updateCloudSyncStatus();
+      renderBoardTabs();
+      _bootMark('phase 2 complete');
+      if(navigator.storage && navigator.storage.persist){
+        navigator.storage.persist().then(function(granted){
+          console.log('[storage] persist granted:', granted);
+        }).catch(function(e){});
+      }
+      // v368: session-restore is opt-in — this call just detects the bundle and shows a banner
+      if(typeof tryRestoreSessionBundle === 'function'){
+        tryRestoreSessionBundle().catch(function(e){
+          console.warn('[perf] session restore failed:', e);
+        });
+      }
+      // v361 library-hash routing runs later so async currentUser has time to seed
+      setTimeout(function(){
+        if(typeof _openLibraryFromHash === 'function') _openLibraryFromHash();
+      }, 500);
+    }, 0);
+  });
 });
 
 // ── UNDO HISTORY ──
