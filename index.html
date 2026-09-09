@@ -281,8 +281,31 @@ html[data-authed] #signInModal{display:none!important;}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Fraunces:wght@100;200;300;400;500;600;700;800;900&family=Ultra&family=Nunito:wght@200;300;400;500;600;700;800;900&family=Barlow+Condensed:wght@100;200;300;400;500;600;700;800;900&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=DM+Sans:wght@100;200;300;400;500;600;700;800;900&family=Fredoka+One&family=Chewy&family=Kalam:wght@300;400;700&family=Anton&display=swap" rel="stylesheet">
-<!-- gif.js: animated GIF encoder. Worker URL passed at GIF construction time. -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+<!-- v381: capture the earliest possible timestamp so the boot chip can show total-time-since-
+     navigation-start (not just post-DOMContentLoaded init). Uses performance.now() directly —
+     it's already time-since-navigation, no arithmetic needed. Also wires a long-task observer so
+     any single JS chunk that blocks the main thread >50ms lands in the console with its stack. -->
+<script>
+window._perfMarks = [];
+window._perfMark = function(name){
+  var t = performance.now();
+  window._perfMarks.push({name: name, ms: t});
+  if(window.console) console.log('[boot] ' + name + ' at ' + t.toFixed(0) + 'ms');
+};
+window._perfMark('head start');
+try {
+  var _lto = new PerformanceObserver(function(list){
+    list.getEntries().forEach(function(e){
+      if(window.console) console.warn('[longtask] ' + e.duration.toFixed(0) + 'ms · ' + e.name + ' (at ' + e.startTime.toFixed(0) + 'ms)');
+    });
+  });
+  _lto.observe({type: 'longtask', buffered: true});
+} catch(_){}
+</script>
+<!-- gif.js + jszip: only used at EXPORT time. defer= means they download in parallel with HTML
+     parsing and run after HTML is parsed but before DOMContentLoaded fires — so they never block
+     the browser from painting the page. Big win for perceived boot time on slow networks. -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js" onload="window._perfMark('gif.js loaded')"></script>
 <!-- Supabase JS client — used for cloud-sync of designs (v112+). See CLAUDE.md. -->
 <script>
 // v302: supabase-js@2.110.2 UMD build INLINED (was <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">).
@@ -380,15 +403,16 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   } catch(_){}
 })();
 </script>
-<!-- JSZip — v152+ uses it to bundle library exports into a single .zip download -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- JSZip — v152+ uses it to bundle library exports into a single .zip download. v381: defer'd
+     so it doesn't block HTML parse; runs before DOMContentLoaded fires. -->
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" onload="window._perfMark('jszip loaded')"></script>
 </head>
 <body>
 
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v380</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v381</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3557,19 +3581,18 @@ function duplicateSelected(){
 }
 
 // ── INIT ──
-// v379: v370's Phase 1 / Phase 2 boot split (rAF + setTimeout) is REVERTED. Deferring init
-// past first paint created race conditions — buttons that depended on setBrand(), gradient
-// presets, board tabs, and shape/prefab grids could all be clicked before their setup ran,
-// which surfaced as "shape won't add", "brand dropdown empty", etc. The boot chip stays as
-// a passive readout (still handy) but no work is deferred: everything init needs is called
-// in-order, synchronously, before the DOMContentLoaded handler returns.
+// v381: previous boot chip lied. It measured `performance.now() - _bootStartAtDOMContentLoaded`,
+// which is time INSIDE the DOMContentLoaded handler — 14ms while the user experiences 3s of
+// blocking HTML+JS parse. Now every mark is time-since-navigation-start (raw performance.now())
+// and pre-DOMContentLoaded marks from the head script are pulled in too, so the chip shows the
+// TRUE total. A PerformanceObserver in head also logs any single main-thread task >50ms with
+// its start offset, so we can see exactly which phase is blocking. Init itself still runs
+// synchronously (v379); this is measurement fix, not a boot-split re-introduction.
+try { window._perfMark && window._perfMark('main script start'); } catch(_){}
 window.addEventListener('DOMContentLoaded',function(){
-  var _bootStart = performance.now();
-  var _bootLog = [];
+  try { window._perfMark && window._perfMark('DOMContentLoaded'); } catch(_){}
   function _bootMark(name){
-    var t = performance.now() - _bootStart;
-    _bootLog.push({name: name, ms: t});
-    console.log('[boot] ' + name + ' at ' + t.toFixed(0) + 'ms');
+    if(window._perfMark) window._perfMark(name);
   }
   setCanvasSize(1080,1080);
   fitZoom();
@@ -3588,20 +3611,26 @@ window.addEventListener('DOMContentLoaded',function(){
   updateCloudSyncStatus();
   renderBoardTabs();
   _bootMark('init complete');
-  // Corner boot-timings readout (from v376). Still useful diagnostic; no functional impact.
+  // Corner boot-timings readout. Uses window._perfMarks[] populated by the head script + every
+  // _bootMark above, so it reflects wall-clock time from navigation start (not just this handler).
   try {
     var bt = document.createElement('div');
     bt.id = '_bootTimings';
-    bt.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:8px 12px;background:#3a5e10;color:#fff;font-size:10px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.5;max-width:280px;cursor:pointer;opacity:0.92;';
-    bt.title = 'Boot timings — click to dismiss';
+    bt.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:8px 12px;background:#3a5e10;color:#fff;font-size:10px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.5;max-width:320px;cursor:pointer;opacity:0.92;';
+    bt.title = 'Boot timings from navigation start — click to dismiss';
     bt.onclick = function(){ if(bt.parentNode) bt.parentNode.removeChild(bt); };
-    var total = _bootLog.length ? _bootLog[_bootLog.length - 1].ms : 0;
+    var marks = window._perfMarks || [];
+    var total = marks.length ? marks[marks.length - 1].ms : 0;
     var bg = total < 500 ? '#3a5e10' : total < 1500 ? '#a86000' : '#8b0000';
     bt.style.background = bg;
-    bt.innerHTML = '<div style="font-size:12px;margin-bottom:2px;">⚡ v380 · ' + total.toFixed(0) + 'ms</div>'
-      + _bootLog.map(function(e){
-          return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · ' + e.name + '</div>';
-        }).join('');
+    // Render each phase and its DELTA from the previous mark — makes the smoking gun obvious at a
+    // glance instead of forcing math on cumulative offsets.
+    var rows = marks.map(function(e, i){
+      var delta = i === 0 ? e.ms : (e.ms - marks[i-1].ms);
+      var deltaFlag = delta > 500 ? ' ⚠' : delta > 200 ? ' •' : '';
+      return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · +' + delta.toFixed(0).padStart(3) + 'ms · ' + e.name + deltaFlag + '</div>';
+    }).join('');
+    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v381 · ' + total.toFixed(0) + 'ms total</div>' + rows;
     document.body.appendChild(bt);
   } catch(_){}
   if(navigator.storage && navigator.storage.persist){
