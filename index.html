@@ -412,7 +412,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v382</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v383</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3630,7 +3630,7 @@ window.addEventListener('DOMContentLoaded',function(){
       var deltaFlag = delta > 500 ? ' ⚠' : delta > 200 ? ' •' : '';
       return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · +' + delta.toFixed(0).padStart(3) + 'ms · ' + e.name + deltaFlag + '</div>';
     }).join('');
-    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v382 · ' + total.toFixed(0) + 'ms total</div>' + rows;
+    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v383 · ' + total.toFixed(0) + 'ms total</div>' + rows;
     document.body.appendChild(bt);
   } catch(_){}
   if(navigator.storage && navigator.storage.persist){
@@ -11873,7 +11873,35 @@ function buildImageProps(l){
     +'</div>'
     +shadowUI('pimg_', l)
     +extraShadowsUI('pimg_', l)
+    // v383: image effects section — blur, tone (brightness/contrast/saturate), colorize
+    // (grayscale/sepia/hue rotate/invert). Every field defaults to identity so a pre-v383 image
+    // layer renders exactly as before. Reset button zeroes them out in one click.
+    +'<div class="prop-section" style="border-top:1px dashed var(--border);padding-top:8px;margin-top:6px;">'
+      +'<div style="font-weight:700;font-size:11px;color:var(--text);margin-bottom:4px;">✨ Effects</div>'
+      +R('Blur (px)',       'pimg_fxBlur',       l.fxBlur       || 0,   0,  40, 0.5)
+      +R('Brightness (%)',  'pimg_fxBrightness', l.fxBrightness == null ? 100 : l.fxBrightness, 0, 200, 1)
+      +R('Contrast (%)',    'pimg_fxContrast',   l.fxContrast   == null ? 100 : l.fxContrast,   0, 200, 1)
+      +R('Saturate (%)',    'pimg_fxSaturate',   l.fxSaturate   == null ? 100 : l.fxSaturate,   0, 200, 1)
+      +R('Grayscale (%)',   'pimg_fxGrayscale',  l.fxGrayscale  || 0,   0, 100, 1)
+      +R('Sepia (%)',       'pimg_fxSepia',      l.fxSepia      || 0,   0, 100, 1)
+      +R('Hue rotate (°)',  'pimg_fxHueRotate',  l.fxHueRotate  || 0,   0, 360, 1)
+      +R('Invert (%)',      'pimg_fxInvert',     l.fxInvert     || 0,   0, 100, 1)
+      +'<button class="btn-sm" style="width:100%;margin-top:3px;" onclick="resetImageEffects('+l.id+')" title="Reset every effect to its identity value">↺ Reset effects</button>'
+    +'</div>'
     +moveBtns(l.id)+'</div>';
+}
+
+// v383: reset every image-effect field back to its identity value. Called from the ↺ Reset
+// effects button in the Effects section of buildImageProps. Also drops the fields from the layer
+// object entirely (rather than setting them to defaults) so serialized designs stay lean.
+function resetImageEffects(layerId){
+  var l = layers.find(function(x){ return x.id == layerId; });
+  if(!l) return;
+  snapshotState();
+  ['fxBlur','fxBrightness','fxContrast','fxSaturate','fxGrayscale','fxSepia','fxHueRotate','fxInvert']
+    .forEach(function(k){ delete l[k]; });
+  renderProps();
+  redraw();
 }
 
 function buildStickerProps(l){
@@ -12973,6 +13001,16 @@ function bindPropEvents(layer){
     rng('popacity',function(v){layer.opacity=v;redraw();});
     // v264: rounded-corner clip on the image layer's bounding rect (primary use: backgrounds)
     rng('pimg_cornerRadius',function(v){layer.cornerRadius=v;redraw();});
+    // v383: image effects sliders. Store as numbers; buildImageFilterString handles null/undef as
+    // identity so absent fields cost nothing.
+    rng('pimg_fxBlur',       function(v){ layer.fxBlur       = +v; redrawSoon(); });
+    rng('pimg_fxBrightness', function(v){ layer.fxBrightness = +v; redrawSoon(); });
+    rng('pimg_fxContrast',   function(v){ layer.fxContrast   = +v; redrawSoon(); });
+    rng('pimg_fxSaturate',   function(v){ layer.fxSaturate   = +v; redrawSoon(); });
+    rng('pimg_fxGrayscale',  function(v){ layer.fxGrayscale  = +v; redrawSoon(); });
+    rng('pimg_fxSepia',      function(v){ layer.fxSepia      = +v; redrawSoon(); });
+    rng('pimg_fxHueRotate',  function(v){ layer.fxHueRotate  = +v; redrawSoon(); });
+    rng('pimg_fxInvert',     function(v){ layer.fxInvert     = +v; redrawSoon(); });
     on('pflipH','change',function(e){layer.flipH=e.target.checked;redraw();});
     on('pflipV','change',function(e){layer.flipV=e.target.checked;redraw();});
     // v353: pattern-mode bindings. Toggling on/off rebuilds the panel (crop/flip get disabled
@@ -15998,6 +16036,32 @@ function drawTextWithLetterSpacing(ctx, text, x, y, letterSpacing, align, boxW){
   ctx.textAlign = savedAlign;
 }
 
+// v383: build the canvas `ctx.filter` string from per-layer effect fields. Every effect defaults
+// to identity so pre-v383 layers render unchanged. Returns 'none' when nothing's active — avoids
+// paying the (small but real) filter setup cost on every image draw. Called from drawImageLayer
+// and _drawImagePattern.
+function buildImageFilterString(layer){
+  if(!layer) return 'none';
+  var parts = [];
+  var b  = +layer.fxBlur       || 0;
+  var br = layer.fxBrightness == null ? 100 : +layer.fxBrightness;
+  var co = layer.fxContrast   == null ? 100 : +layer.fxContrast;
+  var sa = layer.fxSaturate   == null ? 100 : +layer.fxSaturate;
+  var gs = +layer.fxGrayscale  || 0;
+  var se = +layer.fxSepia      || 0;
+  var hu = +layer.fxHueRotate  || 0;
+  var iv = +layer.fxInvert     || 0;
+  if(b  > 0)   parts.push('blur('       + b  + 'px)');
+  if(br !== 100) parts.push('brightness(' + (br/100) + ')');
+  if(co !== 100) parts.push('contrast('   + (co/100) + ')');
+  if(sa !== 100) parts.push('saturate('   + (sa/100) + ')');
+  if(gs > 0)   parts.push('grayscale('  + (gs/100) + ')');
+  if(se > 0)   parts.push('sepia('      + (se/100) + ')');
+  if(hu !== 0) parts.push('hue-rotate(' + hu + 'deg)');
+  if(iv > 0)   parts.push('invert('     + (iv/100) + ')');
+  return parts.length ? parts.join(' ') : 'none';
+}
+
 function drawImageLayer(ctx,layer){
   if(!layer.img)return;
   // v353: pattern mode — treat the layer's bbox as a container and draw the image N times
@@ -16041,6 +16105,11 @@ function drawImageLayer(ctx,layer){
     });
     ctx.save();ctx.beginPath();_pathRoundRect(ctx, x, y, w, h, _cr);ctx.clip();
     if(layer.flipH||layer.flipV){ctx.translate(x+w/2,y+h/2);ctx.scale(layer.flipH?-1:1,layer.flipV?-1:1);ctx.translate(-(x+w/2),-(y+h/2));}
+    // v383: apply per-layer image effects (blur / brightness / contrast / etc.) to the visible
+    // draw only. The shadow silhouette above was already painted through paintImageShadow's
+    // separate context, so it's unaffected — a blurry image still casts a crisp silhouette
+    // shadow, which reads correctly. Filter resets automatically on ctx.restore() below.
+    ctx.filter = buildImageFilterString(layer);
     if(layer.fit==='fill'){ctx.drawImage(img,sx,sy,sw,sh,x,y,w,h);}
     else{
       var scale=layer.fit==='cover'?Math.max(w/sw,h/sh):Math.min(w/sw,h/sh);
@@ -16067,6 +16136,10 @@ function _drawImagePattern(ctx, layer){
   var w = Math.max(1, layer.w || canvasW), h = Math.max(1, layer.h || canvasH);
   var mode = layer.patternMode || 'scatter';
   ctx.save();
+  // v383: pattern-mode also honors per-layer effects. Applied ONCE around the whole scatter/tile
+  // pass — every copy shares the same filter, which is what you want (per-copy filter would be
+  // both slow and visually inconsistent).
+  ctx.filter = buildImageFilterString(layer);
   if(layer.rotation){
     var ccx = x + w/2, ccy = y + h/2;
     ctx.translate(ccx, ccy);
