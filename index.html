@@ -412,7 +412,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v384</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v385</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3653,7 +3653,7 @@ window.addEventListener('DOMContentLoaded',function(){
       var deltaFlag = delta > 500 ? ' ⚠' : delta > 200 ? ' •' : '';
       return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · +' + delta.toFixed(0).padStart(3) + 'ms · ' + e.name + deltaFlag + '</div>';
     }).join('');
-    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v384 · ' + total.toFixed(0) + 'ms total</div>' + rows;
+    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v385 · ' + total.toFixed(0) + 'ms total</div>' + rows;
     document.body.appendChild(bt);
   } catch(_){}
   if(navigator.storage && navigator.storage.persist){
@@ -8300,26 +8300,94 @@ function loadVideoIntoNewLayer(dataUrl, filename){
   v.addEventListener('loadeddata', function(){ redraw(); });
   v.addEventListener('seeked',     function(){ redraw(); });
   v.addEventListener('error', function(e){
-    // v364: the generic "make sure it's a MOV the browser supports" message wasn't actionable —
-    // the actual issue is almost always codec, not container. iPhone MOVs default to HEVC/H.265
-    // which Chrome/Edge on Windows + Linux can't decode without hardware support. Point to the
-    // two recovery paths users actually have: change the iPhone recording format, or transcode
-    // the file to H.264. `.error.code` on the media element is 4 (MEDIA_ERR_SRC_NOT_SUPPORTED)
-    // for codec issues, 3 (MEDIA_ERR_DECODE) for corruption; either way the fix is the same.
+    // v385: replaced the alert() with a proper modal — the previous copy was accurate but the
+    // user couldn't act on it in the modal itself (no clickable converter link, no way to copy
+    // the iPhone-fix steps). New modal has: (a) a big button that opens CloudConvert's MOV→MP4
+    // page in a new tab so the user drops the file, downloads the .mp4, and re-adds it here;
+    // (b) a "Copy iPhone fix" button that stashes the Settings path in the clipboard so it
+    // can be pasted into a note or shared with whoever recorded the file. Falls back to alert()
+    // if showVideoCodecErrorModal isn't wired (defensive — shouldn't happen).
     var isMov = /\.mov$/i.test(filename || '');
-    var msg = 'Could not decode video "' + (filename || 'unknown') + '".\n\n';
-    if(isMov){
-      msg += 'iPhone MOV files are usually H.265 (HEVC), which Chrome + Edge on Windows/Linux '
-           + 'can\'t play. Two fixes:\n\n'
-           + '1. Re-record in H.264: on iPhone, Settings → Camera → Formats → Most Compatible.\n\n'
-           + '2. Convert the existing file: drag it into a free online converter, or use '
-           + 'ffmpeg (`ffmpeg -i input.mov -c:v libx264 output.mp4`). Then re-add the .mp4.';
+    if(typeof showVideoCodecErrorModal === 'function'){
+      showVideoCodecErrorModal(filename || 'unknown', isMov);
     } else {
-      msg += 'The file\'s codec isn\'t supported by this browser. MP4 (H.264) and WebM are the '
-           + 'safest formats — try converting first.';
+      alert('Could not decode video "' + (filename || 'unknown') + '". iPhone MOVs are usually HEVC; convert to MP4 (H.264) and re-add.');
     }
-    alert(msg);
   });
+}
+
+// v385: proper modal replacing the old alert() so the codec failure surfaces actionable buttons
+// instead of a wall of text the user has to memorize. The convert-in-browser flow is deliberately
+// omitted: ffmpeg.wasm is a ~30MB one-time download and the CDN allowlist for GitHub Pages
+// permissions would need blessing. Cloudconvert covers the ~10 seconds/file case just as well
+// and doesn't ship a new runtime dep. Dark-mode-safe (uses same palette tokens as the app).
+function showVideoCodecErrorModal(filename, isMov){
+  // Kill any stale copy of this modal so re-opens don't stack.
+  var existing = document.getElementById('videoCodecErrorModal');
+  if(existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'videoCodecErrorModal';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.onclick = function(e){ if(e.target === overlay) overlay.remove(); };
+
+  var card = document.createElement('div');
+  card.style.cssText = 'background:var(--panel);color:var(--text);border-radius:12px;box-shadow:0 12px 48px rgba(0,0,0,0.35);max-width:520px;width:100%;padding:22px 24px;font-size:13px;line-height:1.5;';
+
+  // Escape user-controlled filename so a maliciously-named file can't inject HTML.
+  var safeName = String(filename).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  var body = ''
+    + '<div style="font-weight:800;font-size:16px;margin-bottom:6px;">Can\'t play <span style="font-family:ui-monospace,Menlo,Consolas,monospace;background:#f4f4f0;padding:1px 5px;border-radius:4px;font-weight:600;">' + safeName + '</span></div>'
+    + (isMov
+        ? '<div style="color:var(--muted);margin-bottom:14px;">iPhone MOV files are usually H.265 (HEVC), which Chrome and Edge on Windows can\'t decode. Two ways to get past it:</div>'
+        : '<div style="color:var(--muted);margin-bottom:14px;">This file\'s codec isn\'t supported by the browser. MP4 (H.264) and WebM are the safest formats — convert first, then re-add.</div>')
+
+    // --- Convert-now path (fastest for THIS file) ---
+    + '<div style="font-weight:700;margin-bottom:4px;">🌐 Convert this file now</div>'
+    + '<div style="color:var(--muted);font-size:12px;margin-bottom:8px;">Opens CloudConvert in a new tab. Drop your file, hit Convert, download the .mp4, then re-add it here.</div>'
+    + '<button id="_vcem_convert" style="display:block;width:100%;padding:10px 14px;background:var(--green);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:16px;">Open CloudConvert (MOV → MP4) ↗</button>'
+
+    // --- Permanent iPhone fix (for future recordings) ---
+    + (isMov
+        ? '<div style="font-weight:700;margin-bottom:4px;">📱 Fix it once, forever (iPhone)</div>'
+          + '<div style="color:var(--muted);font-size:12px;margin-bottom:6px;">Change iPhone camera to record H.264 instead of HEVC:</div>'
+          + '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;background:#f4f4f0;padding:8px 10px;border-radius:6px;font-size:12px;margin-bottom:8px;">Settings → Camera → Formats → <b>Most Compatible</b></div>'
+          + '<button id="_vcem_copy" style="display:block;width:100%;padding:8px 12px;background:#fafafa;color:var(--text);border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:16px;">Copy the steps</button>'
+        : '')
+
+    // --- Escape hatch ---
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+      + '<button id="_vcem_close" style="padding:8px 16px;background:#fafafa;color:var(--text);border:1.5px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Close</button>'
+    + '</div>';
+
+  card.innerHTML = body;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  // Wire buttons. Use plain onclick since these are one-shot handlers on a modal that gets
+  // torn down on close — no need for addEventListener cleanup ceremony.
+  document.getElementById('_vcem_convert').onclick = function(){
+    // new tab, noopener so the target page can't reach back into the app
+    window.open('https://cloudconvert.com/mov-to-mp4', '_blank', 'noopener');
+  };
+  var copyBtn = document.getElementById('_vcem_copy');
+  if(copyBtn){
+    copyBtn.onclick = function(){
+      var steps = 'iPhone → Settings → Camera → Formats → Most Compatible';
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(steps).then(function(){
+          copyBtn.textContent = '✓ Copied';
+          setTimeout(function(){ copyBtn.textContent = 'Copy the steps'; }, 1600);
+        }).catch(function(){
+          window.prompt('Copy this:', steps);
+        });
+      } else {
+        window.prompt('Copy this:', steps);
+      }
+    };
+  }
+  document.getElementById('_vcem_close').onclick = function(){ overlay.remove(); };
 }
 
 function drawVideoLayer(ctx, layer){
