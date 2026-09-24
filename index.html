@@ -280,7 +280,7 @@ html[data-authed] #signInModal{display:none!important;}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Fraunces:wght@100;200;300;400;500;600;700;800;900&family=Ultra&family=Nunito:wght@200;300;400;500;600;700;800;900&family=Barlow+Condensed:wght@100;200;300;400;500;600;700;800;900&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=DM+Sans:wght@100;200;300;400;500;600;700;800;900&family=Fredoka+One&family=Chewy&family=Kalam:wght@300;400;700&family=Anton&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&family=Fraunces:wght@100;200;300;400;500;600;700;800;900&family=Ultra&family=Nunito:wght@200;300;400;500;600;700;800;900&family=Barlow+Condensed:wght@100;200;300;400;500;600;700;800;900&family=Bebas+Neue&family=Oswald:wght@200;300;400;500;600;700&family=DM+Sans:wght@100;200;300;400;500;600;700;800;900&family=Fredoka+One&family=Chewy&family=Kalam:wght@300;400;700&family=Anton&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <!-- v381: capture the earliest possible timestamp so the boot chip can show total-time-since-
      navigation-start (not just post-DOMContentLoaded init). Uses performance.now() directly —
      it's already time-since-navigation, no arithmetic needed. Also wires a long-task observer so
@@ -412,7 +412,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v386</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v387</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3650,7 +3650,7 @@ window.addEventListener('DOMContentLoaded',function(){
       var deltaFlag = delta > 500 ? ' ⚠' : delta > 200 ? ' •' : '';
       return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · +' + delta.toFixed(0).padStart(3) + 'ms · ' + e.name + deltaFlag + '</div>';
     }).join('');
-    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v386 · ' + total.toFixed(0) + 'ms total</div>' + rows;
+    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v387 · ' + total.toFixed(0) + 'ms total</div>' + rows;
     document.body.appendChild(bt);
   } catch(_){}
   if(navigator.storage && navigator.storage.persist){
@@ -15720,20 +15720,37 @@ function hideCropToolbar(){
   if(bar) bar.style.display='none';
 }
 
+// v387: cached CanvasPattern. Was running a 39×39 = 1,521-fillRect loop on EVERY redraw for a
+// 1080×1080 canvas — every drag, every slider tick, every arrow-key nudge paid ~1,500 draw ops
+// + 1,500 fillStyle string reassignments + 1,500 modulo ops just for the checker background.
+// Now: a 56×56 offscreen tile canvas gets built ONCE at first draw and reused as a
+// createPattern() source. Each redraw becomes a single fillStyle=pattern + fillRect(0,0,W,H).
+// Native pattern tiling in the browser is orders of magnitude faster than JS fillRect loops.
+// Clip is still applied so the pattern doesn't bleed past canvasW/canvasH into the overscan
+// margin (the v217 bug fix stays).
+var _checkerPattern = null;
+function _buildCheckerPattern(ctx){
+  var sz = 28;
+  var tile = document.createElement('canvas');
+  tile.width = sz * 2;
+  tile.height = sz * 2;
+  var tctx = tile.getContext('2d');
+  tctx.fillStyle = '#e8e8e0';
+  tctx.fillRect(0, 0, sz, sz);
+  tctx.fillRect(sz, sz, sz, sz);
+  tctx.fillStyle = '#d8d8d0';
+  tctx.fillRect(sz, 0, sz, sz);
+  tctx.fillRect(0, sz, sz, sz);
+  return ctx.createPattern(tile, 'repeat');
+}
 function drawCheckerboard(ctx){
-  var sz=28;
-  // v217: clip to canvas bounds so the last row/column cells don't bleed past canvasW/canvasH
-  // into the overscan margin. Cell size (28) rarely divides canvas dims evenly (e.g. 1080/28 =
-  // 38.57), so without clipping the rightmost+bottommost cells overflow ~12px past the edge.
-  // That's the "overhang" Jason was seeing — checkerboard, not background, leaking into overscan.
+  if(!_checkerPattern) _checkerPattern = _buildCheckerPattern(ctx);
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, canvasW, canvasH);
   ctx.clip();
-  for(var y=0;y<canvasH;y+=sz)for(var x=0;x<canvasW;x+=sz){
-    ctx.fillStyle=(Math.floor(x/sz)+Math.floor(y/sz))%2===0?'#e8e8e0':'#d8d8d0';
-    ctx.fillRect(x,y,sz,sz);
-  }
+  ctx.fillStyle = _checkerPattern;
+  ctx.fillRect(0, 0, canvasW, canvasH);
   ctx.restore();
 }
 
