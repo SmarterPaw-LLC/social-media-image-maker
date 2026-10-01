@@ -412,7 +412,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v387</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v388</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -3650,7 +3650,7 @@ window.addEventListener('DOMContentLoaded',function(){
       var deltaFlag = delta > 500 ? ' ⚠' : delta > 200 ? ' •' : '';
       return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · +' + delta.toFixed(0).padStart(3) + 'ms · ' + e.name + deltaFlag + '</div>';
     }).join('');
-    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v387 · ' + total.toFixed(0) + 'ms total</div>' + rows;
+    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v388 · ' + total.toFixed(0) + 'ms total</div>' + rows;
     document.body.appendChild(bt);
   } catch(_){}
   if(navigator.storage && navigator.storage.persist){
@@ -8808,6 +8808,16 @@ function buildFramedImageProps(l){
   }).join('');
   // Show shape-specific params only when relevant
   var shapeParams = '';
+  // v388: rect + roundrect had no shape-params section, so the Width/Height sliders were only
+  // reachable by scrolling all the way to the "FRAME ON CANVAS" section at the very bottom —
+  // past image fit, border, shadows, and extraShadows. Surfacing dedicated rect-dimension
+  // sliders at the top (same slot star/polaroid/polygon use for their shape-specific controls)
+  // makes "make this rect wider/taller" a one-glance operation. These bind in parallel with the
+  // bottom pfimg_w/pfimg_h sliders — editing either side updates layer.w/layer.h directly.
+  if(l.shape === 'rect' || l.shape === 'roundrect'){
+    shapeParams = R('Rect width (px)',  'pfimg_rectW', Math.round(l.w), 10, canvasW * 3, 2)
+                + R('Rect height (px)', 'pfimg_rectH', Math.round(l.h), 10, canvasH * 3, 2);
+  }
   if(l.shape === 'star'){
     shapeParams = R('Star points','pfimg_starPoints', l.starPoints||5, 3, 12, 1)
       + R('Inner radius','pfimg_starInner', (l.starInner||0.4)*100, 10, 90, 1);
@@ -13733,8 +13743,18 @@ function bindPropEvents(layer){
     num('npfimgh', function(v){layer.h=v;redraw();}, 'pfimg_h');
     rng('pfimg_x',  function(v){layer.x=v;redraw();});
     rng('pfimg_y',  function(v){layer.y=v;redraw();});
-    rng('pfimg_w',  function(v){layer.w=v;redraw();});
-    rng('pfimg_h',  function(v){layer.h=v;redraw();});
+    // v388: paired dimension sliders — editing either the top-of-panel rect sliders
+    // (pfimg_rectW/H) or the bottom "FRAME ON CANVAS" ones (pfimg_w/H) writes to layer.w/h
+    // and mirrors the other slider's displayed value so they stay visually in sync without a
+    // full renderProps() rebuild (which would steal focus mid-drag).
+    function _syncOtherDimSlider(otherId, v){
+      var o = document.getElementById(otherId); if(o) o.value = v;
+      var ov = document.getElementById(otherId + '_v'); if(ov) ov.textContent = v;
+    }
+    rng('pfimg_w',  function(v){layer.w=v;_syncOtherDimSlider('pfimg_rectW',v);redraw();});
+    rng('pfimg_h',  function(v){layer.h=v;_syncOtherDimSlider('pfimg_rectH',v);redraw();});
+    rng('pfimg_rectW', function(v){layer.w=v;_syncOtherDimSlider('pfimg_w',v);redraw();});
+    rng('pfimg_rectH', function(v){layer.h=v;_syncOtherDimSlider('pfimg_h',v);redraw();});
     rng('pfimg_rot', function(v){layer.rotation=v;redraw();});
     rng('pfimg_opacity', function(v){layer.opacity=v;redraw();});
   } else if(layer.type==='text'){
