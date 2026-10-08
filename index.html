@@ -412,7 +412,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 <header>
   <div style="display:flex;align-items:center;gap:12px;">
     <img id="headerLogo" style="height:38px;width:auto;display:block;" alt="Brand logo" />
-    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v388</span></div>
+    <div><h1 style="display:flex;align-items:center;gap:8px;"><img src="smarterimage_icon.png" alt="" style="height:24px;width:24px;display:block;flex-shrink:0;"> SmarterImage</h1><span>SmarterPaw Marketing · v389</span></div>
   </div>
   <div class="header-spacer"></div>
   <div class="brand-switcher" id="brandSwitcher">
@@ -434,6 +434,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
          goes, just push my changes" case. When no cloud row exists yet, falls back to opening
          the dialog so the user can name it. -->
     <button class="btn-hdr" onclick="saveToCloudDirect()" title="Save to cloud NOW — overwrites the existing cloud copy with no dialog. If never saved before, opens the dialog to name it first.">☁ Save Cloud</button>
+    <!-- v389: one-click "fix slowness" button. Calls perfReloadKeepSession which snapshots every
+         open board + layer state to a session bundle in IDB, hard-reloads the page, then shows
+         the opt-in Restore banner on the fresh load. This is the SAME effect a code-push gives:
+         fresh V8, fresh timers, cleared undo stacks, cleared in-memory caches, cleared any
+         accumulated per-session cruft. Confirm dialog is baked into perfReloadKeepSession so an
+         accidental click doesn't nuke work. -->
+    <button class="btn-hdr" onclick="perfReloadKeepSession()" title="Fresh reload — snapshots all boards, reloads the page cleanly, then offers to restore. Use when the app starts feeling sluggish. Your work is preserved via the session bundle.">♻ Refresh</button>
     <button class="btn-hdr" onclick="openExportModal()">⬇ Export</button>
     <!-- v127: Account dropdown — collapses Add User / Change Password / Sign Out under one menu.
          v145: renamed "Account & Settings"; added Image Library entry as a top-level shortcut. -->
@@ -3631,27 +3638,15 @@ window.addEventListener('DOMContentLoaded',function(){
   updateCloudSyncStatus();
   renderBoardTabs();
   _bootMark('init complete');
-  // Corner boot-timings readout. Uses window._perfMarks[] populated by the head script + every
-  // _bootMark above, so it reflects wall-clock time from navigation start (not just this handler).
+  // v389: corner boot-timings chip removed — Jason confirmed it just took up UI space and the
+  // numbers aren't actionable for day-to-day work. The underlying _perfMark instrumentation and
+  // the head-script long-task observer still run (console-only), so when a real perf regression
+  // happens we can still open DevTools and read "[boot] …" + "[longtask] …" without re-shipping
+  // code. window._perfMarks remains populated for anyone who wants to dump it manually.
   try {
-    var bt = document.createElement('div');
-    bt.id = '_bootTimings';
-    bt.style.cssText = 'position:fixed;bottom:14px;left:14px;z-index:9999;padding:8px 12px;background:#3a5e10;color:#fff;font-size:10px;font-weight:600;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.2);font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.5;max-width:320px;cursor:pointer;opacity:0.92;';
-    bt.title = 'Boot timings from navigation start — click to dismiss';
-    bt.onclick = function(){ if(bt.parentNode) bt.parentNode.removeChild(bt); };
     var marks = window._perfMarks || [];
     var total = marks.length ? marks[marks.length - 1].ms : 0;
-    var bg = total < 500 ? '#3a5e10' : total < 1500 ? '#a86000' : '#8b0000';
-    bt.style.background = bg;
-    // Render each phase and its DELTA from the previous mark — makes the smoking gun obvious at a
-    // glance instead of forcing math on cumulative offsets.
-    var rows = marks.map(function(e, i){
-      var delta = i === 0 ? e.ms : (e.ms - marks[i-1].ms);
-      var deltaFlag = delta > 500 ? ' ⚠' : delta > 200 ? ' •' : '';
-      return '<div>' + e.ms.toFixed(0).padStart(4) + 'ms · +' + delta.toFixed(0).padStart(3) + 'ms · ' + e.name + deltaFlag + '</div>';
-    }).join('');
-    bt.innerHTML = '<div style="font-size:12px;margin-bottom:3px;">⚡ v388 · ' + total.toFixed(0) + 'ms total</div>' + rows;
-    document.body.appendChild(bt);
+    console.log('[boot] total: ' + total.toFixed(0) + 'ms', marks);
   } catch(_){}
   if(navigator.storage && navigator.storage.persist){
     navigator.storage.persist().then(function(granted){
